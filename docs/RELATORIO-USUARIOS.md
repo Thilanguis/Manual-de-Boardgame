@@ -28,6 +28,10 @@ Publicação GitHub Pages concluída com workflow aprovado. Verificação anôni
 
 Após conectar o Worker, essa verificação passou novamente no GitHub Pages e em `http://127.0.0.1:5500/`. Uma chamada Authentication originada do navegador retornou 200 em ambos; o endereço real do Worker foi confirmado no arquivo público de configuração. Nenhuma senha foi usada e nenhuma conta foi criada por essa QA. O workflow [38638340723](https://github.com/Thilanguis/Manual-de-Boardgame/actions/runs/38638340723) terminou com sucesso.
 
+Na correção 1.2.2, a PWA busca a configuração pública atual pela rede e usa a última válida quando estiver offline. Dois testes adicionais verificam configuração antiga no cache e fallback offline. A regressão em navegador isolado passou para importação, leitura PDF, substituição, favoritos, edição/exclusão, celular/tablet e shell offline. Uma aba já aberta com configuração antiga precisa ser atualizada antes de outro envio; a atualização continua aguardando o término de uma importação.
+
+A nova funcionalidade Aprender a jogar está descrita somente na [proposta de arquitetura](GUIAS-INTERATIVOS.md), aguardando avaliação antes da implementação.
+
 ## Conexão realizada e validações pendentes
 
 - **Google Cloud/Drive:** autorização local concluída com o JSON atualizado e escopo drive.file; pasta PDFs existente validada e nenhuma outra pasta criada. Drive API e Picker API habilitadas. Tokens privados enviados somente aos secrets do Worker.

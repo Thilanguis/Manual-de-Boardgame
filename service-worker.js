@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.2.1';
+const VERSION = 'acervo-v1.2.2';
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
 const ESSENTIAL = [
@@ -75,6 +75,21 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     (async () => {
       const cache = await caches.open(SHELL);
+      // O endereço público do backend pode ser configurado depois de instalar a PWA.
+      // Buscar a configuração atual evita manter apiBase vazia após a conexão.
+      if (relative === './config/app-config.js') {
+        const key = new URL(url.pathname, self.location.origin).href;
+        try {
+          const response = await fetch(request, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+          if (response.ok) {
+            await cache.put(key, response.clone());
+            return response;
+          }
+        } catch {
+          // Preservar abertura offline com a última configuração pública válida.
+        }
+        return (await cache.match(key)) || unavailable();
+      }
       // Arquivos de uma versão são servidos juntos. Atualizações entram pelo novo SW.
       const key = request.mode === 'navigate' ? new URL('./index.html', self.registration.scope).href : new URL(url.pathname, self.location.origin).href;
       const cached = await cache.match(key);
