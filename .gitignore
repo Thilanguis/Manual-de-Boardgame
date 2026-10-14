@@ -10,6 +10,8 @@ client_secret*.json
 oauth-client*.json
 google-credentials*.json
 public/
+# Acervo local de PDFs; os manuais publicados são armazenados no Google Drive.
+/PDFs/
 test-output/
 .firebase/
 .env*
