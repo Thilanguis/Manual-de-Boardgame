@@ -29,6 +29,10 @@ async function setup(run) {
       }
     });
     child.on('error', reject);
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) reject(new Error('O assistente local encerrou antes de iniciar. Confira as dependências do Worker e o stderr do processo de teste.'));
+    });
   });
   child.stderr.on('data', (chunk) => (output += chunk));
   try {

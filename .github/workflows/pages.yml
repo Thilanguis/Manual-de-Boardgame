@@ -23,6 +23,8 @@ jobs:
           distribution: temurin
           java-version: '21'
       - run: npm ci --ignore-scripts
+      - name: Instalar dependências da API e do assistente local
+        run: npm --prefix worker ci
       - name: Verificar o aplicativo
         run: |
           npm run check
@@ -31,7 +33,6 @@ jobs:
           npm run build
       - name: Verificar a API
         run: |
-          npm --prefix worker ci
           npm --prefix worker run check
           npm --prefix worker test
       - uses: actions/configure-pages@v5
