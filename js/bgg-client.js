@@ -1,4 +1,11 @@
 // Fonte opcional: falhas do BGG nunca impedem importar os dados do PDF.
+export function bggWebsiteSearch(query = '') {
+  const url = new URL('https://boardgamegeek.com/geeksearch.php');
+  url.searchParams.set('action', 'search');
+  url.searchParams.set('objecttype', 'boardgame');
+  url.searchParams.set('q', String(query).trim().slice(0, 160));
+  return url.href;
+}
 export async function requestBgg(endpoint, getToken, input, { timeoutMs = 25000, signal } = {}) {
   const timeout = AbortSignal.timeout(timeoutMs),
     combined = signal ? AbortSignal.any([signal, timeout]) : timeout;

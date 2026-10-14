@@ -1,6 +1,8 @@
 # Biblioteca inteligente — versão 1.3.0
 
-O BGG é opcional e permanece desativado até a configuração do token de aplicação no Worker. O botão indisponível agora informa esse estado e não mostra um cursor de espera. Consultas ativas têm prazo de 25 segundos, incluindo a obtenção do token Firebase; não são iniciadas automaticamente durante a importação. Falhas não impedem salvar os dados do PDF. A capa externa também tem prazo de espera e mantém a capa original quando falha.
+O BGG é opcional. A identificação automática permanece desativada até a configuração do token de aplicação no Worker. Nesse estado, o formulário oferece **Pesquisar no site do BGG**, um link que abre a pesquisa em outra aba com o nome informado. Essa consulta manual não preenche os campos automaticamente e não usa a API. A autorização da API exige registro da aplicação e token, conforme [o guia oficial do BGG](https://boardgamegeek.com/using_the_xml_api).
+
+Consultas automáticas ativas têm prazo de 25 segundos, incluindo a obtenção do token Firebase; esse prazo não é uma contagem para desbloquear um botão e não se aplica à página externa do BGG. Não são iniciadas automaticamente durante a importação. Falhas não impedem salvar os dados do PDF. A capa externa também tem prazo de espera e mantém a capa original quando falha.
 
 ## Como usar
 

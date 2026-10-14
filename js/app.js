@@ -7,6 +7,7 @@ import { createAdminPanel } from './admin-panel.js';
 import { roleLabel, statusLabel } from './permissions.js';
 import { readableGame, unavailableReason } from './catalog-availability.js';
 import { createGuidePanel } from './guide-panel.js';
+import { bggWebsiteSearch } from './bgg-client.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
@@ -452,8 +453,12 @@ function fillForm() {
   $('use-pdf-cover').hidden = !originalPdfCover;
   $('replace-pdf-label').hidden = !draft.id || !state.session.canEdit;
   $('bgg-search').disabled = !APP_CONFIG.enableBgg || repository.mode !== 'firebase';
+  $('bgg-search').hidden = $('bgg-search').disabled;
+  $('bgg-web-search').hidden = !$('bgg-search').disabled;
+  $('bgg-web-search').href = bggWebsiteSearch($('game-title').value);
   $('bgg-search').title = $('bgg-search').disabled ? 'A consulta ao BoardGameGeek ainda não está ativa neste acervo.' : 'Buscar informações complementares no BoardGameGeek';
-  $('bgg-status').textContent = APP_CONFIG.enableBgg && repository.mode === 'firebase' ? '' : 'Consulta ao BoardGameGeek indisponível neste acervo. Você pode continuar com a capa e os dados do PDF.';
+  $('bgg-status').textContent =
+    APP_CONFIG.enableBgg && repository.mode === 'firebase' ? '' : 'Abre a busca em outra aba; não preenche os dados automaticamente. A identificação automática pelo BGG ainda não está ativada. Você pode salvar os dados do PDF.';
 }
 function renderEvidence() {
   $('source-evidence').replaceChildren();
@@ -632,6 +637,12 @@ async function searchBgg() {
   }
 }
 $('bgg-search').onclick = searchBgg;
+$('game-title').addEventListener('input', () => {
+  $('bgg-web-search').href = bggWebsiteSearch($('game-title').value);
+});
+$('bgg-web-search').addEventListener('click', () => {
+  $('bgg-web-search').href = bggWebsiteSearch($('game-title').value);
+});
 async function selectBgg(id, currentDraft) {
   if (draft !== currentDraft || state.busy || state.importing) return;
   const selection = ++bggSequence;
