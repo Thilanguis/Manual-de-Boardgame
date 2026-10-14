@@ -1,4 +1,4 @@
-import { cleanGuide, parseGuide, publishedAssets } from './guide-model.js';
+import { cleanGuide, parseGuide, publishedAssets, checkGuidePages } from './guide-model.js';
 export function createGuideRepository(repository, { db, dbSDK, auth, files }) {
   const ref = (kind, game) => dbSDK.doc(db, kind, game.id);
   const editable = () => {
@@ -24,7 +24,7 @@ export function createGuideRepository(repository, { db, dbSDK, auth, files }) {
     },
     async saveGuide(game, input) {
       editable();
-      const guide = cleanGuide(input),
+      const guide = checkGuidePages(game, cleanGuide(input)),
         reference = ref('guideDrafts', game);
       await dbSDK.runTransaction(db, async (tx) => {
         const old = await tx.get(reference),
@@ -36,7 +36,7 @@ export function createGuideRepository(repository, { db, dbSDK, auth, files }) {
     },
     async publishGuide(game, input, expectedRevision) {
       editable();
-      const guide = cleanGuide(input);
+      const guide = checkGuidePages(game, cleanGuide(input));
       if (!guide.reviewed) throw new Error('Revise e marque todas as seções antes de publicar.');
       if (guide.sourceHash !== game.manual.sha256) throw new Error('Confira as páginas do PDF atual e confirme a revisão das referências.');
       const draft = ref('guideDrafts', game),
@@ -103,7 +103,7 @@ export async function createLocalGuides(repository) {
       return operation(draft ? 'drafts' : 'published', 'get', game.id).then((g) => g || null);
     },
     async saveGuide(game, input) {
-      const guide = cleanGuide(input),
+      const guide = checkGuidePages(game, cleanGuide(input)),
         old = await operation('drafts', 'get', game.id);
       if ((old?.revision || 0) !== guide.revision) throw new Error('O rascunho mudou em outra aba. Reabra o editor.');
       const next = { ...guide, revision: guide.revision + 1 };
@@ -111,7 +111,7 @@ export async function createLocalGuides(repository) {
       return next;
     },
     async publishGuide(game, input, expected) {
-      const guide = cleanGuide(input),
+      const guide = checkGuidePages(game, cleanGuide(input)),
         old = await operation('published', 'get', game.id);
       if (!guide.reviewed || guide.sourceHash !== game.manual.sha256) throw new Error('Revise todas as seções e as páginas do PDF atual antes de publicar.');
       if ((old?.revision || 0) !== expected) throw new Error('A publicação mudou em outra aba.');

@@ -39,6 +39,10 @@ export function publishedAssets(guide) {
   const ids = new Set([guide.indexFileId, ...guide.sections.map((s) => s.imageId)].filter(Boolean));
   return Object.fromEntries(Object.entries(guide.assets).filter(([id]) => ids.has(id)));
 }
+export function checkGuidePages(game, guide) {
+  if (guide.sourceHash === game.manual.sha256 && guide.sections.some((s) => s.page && s.page > game.manual.pages)) throw new Error('Uma referência ultrapassa o número de páginas do PDF atual. Corrija-a antes de salvar ou publicar.');
+  return guide;
+}
 export function parseGuide(record) {
   if (!record) return null;
   return cleanGuide({ ...record, sections: JSON.parse(record.content || '[]') });

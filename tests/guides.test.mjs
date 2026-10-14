@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanGuide, searchRules, publishedAssets } from '../js/guide-model.js';
+import { cleanGuide, searchRules, publishedAssets, checkGuidePages } from '../js/guide-model.js';
 import { detectHeadings, packIndex, unpackIndex, suggestedSections } from '../js/pdf-index.js';
 import { titleCandidates, extractMetadata } from '../js/recognition.js';
 import { requestBgg } from '../js/bgg-client.js';
@@ -44,6 +44,11 @@ test('publicação só inclui imagens utilizadas e guia respeita limite de texto
   assert.equal(guide.reviewed, false);
   assert.deepEqual(Object.keys(publishedAssets(guide)), ['image123']);
   assert.throws(() => cleanGuide({ sections: [{ title: 'T', text: 'a'.repeat(20001) }] }));
+});
+test('referências precisam existir no PDF atual; páginas antigas permanecem no rascunho', () => {
+  const game = { manual: { sha256: 'current', pages: 2 } };
+  assert.throws(() => checkGuidePages(game, { sourceHash: 'current', sections: [{ page: 3 }] }), /ultrapassa/);
+  assert.doesNotThrow(() => checkGuidePages(game, { sourceHash: 'old', sections: [{ page: 3 }] }));
 });
 test('índice comprimido valida jogo, hash e páginas antes de usar', async () => {
   const index = { schemaVersion: 1, gameId: 'test', sourceHash: 'abc', pageCount: 1, pages: [{ page: 1, text: 'Regras.' }], headings: [] };
