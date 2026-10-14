@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "games",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isPublic", "order": "ASCENDING" },
+        { "fieldPath": "deleting", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

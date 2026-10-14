@@ -1,0 +1,17 @@
+node_modules/
+functions/node_modules/
+worker/node_modules/
+worker/.wrangler/
+worker/.build/
+.secrets/
+client_secret*.json
+oauth-client*.json
+google-credentials*.json
+public/
+test-output/
+.firebase/
+.env*
+.dev.vars*
+worker/.dev.vars*
+*.log
+service-account*.json

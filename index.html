@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#101012" />
+    <meta name="description" content="Sua biblioteca pessoal de jogos de tabuleiro. Organize, descubra e leia seus manuais em um só lugar." />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Acervo — Sua próxima partida começa aqui</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+    <link rel="stylesheet" href="styles/app.css" />
+    <script type="module" src="js/app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#biblioteca">Ir para a biblioteca</a>
+    <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m16 16 4 4" />
+      </symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5v15M12 5C8 2 3 3 3 3v15s5-1 9 2c4-3 9-2 9-2V3s-5-1-9 2Z" /></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24">
+        <circle cx="9" cy="8" r="3" />
+        <path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 4v2" />
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </symbol>
+      <symbol id="i-heart" viewBox="0 0 24 24"><path d="m12 20-8-8a5 5 0 0 1 8-6 5 5 0 0 1 8 6Z" /></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6" /></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6" /></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5m6 6-6-6 6-6" /></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 16v4h16v-4" /></symbol>
+      <symbol id="i-grid" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="7" height="7" rx="1" />
+        <rect x="14" y="3" width="7" height="7" rx="1" />
+        <rect x="3" y="14" width="7" height="7" rx="1" />
+        <rect x="14" y="14" width="7" height="7" rx="1" />
+      </symbol>
+      <symbol id="i-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 11v6m0-10v.1" />
+      </symbol>
+      <symbol id="i-device" viewBox="0 0 24 24">
+        <rect x="5" y="2" width="14" height="20" rx="3" />
+        <path d="M10 18h4" />
+      </symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14Z" /></symbol>
+    </svg>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Acervo, início">
+        <img src="assets/icon.svg" alt="" width="36" height="36" />
+        <span>
+          acervo
+          <span class="brand-dot">.</span>
+        </span>
+      </a>
+      <nav aria-label="Principal">
+        <a class="nav-link active" href="#biblioteca" id="nav-library">Biblioteca</a>
+        <button class="nav-link" id="nav-favorites">Meus favoritos</button>
+      </nav>
+      <div class="header-actions">
+        <button class="icon-button" id="install-button" title="Instalar aplicativo" aria-label="Instalar aplicativo">
+          <svg><use href="#i-device" /></svg>
+        </button>
+        <button class="account-button" id="account-button">
+          <span class="avatar">A</span>
+          <span id="account-label">Entrar</span>
+        </button>
+        <button class="button primary compact" data-add>
+          <svg><use href="#i-plus" /></svg>
+          <span>Adicionar jogo</span>
+        </button>
+      </div>
+    </header>
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-backdrop" id="hero-backdrop"></div>
+        <div class="hero-content">
+          <p class="eyebrow">
+            <span class="red-line"></span>
+            SEUS JOGOS. SUAS HISTÓRIAS.
+          </p>
+          <h1 id="hero-title">
+            A próxima partida
+            <br />
+            começa
+            <em>aqui.</em>
+          </h1>
+          <p id="hero-description">
+            Todos os seus manuais, em um só lugar.
+            <br />
+            Menos tempo procurando. Mais tempo jogando.
+          </p>
+          <div class="hero-meta" id="hero-meta" hidden></div>
+          <div class="hero-actions">
+            <button class="button primary" id="hero-main">
+              <svg><use href="#i-plus" /></svg>
+              <span>Adicionar meu primeiro jogo</span>
+            </button>
+            <a class="button secondary" href="#biblioteca">
+              <svg><use href="#i-grid" /></svg>
+              Explorar biblioteca
+            </a>
+          </div>
+          <p class="hero-caption" id="hero-caption">
+            <span class="status-dot"></span>
+            Uma biblioteca feita para a sua mesa.
+          </p>
+        </div>
+        <div class="hero-art" id="hero-art" aria-hidden="true">
+          <div class="orbit orbit-one"></div>
+          <div class="orbit orbit-two"></div>
+          <div class="art-book back-book">
+            <span>MANUAIS</span>
+            <div class="book-lines"></div>
+          </div>
+          <div class="art-book front-book">
+            <span class="art-acervo">
+              a
+              <span>.</span>
+            </span>
+            <div class="book-circle"></div>
+            <div class="book-mark">
+              <svg><use href="#i-book" /></svg>
+              <span>
+                SUA PRÓXIMA
+                <br />
+                PARTIDA
+              </span>
+            </div>
+          </div>
+          <div class="art-dice">
+            <i></i>
+            <i></i>
+            <i></i>
+            <i></i>
+            <i></i>
+          </div>
+          <span class="art-label">CADA JOGO, UMA NOVA HISTÓRIA</span>
+        </div>
+        <div class="hero-index">
+          <span>01</span>
+          / SUA COLEÇÃO
+        </div>
+      </section>
+      <div class="library-container" id="biblioteca">
+        <div class="connection-bar">
+          <span id="connection-status">
+            <span class="status-dot"></span>
+            Conectando seu acervo…
+          </span>
+          <button id="setup-button">
+            Sobre o acervo
+            <svg><use href="#i-info" /></svg>
+          </button>
+        </div>
+        <div id="library-error" class="inline-error" role="status" hidden></div>
+        <section id="recent-section" class="recent-section" hidden>
+          <div class="section-heading">
+            <h2>
+              Continue de onde parou
+              <span class="red-dot">.</span>
+            </h2>
+            <span>No seu dispositivo</span>
+          </div>
+          <div class="recent-row" id="recent-row"></div>
+        </section>
+        <div class="library-heading">
+          <div>
+            <p class="eyebrow muted">ESCOLHA O PRÓXIMO JOGO</p>
+            <h2>
+              Sua biblioteca
+              <span class="red-dot">.</span>
+            </h2>
+          </div>
+          <span class="count-badge" id="game-count">0 jogos</span>
+        </div>
+        <div class="library-toolbar">
+          <label class="search-field">
+            <svg><use href="#i-search" /></svg>
+            <input id="search" type="search" placeholder="Qual jogo vai para a mesa?" aria-label="Buscar jogos por nome ou categoria" autocomplete="off" />
+            <kbd>/</kbd>
+          </label>
+          <div class="select-filters">
+            <label>
+              <span class="sr-only">Quantidade de jogadores</span>
+              <select id="players-filter">
+                <option value="">Todos os jogadores</option>
+                <option value="1">1 jogador</option>
+                <option value="2">2 jogadores</option>
+                <option value="3">3 jogadores</option>
+                <option value="4">4 jogadores</option>
+                <option value="5">5 jogadores</option>
+                <option value="6">6 jogadores</option>
+              </select>
+            </label>
+            <label>
+              <span class="sr-only">Ordenar biblioteca</span>
+              <select id="sort">
+                <option value="recent">Adicionados recentemente</option>
+                <option value="az">Nome: A–Z</option>
+                <option value="duration">Menor duração</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="filter-chips" role="group" aria-label="Filtrar jogos">
+          <button class="chip active" data-filter="all" aria-pressed="true">Todos os jogos</button>
+          <button class="chip" data-filter="favorites" aria-pressed="false">
+            <svg><use href="#i-heart" /></svg>
+            Favoritos
+          </button>
+          <button class="chip" data-filter="two" aria-pressed="false">Para dois</button>
+          <button class="chip" data-filter="solo" aria-pressed="false">Jogo solo</button>
+          <button class="chip" data-filter="quick" aria-pressed="false">
+            <svg><use href="#i-clock" /></svg>
+            Até 30 min
+          </button>
+        </div>
+        <div class="games-grid" id="games-grid" aria-live="polite"></div>
+        <section class="empty-state" id="empty-state">
+          <div class="empty-icon">
+            <svg><use href="#i-book" /></svg>
+            <span>+</span>
+          </div>
+          <p class="eyebrow muted">A PRIMEIRA PÁGINA DA SUA COLEÇÃO</p>
+          <h3>
+            Grandes partidas começam
+            <br />
+            com um jogo.
+          </h3>
+          <p id="empty-description">
+            Adicione um manual em PDF. A gente prepara a capa
+            <br class="desktop-break" />
+            e procura as informações para você conferir.
+          </p>
+          <button class="button primary" id="empty-action">
+            <svg><use href="#i-upload" /></svg>
+            <span>Escolher um manual</span>
+          </button>
+          <span class="empty-note" id="empty-note">PDF de até 50 MB · Seus arquivos, seu acervo</span>
+        </section>
+        <div class="no-results" id="no-results" hidden>
+          <svg><use href="#i-search" /></svg>
+          <h3>Nenhum jogo por aqui.</h3>
+          <p>Tente outro nome ou ajuste os filtros.</p>
+          <button class="button secondary" id="clear-filters">Limpar filtros</button>
+        </div>
+        <section class="bottom-note">
+          <div>
+            <svg><use href="#i-book" /></svg>
+            <p>
+              <strong>O manual certo. Na hora de jogar.</strong>
+              <span>Leia sem sair do Acervo, no celular, no tablet ou na sua tela favorita.</span>
+            </p>
+          </div>
+          <button id="footer-install">
+            Leve o Acervo com você
+            <svg><use href="#i-arrow" /></svg>
+          </button>
+        </section>
+      </div>
+    </main>
+    <footer class="site-footer">
+      <a class="brand footer-brand" href="./">
+        acervo
+        <span class="brand-dot">.</span>
+      </a>
+      <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
+      <span>v1.1.0</span>
+      <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
+    </footer>
+    <dialog id="upload-dialog" class="wide-dialog" aria-labelledby="upload-title">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow muted">AMPLIE SUA COLEÇÃO</p>
+          <h2 id="upload-title">
+            Um novo jogo na estante
+            <span class="red-dot">.</span>
+          </h2>
+        </div>
+        <button class="icon-button" data-close="upload-dialog" aria-label="Fechar importação">
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <div id="upload-picker">
+          <label class="dropzone" id="dropzone">
+            <input id="pdf-file" type="file" accept="application/pdf,.pdf" />
+            <span class="upload-circle">
+              <svg><use href="#i-upload" /></svg>
+            </span>
+            <strong>Solte o manual por aqui</strong>
+            <span>ou toque para escolher um arquivo</span>
+            <small>PDF · até 50 MB</small>
+          </label>
+          <p class="privacy-note">A leitura do PDF acontece no seu navegador. O arquivo só é salvo quando você confirmar os dados.</p>
+        </div>
+        <p id="upload-status" class="status-message" role="status" aria-live="polite"></p>
+        <progress id="upload-progress" max="100" hidden></progress>
+        <form id="game-form" hidden>
+          <div class="review-grid">
+            <aside class="review-aside">
+              <div class="review-cover"><img id="draft-cover" alt="Prévia da capa" /></div>
+              <label class="button secondary cover-upload">
+                <svg><use href="#i-upload" /></svg>
+                Trocar capa
+                <input id="cover-file" type="file" accept="image/jpeg,image/png,image/webp" />
+              </label>
+              <button class="text-button" id="use-pdf-cover" type="button">Usar a primeira página do PDF</button>
+              <span id="file-info" class="file-info"></span>
+              <label id="replace-pdf-label" class="button secondary cover-upload" hidden>
+                <svg><use href="#i-upload" /></svg>
+                Substituir PDF
+                <input id="replace-pdf-file" type="file" accept="application/pdf,.pdf" />
+              </label>
+            </aside>
+            <div class="review-fields">
+              <div class="review-notice">
+                <svg><use href="#i-info" /></svg>
+                <p id="review-notice-text">Encontramos algumas informações. Confira antes de adicionar.</p>
+              </div>
+              <label>
+                Nome do jogo
+                <input name="title" id="game-title" required maxlength="160" placeholder="Nome do jogo" />
+              </label>
+              <div id="title-suggestions" class="title-suggestions"></div>
+              <div class="bgg-search">
+                <button class="button secondary small" type="button" id="bgg-search">
+                  <svg><use href="#i-search" /></svg>
+                  Identificar no BoardGameGeek
+                </button>
+                <span id="bgg-status" role="status"></span>
+              </div>
+              <div id="bgg-results" class="bgg-results"></div>
+              <label>
+                Sobre o jogo
+                <textarea name="description" rows="4" maxlength="2000" placeholder="Uma descrição curta, quando identificada no manual ou no BGG."></textarea>
+              </label>
+              <div class="fields-row">
+                <label>
+                  Mín. jogadores
+                  <input name="minPlayers" type="number" min="1" max="100" placeholder="—" />
+                </label>
+                <label>
+                  Máx. jogadores
+                  <input name="maxPlayers" type="number" min="1" max="100" placeholder="—" />
+                </label>
+                <label>
+                  Duração (min)
+                  <input name="durationMinutes" type="number" min="1" max="1440" placeholder="—" />
+                </label>
+              </div>
+              <label>
+                Categorias
+                <span class="label-hint">separadas por vírgula</span>
+                <input name="tags" maxlength="320" placeholder="Ex.: estratégia, cooperativo, família" />
+              </label>
+              <label>
+                Idioma do manual
+                <select name="language">
+                  <option value="pt-BR">Português</option>
+                  <option value="en">Inglês</option>
+                  <option value="es">Espanhol</option>
+                  <option value="other">Outro</option>
+                </select>
+              </label>
+              <label class="confirm-check">
+                <input name="isPublic" type="checkbox" />
+                <span>Manual público: permitir que visitantes leiam este jogo sem entrar.</span>
+              </label>
+              <details class="evidence">
+                <summary>De onde vieram as informações?</summary>
+                <div id="source-evidence"></div>
+              </details>
+              <label class="confirm-check">
+                <input name="confirmed" type="checkbox" required />
+                <span>Conferi a identificação do jogo e as informações. Campos em branco ficam como “não informado”.</span>
+              </label>
+              <div class="form-actions">
+                <button class="button secondary" type="button" data-close="upload-dialog">Cancelar</button>
+                <button class="button primary" id="save-game" type="submit">
+                  <svg><use href="#i-plus" /></svg>
+                  <span>Adicionar à biblioteca</span>
+                </button>
+              </div>
+              <p id="save-error" class="inline-error" role="alert" hidden></p>
+            </div>
+          </div>
+        </form>
+      </div>
+    </dialog>
+    <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-title">
+      <button class="icon-button floating-close" data-close="detail-dialog" aria-label="Fechar informações">
+        <svg><use href="#i-close" /></svg>
+      </button>
+      <div class="detail-layout">
+        <div class="detail-cover"><img id="detail-cover" alt="" /></div>
+        <div class="detail-content">
+          <p class="eyebrow">NA SUA BIBLIOTECA</p>
+          <h2 id="detail-title"></h2>
+          <div class="detail-tags" id="detail-tags"></div>
+          <p id="detail-description"></p>
+          <div class="detail-stats" id="detail-stats"></div>
+          <div class="detail-actions">
+            <button class="button primary" id="read-manual">
+              <svg><use href="#i-book" /></svg>
+              Ler manual
+            </button>
+            <button class="icon-button favorite-button" id="detail-favorite" aria-label="Adicionar aos favoritos">
+              <svg><use href="#i-heart" /></svg>
+            </button>
+          </div>
+          <p class="manual-caption" id="detail-manual"></p>
+          <a class="text-button" id="detail-source" target="_blank" rel="noopener noreferrer" hidden>Dados do BoardGameGeek ↗</a>
+          <div class="admin-actions" id="detail-admin" hidden>
+            <button class="text-button" id="edit-game">
+              <svg><use href="#i-edit" /></svg>
+              Editar informações
+            </button>
+            <button class="text-button danger" id="delete-game">Excluir jogo</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+    <dialog id="delete-dialog" class="small-dialog" aria-labelledby="delete-title">
+      <div class="dialog-header">
+        <h2 id="delete-title">Excluir da biblioteca?</h2>
+        <button class="icon-button" data-close="delete-dialog" aria-label="Cancelar">
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <p id="delete-message"></p>
+        <p>A exclusão remove o cadastro, o manual e a capa armazenados neste acervo.</p>
+        <div class="form-actions">
+          <button class="button secondary" data-close="delete-dialog">Cancelar</button>
+          <button class="button primary" id="confirm-delete">Excluir jogo</button>
+        </div>
+        <p id="delete-error" class="inline-error" role="alert" hidden></p>
+      </div>
+    </dialog>
+    <dialog id="login-dialog" class="small-dialog" aria-labelledby="login-title">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow muted">SEU ACERVO NO FIREBASE</p>
+          <h2 id="login-title">
+            Entre na sua biblioteca
+            <span class="red-dot">.</span>
+          </h2>
+        </div>
+        <button class="icon-button" data-close="login-dialog" aria-label="Fechar login">
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div id="google-login" class="dialog-body">
+        <button class="button secondary full" id="google-login-button">Entrar com Google</button>
+        <p id="google-login-error" class="inline-error" role="alert" hidden></p>
+        <p id="pages-login-note" class="muted-text" hidden>Use sua conta Google vinculada ao Firebase. Se sua conta usa senha, vincule o Google primeiro pelo localhost ou pelo endereço temporário do Firebase.</p>
+      </div>
+      <form id="login-form" class="dialog-body">
+        <p>A conta é criada no Firebase Authentication. A autorização de administrador é configurada no Firestore.</p>
+        <label>
+          E-mail
+          <input name="email" type="email" autocomplete="username" required />
+        </label>
+        <label>
+          Senha
+          <input name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <button class="button primary full" id="login-submit">Entrar</button>
+        <p id="login-error" class="inline-error" role="alert" hidden></p>
+      </form>
+      <div class="dialog-body" id="session-info" hidden>
+        <p id="session-message"></p>
+        <label>
+          UID da conta
+          <input id="session-uid" readonly />
+        </label>
+        <p class="muted-text">
+          Para autorizar, crie no Console do Firestore o documento
+          <strong>admins / este UID</strong>
+          , com o campo booleano
+          <strong>enabled: true</strong>
+          . Depois, saia e entre novamente.
+        </p>
+        <button class="button secondary" id="link-google-button">Vincular Google a esta conta</button>
+        <button class="button secondary" id="logout-button">Sair da conta</button>
+      </div>
+    </dialog>
+    <dialog id="setup-dialog" class="small-dialog" aria-labelledby="setup-title">
+      <div class="dialog-header">
+        <h2 id="setup-title">
+          Um lugar para seus jogos
+          <span class="red-dot">.</span>
+        </h2>
+        <button class="icon-button" data-close="setup-dialog" aria-label="Fechar">
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="dialog-body setup-content">
+        <p id="setup-mode"></p>
+        <div class="setup-feature">
+          <svg><use href="#i-book" /></svg>
+          <div>
+            <strong>Do PDF para a sua estante</strong>
+            <p>Extraímos texto, possíveis títulos e a primeira página como capa. Você confere tudo antes de salvar. PDFs escaneados precisam de preenchimento manual.</p>
+          </div>
+        </div>
+        <div class="setup-feature">
+          <svg><use href="#i-device" /></svg>
+          <div>
+            <strong>Feito para acompanhar a partida</strong>
+            <p>Instale no Android pelo menu “Instalar aplicativo”. No iPhone/iPad, use Safari → Compartilhar → Adicionar à Tela de Início. O aplicativo mantém os recursos essenciais offline; PDFs na nuvem são carregados ao abrir.</p>
+          </div>
+        </div>
+        <div class="setup-feature">
+          <svg><use href="#i-info" /></svg>
+          <div>
+            <strong>Dados com origem, sem adivinhação</strong>
+            <p>O BGG é opcional e usa a API segura do Acervo. Você confirma a correspondência e a origem dos dados. Faixas de duração do PDF ficam disponíveis para revisão.</p>
+          </div>
+        </div>
+        <div class="setup-links">
+          <a href="https://console.firebase.google.com/project/manual-de-boardgame/overview" target="_blank" rel="noopener noreferrer">Abrir Console do Firebase ↗</a>
+          <button class="text-button" id="switch-mode">Usar biblioteca deste dispositivo</button>
+          <button class="text-button" id="setup-install">Como instalar</button>
+        </div>
+        <p class="muted-text">Favoritos e posição de leitura ficam neste navegador. A biblioteca local é independente da nuvem e não é migrada automaticamente.</p>
+      </div>
+    </dialog>
+    <section id="reader" class="reader" aria-label="Leitor de manual" hidden>
+      <header class="reader-header">
+        <button class="icon-button" id="reader-close" aria-label="Voltar à biblioteca">
+          <svg><use href="#i-back" /></svg>
+        </button>
+        <div class="reader-title">
+          <strong id="reader-title"></strong>
+          <span id="reader-subtitle">Carregando manual…</span>
+        </div>
+        <div class="reader-zoom">
+          <button class="icon-button" id="zoom-out" aria-label="Diminuir zoom">−</button>
+          <button class="text-button" id="zoom-fit" title="Ajustar à largura">100%</button>
+          <button class="icon-button" id="zoom-in" aria-label="Ampliar zoom">+</button>
+        </div>
+      </header>
+      <div class="reader-stage" id="reader-stage">
+        <p id="reader-status" role="status">Carregando manual…</p>
+        <div id="pdf-page" class="pdf-page">
+          <canvas id="pdf-canvas" aria-label="Página do manual"></canvas>
+          <div id="pdf-text" class="textLayer"></div>
+        </div>
+      </div>
+      <footer class="reader-toolbar">
+        <button class="button secondary small" id="page-prev">
+          <svg><use href="#i-back" /></svg>
+          <span>Anterior</span>
+        </button>
+        <label class="page-control">
+          <span class="sr-only">Ir para a página</span>
+          <input id="page-number" type="number" min="1" value="1" />
+          <span id="page-total">/ —</span>
+        </label>
+        <button class="button secondary small" id="page-next">
+          <span>Próxima</span>
+          <svg><use href="#i-arrow" /></svg>
+        </button>
+      </footer>
+    </section>
+    <div class="notice" id="notice" role="status" hidden>
+      <span id="notice-text"></span>
+      <button class="text-button" id="notice-action" hidden></button>
+      <button class="icon-button" id="notice-close" aria-label="Fechar aviso">
+        <svg><use href="#i-close" /></svg>
+      </button>
+    </div>
+    <noscript><p class="noscript">Ative o JavaScript para usar a biblioteca e ler seus manuais.</p></noscript>
+  </body>
+</html>

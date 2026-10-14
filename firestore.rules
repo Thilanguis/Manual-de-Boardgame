@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function admin() {
+      return request.auth != null && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.enabled == true
+        && (request.auth.uid == '7TitBObtb8a0W8GisSstSM1RHiX2' || get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role in ['admin','subadmin']);
+    }
+    function allowed(action) {
+      let p = get(/databases/$(database)/documents/admins/$(request.auth.uid)).data;
+      return admin() && (request.auth.uid == '7TitBObtb8a0W8GisSstSM1RHiX2' || p.role == 'admin' || (p.role == 'subadmin' && p.permissions[action] == true));
+    }
+    function owner() { return admin() && request.auth.uid == '7TitBObtb8a0W8GisSstSM1RHiX2'; }
+    function publicLibrary() {
+      return exists(/databases/$(database)/documents/settings/library) && get(/databases/$(database)/documents/settings/library).data.publicRead == true;
+    }
+    function optionalNumber(value, max) { return value == null || (value is int && value >= 1 && value <= max); }
+    function validGame(id) {
+      let g = request.resource.data;
+      return g.keys().hasOnly(['id','title','description','minPlayers','maxPlayers','durationMinutes','tags','language','manual','cover','sources','bgg','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting','deleteRequestedBy'])
+        && g.keys().hasAll(['id','title','description','minPlayers','maxPlayers','durationMinutes','tags','language','manual','cover','sources','createdAt','updatedAt','createdBy','schemaVersion','isPublic'])
+        && g.id == id && g.schemaVersion == 1
+        && g.isPublic is bool
+        && g.deleting is bool
+        && g.title is string && g.title.size() > 0 && g.title.size() <= 160
+        && g.description is string && g.description.size() <= 2000
+        && optionalNumber(g.minPlayers,100) && optionalNumber(g.maxPlayers,100)
+        && ((g.minPlayers == null && g.maxPlayers == null) || (g.minPlayers != null && g.maxPlayers != null && g.minPlayers <= g.maxPlayers))
+        && optionalNumber(g.durationMinutes,1440)
+        && g.tags is list && g.tags.size() <= 8 && g.language is string && g.language.size() <= 20
+        && g.manual is map && g.manual.path == 'games/' + id + '/manual.pdf'
+        && g.manual.name is string && g.manual.name.size() <= 255
+        && g.manual.type == 'application/pdf' && g.manual.size is int && g.manual.size > 0 && g.manual.size <= 52428800
+        && g.manual.pages is int && g.manual.pages >= 1
+        && g.manual.sha256 is string && g.manual.sha256.matches('^[a-f0-9]{64}$')
+        && g.manual.storage == 'drive' && g.manual.driveFileId is string && g.manual.driveFileId.matches('^[A-Za-z0-9_-]{6,200}$')
+        && g.cover is map && g.sources is map
+        && g.createdAt is timestamp && g.updatedAt == request.time && g.createdBy is string;
+    }
+    match /admins/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid;
+      allow list, write: if false;
+    }
+    match /settings/library {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if owner() && request.resource.data.keys().hasOnly(['publicRead']) && request.resource.data.publicRead is bool;
+      allow delete: if false;
+    }
+    match /games/{id} {
+      allow read: if admin() || ((!('deleting' in resource.data) || resource.data.deleting == false) && (publicLibrary() || resource.data.isPublic == true));
+      allow create: if allowed('add') && validGame(id) && request.resource.data.deleting == false && !('deleteRequestedBy' in request.resource.data) && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time;
+      allow update: if validGame(id) && request.resource.data.createdAt == resource.data.createdAt && request.resource.data.createdBy == resource.data.createdBy
+        && ((allowed('edit') && (!('deleting' in resource.data) || resource.data.deleting == false)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['deleting','deleteRequestedBy']))
+        || (allowed('delete') && request.resource.data.deleting == true && request.resource.data.deleteRequestedBy == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleting','deleteRequestedBy','updatedAt'])));
+      // A API apaga os arquivos do Drive e depois este registro com controle de versão.
+      allow delete: if allowed('delete');
+    }
+    // Os manuais interativos serão implementados em outra etapa, com regras próprias.
+    match /{document=**} { allow read, write: if false; }
+  }
+}

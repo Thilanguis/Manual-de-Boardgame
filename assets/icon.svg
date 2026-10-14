@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Acervo</title>
+  <desc id="desc">Um manual aberto em vermelho, com um dado de três pontos.</desc>
+  <defs>
+    <linearGradient id="cover" x1="128" y1="174" x2="380" y2="358" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ff7268"/>
+      <stop offset="1" stop-color="#ed334b"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="128" y1="184" x2="256" y2="354" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ff9381"/>
+      <stop offset="1" stop-color="#f55a63"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="104" fill="#101012"/>
+  <rect x="16" y="16" width="480" height="480" rx="90" fill="none" stroke="#fff" stroke-opacity=".06" stroke-width="2"/>
+  <path d="M126 174c42 0 82 12 130 43 48-31 88-43 130-43v159c-43 0-87 13-130 41-43-28-87-41-130-41V174Z" fill="url(#cover)"/>
+  <path d="M140 189c36 2 70 15 104 35v122c-34-20-70-31-104-33V189Z" fill="url(#paper)"/>
+  <path d="M268 224c34-20 68-33 104-35v124c-34 2-70 13-104 33V224Z" fill="#ed334b"/>
+  <path d="M256 222v130" stroke="#101012" stroke-opacity=".48" stroke-width="8" stroke-linecap="round"/>
+  <path d="M159 237c20 4 39 11 59 21M159 268c20 4 39 11 59 21" fill="none" stroke="#101012" stroke-opacity=".35" stroke-width="9" stroke-linecap="round"/>
+  <rect x="300" y="120" width="96" height="96" rx="24" fill="#101012" stroke="#101012" stroke-width="14"/>
+  <rect x="300" y="120" width="96" height="96" rx="24" fill="#ff806f"/>
+  <g fill="#101012">
+    <circle cx="324" cy="144" r="8"/>
+    <circle cx="348" cy="168" r="8"/>
+    <circle cx="372" cy="192" r="8"/>
+  </g>
+</svg>

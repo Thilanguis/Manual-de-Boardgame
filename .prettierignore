@@ -1,0 +1,10 @@
+vendor/
+public/
+node_modules/
+functions/node_modules/
+worker/node_modules/
+worker/.wrangler/
+worker/.build/
+test-output/
+package-lock.json
+functions/package-lock.json
