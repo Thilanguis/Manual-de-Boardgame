@@ -11,7 +11,7 @@ export const APP_CONFIG = {
   },
   // Exemplo: { apiKey: '...', authDomain: '...', projectId: '...', storageBucket: '...', messagingSenderId: '...', appId: '...' }
   // Somente endereço público da API. Nenhuma credencial OAuth aqui.
-  fileStorage: { provider: 'drive', apiBase: '' },
+  fileStorage: { provider: 'drive', apiBase: 'https://acervo-drive-api.acervo-boardgames.workers.dev' },
   bggEndpoint: '',
   enableBgg: false,
   allowPasswordLogin: true,

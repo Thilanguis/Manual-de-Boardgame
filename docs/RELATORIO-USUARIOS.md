@@ -14,7 +14,7 @@
 
 ## Efetivamente testado
 
-45 testes automatizados aprovados: 15 no aplicativo/assistente local, 17 na API com Google/Firestore simulados e 13 nas regras reais do emulador Firestore. Cobrem leitura anônima, cadastro pending, ausência de autoaprovação, hierarquia, flags, auditoria, bloqueio da mesma sessão, JWT/tickets, SSRF/pasta, Range, retomada e exclusão concorrente.
+46 testes automatizados disponíveis: 16 no aplicativo/assistente local, 17 na API com Google/Firestore simulados e 13 nas regras reais do emulador Firestore. A atualização 1.2.1 acrescenta o diagnóstico de Drive API desativada sem expor a resposta privada. Os 16 testes do aplicativo passaram na atualização; as suítes de API e regras passaram na etapa anterior e são novamente executadas pelo workflow de publicação. Cobrem leitura anônima, cadastro pending, ausência de autoaprovação, hierarquia, flags, auditoria, bloqueio da mesma sessão, JWT/tickets, SSRF/pasta, Range, retomada e exclusão concorrente.
 
 QA administrativa com três contextos Chrome isolados e Auth/Firestore emulados: cadastro, aviso/contador sem reload, aprovação, promoção, aprovação por subadmin, bloqueio imediato, histórico e desktop/celular/tablet. QA de regressão com PDF gerado: importação, identificação, persistência, substituição, texto, páginas, zoom, favoritos, busca, edição/exclusão e shell offline.
 
@@ -26,10 +26,11 @@ O conector Google Drive confirmou a existência da pasta PDFs e sua condição p
 
 Publicação GitHub Pages concluída com workflow aprovado. Verificação anônima no endereço real confirmou carregamento da interface, Firebase e PWA, formulários de login/cadastro/recuperação e leitura do catálogo público; listagem de pessoas, perfil do proprietário e admins legados retornaram acesso negado.
 
-## Dependências de autorização manual
+## Conexão realizada e validações pendentes
 
-- **Google Cloud/Drive:** cliente OAuth Web, Drive API/Picker API habilitadas, chave pública Picker restrita a localhost e autorização da conta proprietária pelo helper. Informar somente caminho local do JSON e e-mail; não anexar secrets ao chat.
-- **Cloudflare:** autenticação na conta Workers Free, deploy, instalação dos secrets pelo helper e URL real em fileStorage.apiBase.
+- **Google Cloud/Drive:** autorização local concluída com o JSON atualizado e escopo drive.file; pasta PDFs existente validada e nenhuma outra pasta criada. Drive API e Picker API habilitadas. Tokens privados enviados somente aos secrets do Worker.
+- **Cloudflare:** Wrangler autenticado, Worker publicado em `https://acervo-drive-api.acervo-boardgames.workers.dev` e endereço configurado no frontend. `/health` retornou driveConnected true, com CORS permitido para o site e desenvolvimento local. Nenhum plano ou faturamento foi alterado.
+- **Firebase:** corrigido o bloqueio de referenciador causado por restrições do Picker aplicadas à chave Firebase. Chamadas de configuração Authentication retornaram 200 com 127.0.0.1:5500, localhost:5500 e GitHub Pages; um domínio externo retornou 403. Domínios autorizados anteriores e restrições de APIs preservados.
 - **Teste Drive real:** enviar PDF e capa pelo site, conferir proprietário e pasta exata e abrir em outro dispositivo. Esse teste permanece pendente; a conexão não é considerada concluída.
 - **Google login opcional:** habilitar provider/vincular à identidade existente se desejado. Email/Password já está habilitado. Nenhuma senha do proprietário foi usada pela QA.
 

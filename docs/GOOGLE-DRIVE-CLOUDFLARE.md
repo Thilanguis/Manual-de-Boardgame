@@ -2,19 +2,21 @@
 
 Frontend: [GitHub Pages](https://thilanguis.github.io/Manual-de-Boardgame/). Login e permissões: Firebase Authentication/Firestore no Spark. Arquivos: a pasta privada [PDFs](https://drive.google.com/drive/folders/1XUgXOYRigMaYuNMbFVcjDp6obEp4r7wR), ID `1XUgXOYRigMaYuNMbFVcjDp6obEp4r7wR`. Backend: Cloudflare Workers Free.
 
-O conector Drive confirmou que essa pasta existe, se chama PDFs e não está compartilhada publicamente. Isso **não** autoriza o cliente OAuth da aplicação nem comprova uploads pelo site. A integração real continua dependente do OAuth e do Worker enquanto `fileStorage.apiBase` estiver vazia.
+O proprietário concluiu a autorização OAuth local desta pasta existente. O assistente validou ID, propriedade e permissões e gravou os secrets diretamente no Worker, sem criar outra pasta. A API publicada é `https://acervo-drive-api.acervo-boardgames.workers.dev`, configurada em `fileStorage.apiBase`; o endpoint `/health` confirmou os bindings de conexão. Isso ainda **não** comprova um upload real ou leitura em outro dispositivo: a validação da seção 5 permanece obrigatória.
 
 ## 1. Google Cloud
 
 No [Google Cloud Console](https://console.cloud.google.com/), selecione `manual-de-boardgame` ou um projeto dedicado, sem conta de faturamento.
 
-1. Habilite **Google Drive API** e **Google Picker API** em APIs & Services → Library.
+1. Habilite **Google Drive API** e **Google Picker API** em APIs & Services → Library. Ambas são necessárias: consentimento OAuth e Picker habilitado não substituem a Drive API. Ela foi habilitada neste projeto sem ativar faturamento. Uma Drive API desativada pode retornar 403 após o consentimento.
 2. Em Google Auth platform → Branding, defina nome Acervo, e-mail de suporte e contato.
 3. Audience: **External**. Adicione o proprietário como test user durante a preparação; antes da autorização definitiva, mude para **Production**. Testing com Drive emite refresh tokens que expiram em sete dias.
 4. Data Access: somente `https://www.googleapis.com/auth/drive.file` para Drive. Não conceda `drive`, `drive.readonly` ou outros escopos mais amplos.
 5. Clients: OAuth de tipo **Web application**, Authorized redirect URI `http://localhost:4180/oauth/callback`. Cadastre também `http://localhost:4180` como Authorized JavaScript origin para o Picker local.
 6. Baixe o JSON privado do cliente e guarde fora do repositório. Não cole seu conteúdo no chat.
-7. Crie uma **API key pública de navegador** para o Picker, no mesmo projeto do cliente OAuth. Restrinja aplicações a Websites/HTTP referrers `http://localhost:4180/*` e APIs a **Google Picker API**. Essa chave não é o client secret. Não reutilize uma chave restrita que não autorize Picker.
+7. Crie uma **API key pública de navegador** para o Picker, no mesmo projeto do cliente OAuth. Restrinja aplicações a Websites/HTTP referrers `http://localhost:4180/*` e `https://docs.google.com/*`, pois o Picker é renderizado num iframe desse domínio. Restrinja APIs a **Google Picker API**; as chamadas à Drive API são feitas pelo servidor local, sem essa chave. Essa chave não é o client secret. Não reutilize uma chave restrita que não autorize Picker. [Configuração oficial do Picker](https://developers.google.com/workspace/drive/picker/guides/web-picker).
+
+A chave Picker é separada da chave Firebase em `config/app-config.js`. As restrições exclusivas do Picker não devem substituir os endereços autorizados da chave Firebase.
 
 [Escopos recomendados](https://developers.google.com/workspace/drive/api/guides/api-specific-auth), [Picker](https://developers.google.com/workspace/drive/picker/guides/web-picker-sample), [OAuth web](https://developers.google.com/identity/protocols/oauth2/web-server), [expiração de tokens](https://developers.google.com/identity/protocols/oauth2).
 
@@ -24,7 +26,7 @@ Crie/use sua conta Cloudflare com **Workers Free**, sem contratar plano adiciona
 
 ```powershell
 npm --prefix worker ci
-node worker/node_modules/wrangler/bin/wrangler.js login
+node worker/node_modules/wrangler/bin/wrangler.js login --scopes account:read user:read workers:write workers_scripts:write workers_routes:write
 npm --prefix worker run check
 npm --prefix worker test
 npm --prefix worker run build

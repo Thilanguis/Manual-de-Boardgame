@@ -7,14 +7,14 @@ import { join, resolve } from 'node:path';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { DRIVE_FOLDER_ID } from '../js/permissions.js';
-async function setup(run) {
+async function setup(run, failure = '') {
   const temporary = await mkdtemp(join(tmpdir(), 'acervo-drive-setup-')),
     clientFile = join(temporary, 'fixture-oauth.json');
   await writeFile(clientFile, JSON.stringify({ web: { client_id: '548436978015-fixture.apps.googleusercontent.com', client_secret: 'fixture-private-client', redirect_uris: ['http://localhost:4180/oauth/callback'] } }));
   const child = spawn(
     process.execPath,
     ['--import', pathToFileURL(resolve('tests/helpers/mock-drive-setup.mjs')).href, resolve('scripts/connect-drive.mjs'), '--client-file', clientFile, '--owner-email', 'owner@example.test', '--picker-key', 'AIzaFixturePublicPickerKey0000000000'],
-    { env: { ...process.env, ACERVO_SETUP_MOCK: '1' }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+    { env: { ...process.env, ACERVO_SETUP_MOCK: '1', ACERVO_SETUP_MOCK_FAILURE: failure }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
   );
   let output = '';
   const exit = once(child, 'exit');
@@ -75,3 +75,14 @@ test('seleção de outra pasta é rejeitada antes de alterar metadata ou publica
     assert.ok(!output().includes('MOCK_FOLDER_PATCH'));
     assert.ok(!output().includes('salvo no Worker'));
   }));
+
+test('Drive API desativada mostra diagnóstico sem expor respostas privadas nem gravar secrets', async () =>
+  setup(async ({ state, exit, output }) => {
+    assert.equal((await callback(state)).status, 500);
+    assert.equal((await exit)[0], 1);
+    assert.ok(output().includes('Google Drive API desativada'));
+    assert.ok(!output().includes('fixture-private-refresh'));
+    assert.ok(!output().includes('fixture-private-client'));
+    assert.ok(!output().includes('MOCK_FOLDER_PATCH'));
+    assert.ok(!output().includes('salvo no Worker'));
+  }, 'drive-disabled'));

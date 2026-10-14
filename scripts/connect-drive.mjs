@@ -49,7 +49,15 @@ for (const [key, value] of Object.entries({
 async function google(url, options = {}) {
   const response = await fetch(url, { ...options, signal: AbortSignal.timeout(30000) });
   if (!response.ok) {
-    const error = new Error(`O Google recusou a operação (${response.status}). Confira a API Drive, o cliente OAuth e a conta proprietária.`);
+    // Examinar apenas códigos conhecidos; nunca imprimir a resposta OAuth ou tokens.
+    const details = await response.json().catch(() => ({}));
+    const reasons = [details.error, ...(details.error?.errors || []).map((item) => item.reason), ...(details.error?.details || []).map((item) => item.reason)];
+    let message = `O Google recusou a operação (${response.status}). Confira a API Drive, o cliente OAuth e a conta proprietária.`;
+    if (reasons.some((reason) => ['SERVICE_DISABLED', 'accessNotConfigured'].includes(reason)))
+      message = 'Google Drive API desativada no projeto manual-de-boardgame. Habilite drive.googleapis.com e reinicie a autorização; não é necessário ativar faturamento.';
+    else if (reasons.includes('invalid_client')) message = 'O Google recusou o cliente OAuth. Confira o client secret atualizado no JSON privado.';
+    else if (reasons.includes('invalid_grant')) message = 'O código OAuth expirou ou já foi usado. Reinicie o assistente e use o novo link.';
+    const error = new Error(message);
     error.status = response.status;
     throw error;
   }

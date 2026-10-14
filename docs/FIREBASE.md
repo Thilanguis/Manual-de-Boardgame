@@ -26,6 +26,12 @@ Google é opcional. Para preservar o UID da conta existente, entre com e-mail/se
 
 Authentication e o documento Firestore são operações distintas. Se o registro do pedido falhar por falta de conexão, o próximo login tenta novamente; Minha conta oferece concluir a solicitação quando não há perfil. Esse retry não aprova nem muda permissões.
 
+### Chave Firebase e desenvolvimento local
+
+A chave pública em `config/app-config.js` é a chave do Firebase, separada da chave pública do Google Picker. Não aplique à chave Firebase somente os referenciadores do assistente OAuth (`localhost:4180` e `docs.google.com`): isso bloqueia o login do site com `auth/requests-from-referer-...-are-blocked`.
+
+As restrições de navegador da chave Firebase permitem GitHub Pages (`https://thilanguis.github.io/*`), o domínio do handler de login (`https://manual-de-boardgame.firebaseapp.com/*`) e `localhost`/`127.0.0.1` nas portas 4173, 4174 e 5500. Os referenciadores anteriores foram preservados. Authentication também autoriza `localhost` e `127.0.0.1`. As restrições de APIs existentes foram preservadas e incluem Identity Toolkit, Token Service e Firestore. Não libere todos os sites com `*` para corrigir um bloqueio. [Restrições de chaves](https://docs.cloud.google.com/api-keys/docs/add-restrictions-api-keys).
+
 ## Provisionar o proprietário com segurança
 
 O único UID proprietário é `7TitBObtb8a0W8GisSstSM1RHiX2`, fixado nas regras, no frontend e no Worker. O cliente não pode criar, alterar, apagar ou assumir esse perfil. Não há cadastro aberto de superadmin.

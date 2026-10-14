@@ -2,10 +2,11 @@
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
+import { APP_CONFIG } from '../config/app-config.js';
 const require = createRequire(process.env.ACERVO_TEST_MODULES ? resolve(process.env.ACERVO_TEST_MODULES, 'package.json') : import.meta.url);
 const { chromium } = require('playwright');
 const project = 'manual-de-boardgame',
-  base = process.env.ACERVO_TEST_URL || `https://${project}.web.app`;
+  base = process.env.ACERVO_TEST_URL || 'https://thilanguis.github.io/Manual-de-Boardgame/';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }),
@@ -15,6 +16,8 @@ try {
   assert.equal(response.status(), 200);
   await page.waitForFunction(() => document.getElementById('connection-status').textContent.includes('leitura pública'), { timeout: 30000 });
   assert.equal(await page.locator('#library-error').isVisible(), false);
+  const authConfigStatus = await page.evaluate(async (key) => (await fetch(`https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(key)}`)).status, APP_CONFIG.firebase.apiKey);
+  assert.equal(authConfigStatus, 200, 'Referenciador real do navegador autorizado na chave Firebase');
   await page.locator('#account-button').click();
   await page.locator('#google-login-button').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#login-form').isVisible(), true);

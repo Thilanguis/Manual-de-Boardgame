@@ -9,7 +9,10 @@ let reads = 0;
 globalThis.fetch = async (url, init = {}) => {
   url = String(url);
   if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'fixture-temporary-access', refresh_token: 'fixture-private-refresh', scope: 'https://www.googleapis.com/auth/drive.file' });
-  if (url.startsWith('https://www.googleapis.com/drive/v3/about?')) return Response.json({ user: { emailAddress: 'owner@example.test' } });
+  if (url.startsWith('https://www.googleapis.com/drive/v3/about?')) {
+    if (process.env.ACERVO_SETUP_MOCK_FAILURE === 'drive-disabled') return Response.json({ error: { message: 'fixture-private-refresh fixture-private-client', details: [{ reason: 'SERVICE_DISABLED' }] } }, { status: 403 });
+    return Response.json({ user: { emailAddress: 'owner@example.test' } });
+  }
   if (url.startsWith(`https://www.googleapis.com/drive/v3/files/${DRIVE_FOLDER_ID}?`)) {
     if (init.method === 'PATCH') {
       const update = JSON.parse(init.body);
