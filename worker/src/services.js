@@ -1,4 +1,5 @@
 import { ApiError, permissions } from './auth.js';
+import { DRIVE_FOLDER_ID } from '../../js/permissions.js';
 
 let oauthCache = null,
   refreshing = null;
@@ -28,11 +29,12 @@ export async function getDocument(env, path, token = '', fetcher = fetch) {
 }
 export async function requirePermission(env, identity, action, fetcher = fetch) {
   if (!identity) throw new ApiError(401, 'Entre com a conta autorizada.');
-  const profile = await getDocument(env, `admins/${encodeURIComponent(identity.uid)}`, identity.token, fetcher);
+  const profile = await getDocument(env, `users/${encodeURIComponent(identity.uid)}`, identity.token, fetcher);
   if (!permissions(profile, identity.uid, env.OWNER_UID)[action]) throw new ApiError(403, 'Sua conta não tem permissão para esta operação.');
   return profile;
 }
 export async function driveToken(env, fetcher = fetch) {
+  if (env.DRIVE_FOLDER_ID && env.DRIVE_FOLDER_ID !== DRIVE_FOLDER_ID) throw new ApiError(503, 'O armazenamento deve usar a pasta PDFs indicada pelo proprietário.');
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.GOOGLE_REFRESH_TOKEN || !env.DRIVE_FOLDER_ID || !env.DRIVE_OWNER_EMAIL) throw new ApiError(503, 'O Drive central ainda precisa ser conectado pelo proprietário.');
   if (oauthCache?.expires > Date.now() + 60000) return oauthCache.token;
   if (refreshing) return refreshing;

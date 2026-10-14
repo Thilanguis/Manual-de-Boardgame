@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handleRequest } from '../src/index.js';
 import { base64url, openTicket } from '../src/auth.js';
+import { DRIVE_FOLDER_ID } from '../../js/permissions.js';
 
 const id = '12345678-1234-1234-1234-123456789abc';
 const env = {
@@ -13,7 +14,7 @@ const env = {
   GOOGLE_CLIENT_ID: 'fake-client',
   GOOGLE_CLIENT_SECRET: 'fake-secret',
   GOOGLE_REFRESH_TOKEN: 'fake-refresh',
-  DRIVE_FOLDER_ID: 'folder123',
+  DRIVE_FOLDER_ID,
   DRIVE_OWNER_EMAIL: 'owner@example.test',
   TICKET_KEY: base64url(crypto.getRandomValues(new Uint8Array(32))),
 };
@@ -55,7 +56,7 @@ function services(options = {}) {
     calls.push({ url, ...init });
     if (url.includes('/jwk/')) return Response.json({ keys: [jwk] });
     if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'fake-owner-access', expires_in: 3600 });
-    if (url.includes('/documents/admins/owner')) return Response.json({ fields: value({ enabled: options.enabled !== false, role: 'admin' }).mapValue.fields });
+    if (url.includes('/documents/users/owner')) return Response.json({ fields: value({ uid: 'owner', status: options.enabled !== false ? 'approved' : 'blocked', role: 'superadmin' }).mapValue.fields });
     if (url.includes('/documents:commit')) {
       if (options.conflict) return Response.json({ error: 'ABORTED' }, { status: 409 });
       const body = JSON.parse(init.body);

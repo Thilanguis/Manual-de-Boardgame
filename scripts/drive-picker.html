@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Autorizar pasta PDFs — Acervo</title>
+    <style>
+      body {
+        font: 16px system-ui;
+        background: #101012;
+        color: #f3f0ed;
+        max-width: 700px;
+        margin: 60px auto;
+        padding: 20px;
+      }
+      button {
+        background: #ed334b;
+        color: white;
+        border: 0;
+        padding: 14px 20px;
+        border-radius: 10px;
+        font: inherit;
+        cursor: pointer;
+      }
+      p {
+        line-height: 1.6;
+      }
+      code {
+        overflow-wrap: anywhere;
+      }
+    </style>
+    <script nonce="SETUP_NONCE">
+      window.acervoSetupState = 'SETUP_STATE';
+    </script>
+    <script src="https://apis.google.com/js/api.js" defer></script>
+    <script src="/picker.js" defer></script>
+  </head>
+  <body>
+    <h1>Autorize a pasta PDFs existente</h1>
+    <p>
+      Selecione a pasta
+      <strong>PDFs</strong>
+      com o ID
+      <code>1XUgXOYRigMaYuNMbFVcjDp6obEp4r7wR</code>
+      . Nenhuma outra pasta será utilizada.
+    </p>
+    <p>Esta tela local usa um access token temporário somente para o Google Picker. Refresh token e client secret permanecem no processo local e são enviados aos secrets do Worker.</p>
+    <button id="choose" disabled>Selecionar pasta PDFs</button>
+    <p id="status" role="status">Carregando Google Picker…</p>
+  </body>
+</html>

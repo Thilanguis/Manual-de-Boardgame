@@ -30,18 +30,18 @@ test('indisponibilidade das chaves não libera o acesso', async () => {
 });
 test('permissões exigem perfil ativo e flag específica; UID proprietário sozinho não basta', () => {
   assert.deepEqual(permissions(null, 'owner', 'owner'), { add: false, edit: false, delete: false });
-  assert.deepEqual(permissions({ enabled: false, role: 'admin' }, 'owner', 'owner'), { add: false, edit: false, delete: false });
-  assert.deepEqual(permissions({ enabled: true, role: 'subadmin', permissions: { add: true, edit: true, delete: false } }, 'sub', 'owner'), { add: true, edit: true, delete: false });
-  assert.deepEqual(permissions({ enabled: true, role: 'visitor', permissions: { delete: true } }, 'sub', 'owner'), { add: false, edit: false, delete: false });
+  assert.deepEqual(permissions({ uid: 'owner', status: 'blocked', role: 'superadmin' }, 'owner', 'owner'), { add: false, edit: false, delete: false });
+  assert.deepEqual(permissions({ uid: 'sub', status: 'approved', role: 'subadmin', permissions: { addGames: true, editGames: true, deleteGames: true } }, 'sub', 'owner'), { add: true, edit: true, delete: false });
+  assert.deepEqual(permissions({ uid: 'sub', status: 'approved', role: 'superadmin', permissions: { deleteGames: true } }, 'sub', 'owner'), { add: false, edit: false, delete: false });
 });
 test('cada autorização consulta o perfil atual pelo JWT Firebase, inclusive após revogação', async () => {
   let enabled = true,
     count = 0;
   const fetcher = async (url, init) => {
     count++;
-    assert.match(url, /admins\/sub$/);
+    assert.match(url, /users\/sub$/);
     assert.equal(init.headers.Authorization, 'Bearer firebase-session');
-    return Response.json({ fields: { enabled: { booleanValue: enabled }, role: { stringValue: 'subadmin' }, permissions: { mapValue: { fields: { add: { booleanValue: true } } } } } });
+    return Response.json({ fields: { uid: { stringValue: 'sub' }, status: { stringValue: enabled ? 'approved' : 'blocked' }, role: { stringValue: 'subadmin' }, permissions: { mapValue: { fields: { addGames: { booleanValue: true } } } } } });
   };
   const env = { FIREBASE_PROJECT_ID: project, OWNER_UID: 'owner' },
     identity = { uid: 'sub', token: 'firebase-session' };

@@ -1,13 +1,18 @@
 import { createDriveStorage } from './drive-storage.js';
 import { safeImageUrl } from './model.js';
+import { OWNER_UID, accessFor, emptyPermissions, profileSummary, userChange } from './permissions.js';
 const SDK = 'https://www.gstatic.com/firebasejs/13.0.0';
-const OWNER_UID = '7TitBObtb8a0W8GisSstSM1RHiX2';
 
 export async function createFirebaseRepository(config) {
   const [appSDK, authSDK, dbSDK] = await Promise.all([import(`${SDK}/firebase-app.js`), import(`${SDK}/firebase-auth.js`), import(`${SDK}/firebase-firestore.js`)]);
   const app = appSDK.initializeApp(config.firebase),
     auth = authSDK.getAuth(app),
     db = dbSDK.getFirestore(app);
+  if (config.emulators) {
+    if (!['localhost', '127.0.0.1'].includes(location.hostname)) throw new Error('Emuladores só podem ser usados no ambiente local.');
+    authSDK.connectAuthEmulator(auth, config.emulators.auth, { disableWarnings: true });
+    dbSDK.connectFirestoreEmulator(db, config.emulators.host, config.emulators.port);
+  }
   const files = createDriveStorage(
     { ...config.fileStorage, projectId: config.firebase.projectId },
     () => auth.currentUser?.getIdToken(),
@@ -18,7 +23,14 @@ export async function createFirebaseRepository(config) {
     errorListeners = new Set(),
     urls = new Map();
   let unsubscribe = null,
-    sessionSequence = 0;
+    stopProfile = null,
+    queryKey = '',
+    querySequence = 0,
+    sessionSequence = 0,
+    profile = null,
+    publicRead = true,
+    settingsLoaded = false,
+    requestedName = '';
   const repository = {
     mode: 'firebase',
     fileProvider: 'drive',
@@ -39,6 +51,88 @@ export async function createFirebaseRepository(config) {
     },
     async login(email, password) {
       await authSDK.signInWithEmailAndPassword(auth, email, password);
+    },
+    async register(name, email, password) {
+      requestedName = String(name).trim().slice(0, 100);
+      if (!requestedName) throw new Error('Informe seu nome.');
+      try {
+        const credential = await authSDK.createUserWithEmailAndPassword(auth, String(email).trim().toLowerCase(), password);
+        await authSDK.updateProfile(credential.user, { displayName: requestedName });
+        await ensureProfile(credential.user);
+      } finally {
+        requestedName = '';
+      }
+    },
+    async resetPassword(email) {
+      await authSDK.sendPasswordResetEmail(auth, String(email).trim());
+    },
+    async retryProfile() {
+      if (!auth.currentUser) throw new Error('Entre na conta primeiro.');
+      await ensureProfile(auth.currentUser);
+    },
+    subscribePending(callback, onError) {
+      let initial = true;
+      return dbSDK.onSnapshot(
+        dbSDK.query(dbSDK.collection(db, 'users'), dbSDK.where('status', '==', 'pending')),
+        (snapshot) => {
+          callback(snapshot.docs.map(toProfile), {
+            initial,
+            fromCache: snapshot.metadata.fromCache,
+            added: snapshot
+              .docChanges()
+              .filter((change) => change.type === 'added')
+              .map((change) => toProfile(change.doc)),
+          });
+          if (!snapshot.metadata.fromCache) initial = false;
+        },
+        onError,
+      );
+    },
+    subscribePeople(callback, onError) {
+      return dbSDK.onSnapshot(dbSDK.collection(db, 'users'), (snapshot) => callback(snapshot.docs.map(toProfile)), onError);
+    },
+    subscribeAudit(callback, onError) {
+      return dbSDK.onSnapshot(
+        dbSDK.query(dbSDK.collection(db, 'auditEvents'), dbSDK.orderBy('createdAt', 'desc'), dbSDK.limit(50)),
+        (snapshot) => callback(snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id, createdAt: doc.data().createdAt?.toMillis?.() || 0 }))),
+        onError,
+      );
+    },
+    async changeUser(uid, action, permissions) {
+      if (!auth.currentUser || uid === auth.currentUser.uid || uid === OWNER_UID) throw new Error('Esta conta está protegida e não pode ser alterada.');
+      if (['approve', 'reject'].includes(action) ? !this.session.canApproveUsers : !this.session.canManageUsers) throw new Error('Sua conta não tem permissão para esta operação.');
+      const ref = dbSDK.doc(db, 'users', uid),
+        eventId = crypto.randomUUID();
+      await dbSDK.runTransaction(db, async (tx) => {
+        const current = (await tx.get(ref)).data();
+        if (!current) throw new Error('Conta não encontrada.');
+        const change = userChange(current, action, permissions),
+          version = current.version + 1;
+        tx.update(ref, { ...change, version, lastEventId: eventId, updatedAt: dbSDK.serverTimestamp() });
+        tx.set(dbSDK.doc(db, 'auditEvents', eventId), { id: eventId, targetType: 'user', targetId: uid, actorUid: auth.currentUser.uid, action, before: profileSummary(current), after: change, version, createdAt: dbSDK.serverTimestamp() });
+      });
+    },
+    async setLibraryPublic(value) {
+      if (!this.session.canConfigure) throw new Error('Somente o proprietário pode alterar a biblioteca.');
+      const eventId = crypto.randomUUID(),
+        ref = dbSDK.doc(db, 'settings', 'library');
+      await dbSDK.runTransaction(db, async (tx) => {
+        const current = (await tx.get(ref)).data();
+        if (!current?.version) throw new Error('Execute o procedimento seguro de preparação do proprietário.');
+        const version = current.version + 1;
+        tx.update(ref, { publicRead: value === true, version, lastEventId: eventId, updatedAt: dbSDK.serverTimestamp() });
+        tx.set(dbSDK.doc(db, 'auditEvents', eventId), {
+          id: eventId,
+          targetType: 'settings',
+          targetId: 'library',
+          actorUid: auth.currentUser.uid,
+          action: 'librarySettings',
+          before: { publicRead: current.publicRead },
+          after: { publicRead: value === true },
+          version,
+          createdAt: dbSDK.serverTimestamp(),
+        });
+      });
     },
     async loginGoogle() {
       const provider = new authSDK.GoogleAuthProvider();
@@ -148,6 +242,8 @@ export async function createFirebaseRepository(config) {
     },
     close() {
       unsubscribe?.();
+      stopProfile?.();
+      stopSettings();
       stopAuth();
       revokeURLs();
     },
@@ -162,44 +258,76 @@ export async function createFirebaseRepository(config) {
   function report(error) {
     for (const callback of errorListeners) callback(error);
   }
+  function toProfile(doc) {
+    const p = doc.data();
+    return { ...p, uid: doc.id, createdAt: p.createdAt?.toMillis?.() || 0, updatedAt: p.updatedAt?.toMillis?.() || 0 };
+  }
+  async function ensureProfile(user) {
+    if (user.uid === OWNER_UID) return; // O proprietário só é provisionado via IAM local.
+    const name = (requestedName || user.displayName || user.email?.split('@')[0] || 'Usuário').trim().slice(0, 100);
+    const ref = dbSDK.doc(db, 'users', user.uid);
+    await dbSDK.runTransaction(db, async (tx) => {
+      if ((await tx.get(ref)).exists()) return;
+      tx.set(ref, { uid: user.uid, name, email: user.email, role: 'user', status: 'pending', permissions: emptyPermissions(), createdAt: dbSDK.serverTimestamp(), updatedAt: dbSDK.serverTimestamp(), version: 1, lastEventId: '' });
+    });
+  }
+  function publishSession(user) {
+    const rights = accessFor(profile, user?.uid);
+    repository.session = { mode: 'firebase', user, profile, ...rights, canRead: true, publicRead, settingsLoaded, publicOnly: !rights.canReadAll && !publicRead, role: profile?.role || 'visitor', status: profile?.status || 'missing' };
+    for (const callback of sessionListeners) callback(repository.session);
+    const key = `${user?.uid || 'visitor'}:${rights.canReadAll ? 'all' : publicRead ? 'publicLibrary' : 'publishedOnly'}`;
+    if (key === queryKey) return;
+    queryKey = key;
+    unsubscribe?.();
+    revokeURLs();
+    const sequence = ++querySequence;
+    repository.games = [];
+    for (const callback of gameListeners) callback([]);
+    const collection = dbSDK.collection(db, 'games');
+    const query = rights.canReadAll ? collection : publicRead ? dbSDK.query(collection, dbSDK.where('deleting', '==', false)) : dbSDK.query(collection, dbSDK.where('isPublic', '==', true), dbSDK.where('deleting', '==', false));
+    unsubscribe = dbSDK.onSnapshot(
+      query,
+      (snapshot) => {
+        if (sequence !== querySequence) return;
+        repository.games = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id, createdAt: doc.data().createdAt?.toMillis?.() || 0, updatedAt: doc.data().updatedAt?.toMillis?.() || 0 }));
+        for (const callback of gameListeners) callback(repository.games);
+      },
+      (error) => {
+        if (sequence === querySequence) report(error);
+      },
+    );
+  }
+  const stopSettings = dbSDK.onSnapshot(
+    dbSDK.doc(db, 'settings', 'library'),
+    (snapshot) => {
+      publicRead = snapshot.exists() ? snapshot.data().publicRead === true : true;
+      settingsLoaded = !snapshot.metadata.fromCache;
+      publishSession(auth.currentUser);
+    },
+    report,
+  );
   const stopAuth = authSDK.onAuthStateChanged(auth, async (user) => {
     const sequence = ++sessionSequence;
-    unsubscribe?.();
-    unsubscribe = null;
-    revokeURLs();
-    repository.games = [];
-    repository.session = { mode: 'firebase', user, canRead: false, canWrite: false, canAdd: false, canEdit: false, canDelete: false };
-    for (const callback of gameListeners) callback([]);
-    for (const callback of sessionListeners) callback(repository.session);
+    stopProfile?.();
+    stopProfile = null;
+    profile = null;
+    publishSession(user);
+    if (!user) return;
     try {
-      const [settings, admin] = await Promise.all([dbSDK.getDocFromServer(dbSDK.doc(db, 'settings', 'library')), user ? dbSDK.getDocFromServer(dbSDK.doc(db, 'admins', user.uid)) : null]);
-      if (sequence !== sessionSequence) return;
-      const profile = admin?.data(),
-        enabled = profile?.enabled === true,
-        full = enabled && (user.uid === OWNER_UID || profile.role === 'admin');
-      const rights = {
-        canAdd: full || (enabled && profile.role === 'subadmin' && profile.permissions?.add === true),
-        canEdit: full || (enabled && profile.role === 'subadmin' && profile.permissions?.edit === true),
-        canDelete: full || (enabled && profile.role === 'subadmin' && profile.permissions?.delete === true),
-      };
-      const canWrite = Object.values(rights).some(Boolean),
-        publicRead = settings.data()?.publicRead === true,
-        canReadAll = enabled && (user.uid === OWNER_UID || ['admin', 'subadmin'].includes(profile.role));
-      repository.session = { mode: 'firebase', user, ...rights, canWrite, canRead: true, publicRead, publicOnly: !canReadAll && !publicRead, role: profile?.role || (full ? 'admin' : 'visitor') };
-      for (const callback of sessionListeners) callback(repository.session);
-      const collection = dbSDK.collection(db, 'games'),
-        query = canReadAll ? collection : repository.session.publicOnly ? dbSDK.query(collection, dbSDK.where('isPublic', '==', true), dbSDK.where('deleting', '==', false)) : dbSDK.query(collection, dbSDK.where('deleting', '==', false));
-      unsubscribe = dbSDK.onSnapshot(
-        query,
-        (snapshot) => {
-          repository.games = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id, createdAt: doc.data().createdAt?.toMillis?.() || 0, updatedAt: doc.data().updatedAt?.toMillis?.() || 0 }));
-          for (const callback of gameListeners) callback(repository.games);
-        },
-        report,
-      );
+      await ensureProfile(user);
     } catch (error) {
       if (sequence === sessionSequence) report(error);
     }
+    if (sequence !== sessionSequence) return;
+    stopProfile = dbSDK.onSnapshot(
+      dbSDK.doc(db, 'users', user.uid),
+      (snapshot) => {
+        if (sequence !== sessionSequence) return;
+        profile = snapshot.exists() ? snapshot.data() : null;
+        publishSession(user);
+      },
+      report,
+    );
   });
   return repository;
 }

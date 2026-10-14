@@ -1,3 +1,4 @@
+import { accessFor } from '../../js/permissions.js';
 const keysURL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
 let cachedKeys = null;
 
@@ -71,10 +72,8 @@ export function bearer(request) {
   return /^Bearer ([^\s]+)$/i.exec(header)?.[1] || '';
 }
 export function permissions(profile, uid, ownerUid) {
-  if (profile?.enabled !== true) return { add: false, edit: false, delete: false };
-  if (uid === ownerUid || profile.role === 'admin') return { add: true, edit: true, delete: true };
-  if (profile.role !== 'subadmin') return { add: false, edit: false, delete: false };
-  return { add: profile.permissions?.add === true, edit: profile.permissions?.edit === true, delete: profile.permissions?.delete === true };
+  const rights = accessFor(profile, uid, ownerUid);
+  return { add: rights.canAdd, edit: rights.canEdit, delete: rights.canDelete };
 }
 async function ticketKey(secret) {
   if (!secret) throw new ApiError(503, 'A API de arquivos ainda precisa ser configurada.');

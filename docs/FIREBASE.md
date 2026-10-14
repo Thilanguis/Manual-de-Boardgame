@@ -1,92 +1,74 @@
-# Firebase Spark: catálogo, login e permissões
+# Firebase Spark — autenticação, pessoas e permissões
 
-O Acervo usa o projeto `manual-de-boardgame` no plano **Spark** para Authentication e Firestore. A interface está publicada no [GitHub Pages](https://thilanguis.github.io/Manual-de-Boardgame/) e no [host Firebase de transição](https://manual-de-boardgame.web.app). As regras atuais compilaram e os índices foram publicados. A verificação em Chrome anônimo no Pages carregou SDK, PWA e catálogo sem erros, mostrou o botão Google e ocultou o formulário de senha; a consulta restrita a jogos `isPublic: true`/`deleting: false` foi permitida. Acesso irrestrito ao catálogo e à coleção `admins` foi negado na validação Firebase. A integração de arquivos depende do backend Drive descrito em [GOOGLE-DRIVE-CLOUDFLARE.md](GOOGLE-DRIVE-CLOUDFLARE.md).
+O frontend usa exclusivamente [GitHub Pages](https://thilanguis.github.io/Manual-de-Boardgame/). Firebase `manual-de-boardgame` permanece Spark, com Authentication e Firestore. PDFs e capas usam a pasta Drive do proprietário por uma API Cloudflare Free. Não há dependência de Firebase Hosting, Cloud Storage ou Functions nesta arquitetura; `firebase.json` configura somente Firestore e emuladores locais.
 
-A arquitetura atual publica a interface no GitHub Pages e guarda PDFs/capas no Google Drive pessoal do proprietário, por um Cloudflare Worker Free. Não se deve executar comandos antigos que provisionem armazenamento de arquivos no Firebase ou publiquem Cloud Functions. O projeto permanece Spark.
+## Identidades e estados
 
-## Configuração já recebida
+O perfil é `users/{UID}`, com nome, e-mail, `role`, `status`, `permissions`, datas do servidor, versão e último evento. Novas contas recebem exclusivamente `role: user`, `status: pending` e todas as permissões falsas. Login Google de uma nova pessoa também cria esse pedido. Contas Authentication anteriores passam a ter uma solicitação no primeiro acesso à nova versão, exceto o proprietário provisionado explicitamente.
 
-| Opção                  | Valor/finalidade                                                      |
-| ---------------------- | --------------------------------------------------------------------- |
-| `firebase.projectId`   | `manual-de-boardgame`                                                 |
-| `firebase.authDomain`  | `manual-de-boardgame.firebaseapp.com`                                 |
-| `fileStorage.provider` | `drive`                                                               |
-| `fileStorage.apiBase`  | URL HTTPS real do Worker, a preencher após o deploy.                  |
-| `enableBgg`            | `false`; opcional após preparar o backend/token.                      |
-| `allowPasswordLogin`   | `true` para transição/local; a UI oculta senha em hosts `.github.io`. |
-| `maxPdfBytes`          | 52.428.800 bytes (50 MiB).                                            |
+| Perfil                           | Acesso                                                                  |
+| -------------------------------- | ----------------------------------------------------------------------- |
+| Visitante                        | Consulta catálogo e lê PDFs públicos sem conta.                         |
+| Usuário pending/rejected/blocked | Continua lendo conteúdo público; não administra.                        |
+| Usuário approved                 | Usuário comum, sem escrita administrativa.                              |
+| Subadmin approved                | Operações concedidas em approveUsers, addGames e editGames.             |
+| Superadmin                       | Aprova, promove, rebaixa, bloqueia, configura e exclui definitivamente. |
 
-O objeto Firebase web é público e identifica a aplicação; não deve receber client secret Google, refresh token, chave administrativa ou token BGG. O `measurementId` recebido não inicializa Analytics: o SDK Analytics não é carregado.
+`deleteGames` é sempre falso para subadministradores. A exclusão definitiva é exclusiva do proprietário, conforme a restrição da solicitação principal. Nem uma flag adulterada concede essa operação no Worker ou nas regras. Permissões iniciais de subadmin: aprovar cadastros, adicionar e editar; o proprietário pode retirar cada uma.
 
-## Authentication e login Google
+O bloqueio é um estado no Firestore: revoga imediatamente a autorização administrativa, inclusive para tokens Firebase ainda válidos. Não apaga a identidade Authentication nem impede a leitura pública. Aprovação, recusa e mudanças de estado aparecem em tempo real na conta da pessoa.
 
-No [Console Firebase do projeto](https://console.firebase.google.com/project/manual-de-boardgame/overview), confirme Email/Password e habilite Google em Authentication → Sign-in method. A ativação do provider Google e a vinculação da conta proprietária ainda estão pendentes e não foram verificadas. O Pages usa o botão Google; o formulário de senha continua disponível em localhost e no host Firebase de transição.
+## Authentication
 
-A conta proprietária já usa o UID `7TitBObtb8a0W8GisSstSM1RHiX2`. Para preservar esse UID, entre com a conta existente no host Firebase ou em localhost, abra **Minha Conta → Vincular Google** e conclua a vinculação. Depois use Google no Pages. A vinculação de providers preserva a identidade Firebase; criar outra conta não transfere permissões. [Vinculação oficial](https://firebase.google.com/docs/auth/web/account-linking).
+Em [Firebase Authentication](https://console.firebase.google.com/project/manual-de-boardgame/authentication/providers), habilite Email/Password. A interface oferece entrar, criar conta, recuperar senha e sair. As senhas são enviadas pelo SDK diretamente ao Firebase via HTTPS; não são armazenadas no Firestore, no GitHub ou no Worker.
 
-O domínio `thilanguis.github.io` já foi adicionado a Authorized domains, preservando os demais domínios existentes. O repositório público é [Thilanguis/Manual-de-Boardgame](https://github.com/Thilanguis/Manual-de-Boardgame), e a primeira publicação Pages foi concluída pelo [workflow 38611621664](https://github.com/Thilanguis/Manual-de-Boardgame/actions/runs/38611621664). O site foi verificado em `https://thilanguis.github.io/Manual-de-Boardgame/`. Novos domínios devem ser cadastrados sem protocolo/caminho. A autorização do Drive é feita uma vez pelo proprietário no script local; não é o login Firebase dos administradores.
+Google é opcional. Para preservar o UID da conta existente, entre com e-mail/senha e use **Minha conta → Vincular Google**. Não crie outra conta esperando herdar os privilégios. O domínio `thilanguis.github.io` já foi autorizado; confira os domínios em Authentication → Settings. [Cadastro por senha](https://firebase.google.com/docs/auth/web/password-auth), [vinculação de providers](https://firebase.google.com/docs/auth/web/account-linking).
 
-## Administrador e subadministradores
+Authentication e o documento Firestore são operações distintas. Se o registro do pedido falhar por falta de conexão, o próximo login tenta novamente; Minha conta oferece concluir a solicitação quando não há perfil. Esse retry não aprova nem muda permissões.
 
-Papéis ficam em `admins/{uid}`. O documento proprietário é protegido contra alterações pelo cliente. A configuração `OWNER_UID` do Worker deve usar o UID existente, não o e-mail nem um identificador de outra conta.
+## Provisionar o proprietário com segurança
 
-O documento `admins/7TitBObtb8a0W8GisSstSM1RHiX2` já foi atualizado com `enabled: true` e papel `admin`. O proprietário tem todas as operações. Para conceder acesso a outra conta, obtenha seu UID após o login e cadastre um documento próprio pelo Console ou pela administração autorizada; preserve campos existentes ao atualizar.
+O único UID proprietário é `7TitBObtb8a0W8GisSstSM1RHiX2`, fixado nas regras, no frontend e no Worker. O cliente não pode criar, alterar, apagar ou assumir esse perfil. Não há cadastro aberto de superadmin.
 
-Exemplo de subadministrador:
-
-```json
-{
-  "enabled": true,
-  "role": "subadmin",
-  "permissions": {
-    "add": true,
-    "edit": true,
-    "delete": false
-  }
-}
-```
-
-`role` aceita `admin` ou `subadmin`; o subadministrador fica limitado às operações explicitamente concedidas. Uma conta autenticada sem função autorizada não administra a biblioteca. Para revogar acesso, desative `enabled`; não basta esconder botões. Firestore protege alterações do catálogo e o Worker verifica as permissões antes de acessar/modificar arquivos Drive. Nenhum subadministrador recebe as credenciais OAuth centrais.
-
-## Biblioteca privada ou pública
-
-O documento `settings/library` controla `publicRead`:
-
-| Valor                      | Comportamento                                                                                                                                     |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ausente ou boolean `false` | Jogos privados são lidos por administrador/subadministrador autorizado; jogos marcados individualmente `isPublic: true` permitem leitura anônima. |
-| Boolean `true`             | Todos os jogos que não estão em exclusão permitem leitura anônima do catálogo, capas e PDFs pelo site/proxy. Escrita continua sujeita às funções. |
-
-O checkbox de publicação individual começa desmarcado. `isPublic: true` publica esse jogo mesmo quando a publicação global está desligada. `publicRead: true` publica toda a biblioteca disponível; jogos em exclusão ficam ocultos dos visitantes. Mesmo quando o site oferece leitura pública, os arquivos continuam privados no Drive; o Worker consulta a política e entrega os arquivos permitidos. Não é necessário compartilhar a pasta como “qualquer pessoa com o link”.
-
-## Dados
-
-| Local                        | Conteúdo                                                                                                                                                     |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Firestore `games/{uuid}`     | Título, descrição, jogadores, duração, etiquetas, idioma, fontes, publicação individual `isPublic`, estado de exclusão e referências de PDFs/capas no Drive. |
-| Firestore `admins/{uid}`     | `enabled`, `role` e permissões de administração.                                                                                                             |
-| Firestore `settings/library` | Política de leitura pública.                                                                                                                                 |
-| Pasta Drive central          | PDFs e capas criados pela aplicação sob a conta proprietária.                                                                                                |
-| Firestore `manuals`          | Reserva para futuros manuais próprios ligados por `gameId`; acesso negado nesta versão.                                                                      |
-
-O modo local por `?local=1` continua real, com IndexedDB neste navegador. A biblioteca local é independente da nuvem, não sincroniza dispositivos e não migra automaticamente ao configurar o Worker. Limpar os dados do site remove os arquivos locais.
-
-## Regras e índices Firestore publicados
-
-As regras e os índices atuais já foram publicados junto da interface no host Firebase. Para alterações futuras somente no Firestore, com a Firebase CLI autenticada, na raiz do Acervo:
+Com a Firebase CLI autenticada em uma conta com permissão IAM neste projeto, na raiz:
 
 ```powershell
-firebase deploy --project manual-de-boardgame --only firestore
+npm ci
+npm exec -- firebase login
+node scripts/firebase-setup.mjs 7TitBObtb8a0W8GisSstSM1RHiX2 --pages-domain
+npm exec -- firebase deploy --project manual-de-boardgame --only firestore
 ```
 
-O alvo `firestore` publica regras e índices referenciados no `firebase.json`. O deploy já concluído utilizou `--only 'hosting,firestore'`. Confirme o projeto explicitamente em futuras alterações. A interface GitHub Actions/Pages já está publicada; o Worker ainda depende da autenticação/publicação Cloudflare, conforme o guia da integração. O comando acima não publica arquivos Drive nem ativa faturamento.
+O script aceita somente esse UID, confere sua existência e situação no Authentication e cria `users/{UID}` como `superadmin/approved` usando a sessão CLI em memória. Preserva um perfil proprietário já provisionado; documentos incompatíveis exigem revisão explícita. A migração inicial de `settings/library` torna o catálogo público; execuções seguintes preservam a política vigente. As gravações usam precondições e commit atômico, sem credenciais administrativas no navegador. Não são usados tokens GitHub para gerenciar pessoas.
 
-Firestore Spark tem quotas próprias. A documentação lista 1 GiB armazenado, 50 mil leituras, 20 mil gravações e 20 mil exclusões por dia, além da saída de dados. A aplicação deve respeitar essas quotas; isso não é uma promessa de uso ilimitado. [Quotas Firestore](https://firebase.google.com/docs/firestore/quotas).
+Documentos antigos `admins` não autorizam mais o aplicativo. Não são apagados automaticamente. Outras pessoas são aprovadas e recebem cargos pela nova área de gerenciamento.
 
-## Pendências da nova integração
+## Painel e notificações
 
-- Habilitar Google como provider e vincular a conta existente, preservando o UID do proprietário.
-- Autenticar Cloudflare, autorizar o Drive central, instalar os secrets, publicar o Worker e preencher `fileStorage.apiBase`.
-- Opcionalmente, aprovar a aplicação BGG e guardar seu token como secret do Worker.
+**Gerenciar** mostra contador persistente de pedidos pendentes. Novos pedidos geram aviso visual para revisores conectados. O painel mostra solicitações, contas, cargos, estados e histórico. Usa listeners `onSnapshot`; não depende de recarregar a página ou de Functions. Solicitações feitas enquanto um administrador estava offline permanecem no Firestore.
 
-Não é necessário fornecer senha de conta ou chave privada no frontend. Pages, regras, índices, perfil proprietário e domínio autorizado estão concluídos; a conexão Drive/Worker e o login Google ainda precisam ser finalizados e verificados com as contas reais.
+O listener de pendências fica ativo somente para contas com aprovação. Pessoas e histórico são assinados somente enquanto o painel está aberto. Histórico mostra as últimas 50 mudanças. Para revogar um subadmin, o proprietário pode bloquear a conta, rebaixá-la ou retirar suas flags.
+
+Cada mudança de pessoa ou configuração gera um `auditEvents/{id}` com responsável, alvo, estado anterior/posterior e horário do servidor, no mesmo commit. As regras exigem esse vínculo via `getAfter`; não permitem autoaprovação, edição de cargo próprio, histórico forjado nem apagar/editar eventos. [Transações e getAfter](https://firebase.google.com/docs/firestore/security/rules-conditions).
+
+## Leitura pública
+
+`settings/library.publicRead: true` libera todos os jogos fora de exclusão. É o padrão da migração solicitada. O proprietário pode mudar essa política no painel; se desligar, jogos marcados `isPublic: true` continuam públicos. Escrita permanece restrita em ambas as situações. Arquivos Drive continuam privados; o Worker valida a leitura pelas regras reais do Firestore antes de entregá-los.
+
+## Testes e cotas
+
+Para desenvolvimento, use Node 24.12+ e Java 21, apenas para os testes locais:
+
+```powershell
+npm run check
+npm test
+npm run test:rules
+npm --prefix worker test
+npm run build
+```
+
+`test:rules` usa exclusivamente o projeto fictício `demo-acervo`, sem dados de produção. Os testes cobrem cadastro pendente, ausência de autoaprovação, hierarquia, auditoria, flags, bloqueio de sessão existente e leitura anônima. A QA em navegadores isolados verifica cadastro, aprovação, promoção, aprovação por subadmin, bloqueio, notificações e layouts desktop/celular/tablet. `tests/admin-browser.mjs` requer Playwright disponível no runtime de teste.
+
+Firebase Spark tem quotas: a documentação inclui 1 GiB, 50 mil leituras/dia e 20 mil gravações e exclusões/dia. Listeners consomem leituras; não há promessa de capacidade ilimitada. [Cotas oficiais](https://firebase.google.com/docs/firestore/quotas).
+
+A conexão Drive e o teste de upload real dependem do OAuth proprietário e do Worker. Consulte [GOOGLE-DRIVE-CLOUDFLARE.md](GOOGLE-DRIVE-CLOUDFLARE.md). Nenhum token privado deve ser compartilhado pelo chat.

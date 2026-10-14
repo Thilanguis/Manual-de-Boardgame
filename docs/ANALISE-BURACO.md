@@ -24,9 +24,9 @@ O login Firebase identifica cada administrador/subadministrador. A autorização
 
 A configuração web Firebase já está integrada. O frontend usa `fileStorage: { provider: 'drive', apiBase: '' }`; a URL real do Worker precisa ser preenchida após a publicação. `enableBgg` começa `false`; `measurementId` não inicializa Analytics. O limite de PDF da aplicação é 52.428.800 bytes (50 MiB).
 
-O catálogo usa `games/{uuid}`, e `admins/{uid}` guarda `enabled`, papel `admin`/`subadmin` e permissões. O proprietário tem todas as operações; subadministradores recebem add/edit/delete conforme autorizado. Interface, regras Firestore e Worker aplicam essa autorização. O documento `settings/library.publicRead` ausente/`false` mantém os jogos privados, exceto os marcados individualmente `isPublic: true`; `true` permite leitura anônima de todos os jogos disponíveis pelo site/proxy. O checkbox individual começa desmarcado. Jogos em exclusão não são mostrados aos visitantes; os arquivos continuam privados no Drive. A coleção `manuals`, com futura referência `gameId`, permanece reservada e sem acesso nesta versão.
+O catálogo usa `games/{uuid}`. A versão 1.2 usa `users/{uid}` para estados pending/approved/rejected/blocked, papéis user/subadmin/superadmin e flags approveUsers/addGames/editGames. Exclusão definitiva é exclusiva do proprietário fixado; `admins` é legado sem autorização. Mudanças administrativas exigem auditoria atômica. O padrão da migração é biblioteca pública; jogos em exclusão ficam ocultos dos visitantes. A coleção `manuals`, com futura referência `gameId`, permanece reservada e sem acesso.
 
-A versão anterior no host Firebase, Auth, Firestore e administrador foram preparados. Isso não significa que o backend Drive/Worker ou o GitHub Pages já estejam publicados.
+O frontend está no GitHub Pages e não depende de Firebase Hosting. A pasta Drive existente PDFs está fixada pelo ID fornecido pelo proprietário; o assistente local usa Picker para autorização explícita com drive.file, sem criar outra pasta. OAuth/Worker e o envio real permanecem pendentes até conectar as contas.
 
 ## Identificação com origem e revisão
 

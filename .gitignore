@@ -1,4 +1,6 @@
 node_modules/
+.test-tools/
+*-debug.log
 functions/node_modules/
 worker/node_modules/
 worker/.wrangler/

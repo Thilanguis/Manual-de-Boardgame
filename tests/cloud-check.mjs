@@ -17,7 +17,7 @@ try {
   assert.equal(await page.locator('#library-error').isVisible(), false);
   await page.locator('#account-button').click();
   await page.locator('#google-login-button').waitFor({ state: 'visible' });
-  assert.equal(await page.locator('#login-form').isVisible(), !new URL(base).hostname.endsWith('.github.io'));
+  assert.equal(await page.locator('#login-form').isVisible(), true);
   await page.screenshot({ path: 'test-output/cloud-login.png', fullPage: false });
   await page.locator('[data-close=login-dialog]').click();
   await page.setViewportSize({ width: 390, height: 844 });

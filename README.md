@@ -1,46 +1,41 @@
 # Acervo — Manual de Boardgames
 
-Biblioteca pessoal de manuais, em HTML, CSS e JavaScript puro. Interface escura responsiva, catálogo real, reconhecimento com evidências e leitor PDF.js. Nenhum jogo fictício é carregado na biblioteca. O projeto Buraco foi somente consultado e permanece independente.
+Biblioteca pessoal em HTML, CSS e JavaScript puro, publicada no [GitHub Pages](https://thilanguis.github.io/Manual-de-Boardgame/). Catálogo real, reconhecimento de PDFs com evidências, capas, filtros, favoritos locais, leitor PDF.js e PWA. Não há catálogo fictício nem framework de interface. O Buraco permanece independente.
 
 ## Arquitetura
 
-- **GitHub Pages:** frontend estático no repositório [Thilanguis/Manual-de-Boardgame](https://github.com/Thilanguis/Manual-de-Boardgame).
-- **Firebase Spark:** Authentication e Firestore para catálogo e permissões. Não utiliza Firebase Storage nem Cloud Functions.
-- **Cloudflare Workers Free:** API que verifica o ID token Firebase e as permissões atuais no Firestore antes das operações.
-- **Google Drive pessoal:** PDFs e capas em pasta exclusiva, criados com o OAuth da conta proprietária. Todos os administradores usam esse mesmo armazenamento Google One.
+- Frontend: GitHub Pages.
+- Identidade: Firebase Authentication, login/cadastro por e-mail e senha, recuperação e Google opcional.
+- Dados e autorização: Firestore no Firebase Spark.
+- PDFs/capas: pasta privada [PDFs](https://drive.google.com/drive/folders/1XUgXOYRigMaYuNMbFVcjDp6obEp4r7wR) do proprietário, por Cloudflare Workers Free e OAuth drive.file.
 
-O Worker conserva as credenciais OAuth em secrets. O frontend recebe somente tickets criptografados e referências aos arquivos; nunca recebe o refresh token, client secret ou access token Google. Uploads usam blocos de 8 MiB e sessões retomáveis; a leitura permite requisições Range. Os arquivos permanecem privados no Drive. Visitantes leem pelo site conforme a publicação de cada jogo ou da biblioteca inteira.
+Não há dependência de Firebase Hosting, Storage ou Functions, nem token privado GitHub no JavaScript. A API não usa o Drive do subadministrador. Refresh token e client secret ficam em secrets do Worker.
 
-O frontend está publicado em [thilanguis.github.io/Manual-de-Boardgame](https://thilanguis.github.io/Manual-de-Boardgame/). Regras e índices Firestore foram publicados; o proprietário está autorizado e o domínio Pages foi adicionado ao Authentication. A verificação anônima confirmou a consulta de jogos publicados e o bloqueio de leituras irrestritas/admins.
+**O Drive central ainda exige autorização real:** apiBase está vazia até publicar o Worker e conectar a conta proprietária. A confirmação da pasta pelo conector, os testes simulados e um dry-run não comprovam upload real.
 
-**A autorização externa ainda é necessária:** `fileStorage.apiBase` está vazia até publicar o Worker e conectar o Drive. O código e a configuração Firebase, isoladamente, não tornam os uploads centrais disponíveis. Siga o [guia completo do Google Cloud, OAuth e Cloudflare](docs/GOOGLE-DRIVE-CLOUDFLARE.md) e o [guia Firebase](docs/FIREBASE.md). Não anexe credenciais privadas ao chat ou ao repositório.
+## Pessoas e permissões
 
-## Funcionalidades
+Visitantes leem conteúdo público sem conta. Novas contas recebem pending/user, sem privilégios. Aprovação as torna usuários comuns. O proprietário pode promover a subadmin, configurar approveUsers/addGames/editGames, rebaixar ou bloquear. Exclusão definitiva é exclusiva do superadmin; subadmins não gerenciam cargos ou configurações. Seu UID está fixado e protegido contra alterações pelo cliente.
 
-- Pesquisa, filtros, categorias, favoritos e retomada de leitura.
-- PDF até 50 MiB, texto de até 12 páginas, sugestões de título/jogadores/duração com fontes e revisão obrigatória. Dados ausentes ficam desconhecidos; PDFs escaneados não passam por OCR.
-- Primeira página como capa, imagem própria e integração opcional BGG pelo Worker. O BGG exige aprovação e token próprio; vem desativado.
-- Adicionar, consultar, editar, substituir PDF e excluir. Subadministradores recebem permissões independentes de adicionar/editar/excluir.
-- Leitor com seleção de texto, páginas, zoom, teclado e gestos, disponível no computador, celular e tablet.
-- PWA instalável e atualização mediante aviso. O cache não baixa a biblioteca inteira; manuais centrais exigem conexão.
-- Exclusão com controle de versão e marcação prévia do registro para bloquear edições concorrentes. Falhas podem ser retomadas.
-- Schema reservado para futuros manuais interativos; essa funcionalidade não foi desenvolvida.
+O painel Gerenciar oferece contador e avisos de solicitações em tempo real, aprovação/recusa, pessoas, permissões e histórico. Regras Firestore e Worker aplicam as permissões; ocultar botões não concede segurança. Mudanças de pessoas/configuração são transações vinculadas a auditoria imutável. Bloqueios revogam autorização administrativa para sessões já existentes.
 
-Favoritos e progresso ficam no navegador, separados por modo e conta. Uploads completos abandonados podem ocupar espaço na pasta central; não há limpeza automática nem quota individual por administrador.
+A biblioteca começa pública na migração. O proprietário pode alterar a política global; jogos publicados individualmente continuam disponíveis quando ela está desligada. PDFs continuam privados no Drive e são entregues pelo proxy autorizado.
 
-## Executar e verificar
+## Executar e testar
 
-Requer Node.js 22+. A interface usa dependências vendorizadas e não precisa de npm para executar:
+Para desenvolvimento e testes: Node 24.12+; Java 21 para emuladores.
 
 ```powershell
+npm ci
 npm start
 ```
 
-Abra `http://localhost:4173`. Para uma biblioteca real independente neste navegador, abra `http://localhost:4173/?local=1`. Esse modo usa IndexedDB, não sincroniza com outros dispositivos e não migra automaticamente arquivos para o Drive. Apagar dados do navegador pode apagar a biblioteca local.
+Abra http://localhost:4173. O modo real local `?local=1` continua disponível: usa IndexedDB neste navegador, sem sincronização nem migração automática para Drive. Limpar dados do site pode apagar essa biblioteca.
 
 ```powershell
 npm run check
 npm test
+npm run test:rules
 npm run build
 npm --prefix worker ci
 npm --prefix worker run check
@@ -48,24 +43,20 @@ npm --prefix worker test
 npm --prefix worker run build
 ```
 
-O build estático copia somente os recursos públicos para `public/`. O build do Worker é um dry-run sem publicação. O workflow `.github/workflows/pages.yml` verifica os dois componentes e publica somente `public/` no Pages; **GitHub Actions** já está configurado em Settings → Pages.
+O build copia apenas recursos públicos para public/. Scripts locais, JSON OAuth, dependências Node e testes não são publicados. O build Worker é dry-run. O workflow Pages executa testes unitários, testes reais de regras em demo-acervo e build; publica somente public/.
 
-Os testes automatizados cobrem reconhecimento, cache, verificação JWT, tickets, permissões, limites de upload, vínculo de arquivos e operações da API com serviços simulados. `tests/browser.mjs` verifica importação de um PDF gerado, persistência, substituição, leitor, edição e exclusão em contexto isolado; requer Playwright, pdf-lib e Chrome. Eles não substituem a validação final no Drive real após a conexão OAuth.
+Testes cobrem reconhecimento, PWA/cache, retomada, JWT, tickets, acesso/folder, exclusão concorrente, CSRF e isolamento do assistente OAuth. Emuladores verificam cadastro pending, leitura pública, hierarquia, auditoria, flags e bloqueio da sessão existente. QA de navegador usa dados descartáveis: importação/substituição/leitura de PDF e gerenciamento entre contas distintas em tempo real, inclusive celular/tablet. A integração Drive real e CPU do Workers Free só podem ser validadas após conectar as contas.
 
-Validação realizada: 30 testes automatizados aprovados, interface verificada no computador/celular/tablet, API compilada em dry-run e workflow Pages concluído com sucesso. OAuth proprietário, operações Drive reais e CPU no Workers Free aguardam a conexão das contas.
+Ferramentas de desenvolvimento têm overrides de correção para dependências transitivas, sem alterar os SDKs CDN do frontend; validá-las pelos emuladores faz parte do workflow.
 
-Para Prettier e VS Code, execute `npm ci`; as preferências de formatação e extensão recomendada estão no projeto.
+## Ativação
 
-## Organização e publicação
+O [guia Firebase](docs/FIREBASE.md) explica bootstrap seguro do UID proprietário, regras, estados, painel e cotas. O [guia Google Drive/Cloudflare](docs/GOOGLE-DRIVE-CLOUDFLARE.md) contém Console Google Cloud, OAuth Web, escopo mínimo, Picker local autorizado, secrets e teste de envio real à pasta existente. Nenhuma nova pasta é criada automaticamente.
 
-`js/`: interface, reconhecimento, leitor, repositório Firebase, armazenamento Drive e modo local. `worker/`: API segura. `backend/`: parser BGG. `scripts/`: servidor, build e conexão OAuth local. `firestore.rules` e `firestore.indexes.json`: autorização e consultas. `vendor/pdfjs/`: PDF.js 5.6.205, Apache-2.0. `docs/ANALISE-BURACO.md`: análise e decisões de reaproveitamento.
+BGG é opcional, via Worker com token secreto aprovado; vem desativado. PDFs escaneados não passam por OCR; campos sem evidência ficam desconhecidos para revisão. Favoritos e progresso continuam locais. Manuais interativos permanecem reservados para uma etapa futura.
 
-Publique regras e índices no projeto correto, sem ativar faturamento:
+## Organização
 
-```powershell
-firebase deploy --project manual-de-boardgame --only firestore
-```
+js/: interface, pessoas/permissões, reconhecimento, leitor e repositórios. worker/: API. scripts/: servidor, build, bootstrap IAM e OAuth local. firestore.rules: autorização e auditoria. security/: testes em emulador. tests/: unidades e QA. vendor/pdfjs/: PDF.js 5.6.205 e licenças. docs/ANALISE-BURACO.md: decisões de reaproveitamento.
 
-O host Firebase `https://manual-de-boardgame.web.app` pode servir para vincular o login Google à conta administrativa existente antes de usar Pages. O UID proprietário configurado é `7TitBObtb8a0W8GisSstSM1RHiX2`. No domínio `.github.io`, o login usa o popup Google; vincule esse provider à conta existente para preservar o UID, conforme o guia.
-
-Os planos gratuitos têm cotas. A arquitetura não exige Blaze nem contratação de infraestrutura adicional; sua capacidade real depende das cotas Firebase, Workers e Drive API. Consulte as fontes e limitações no guia antes da ativação.
+Firebase Spark, Workers Free, GitHub Pages e Drive API têm cotas. A arquitetura não exige faturamento adicional dentro dessas cotas; Google One não remove limites da API. Não há quota individual nem limpeza automática de arquivos completos abandonados antes de vincular ao catálogo.

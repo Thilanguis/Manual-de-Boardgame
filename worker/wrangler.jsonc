@@ -7,7 +7,7 @@
   "vars": {
     "FIREBASE_PROJECT_ID": "manual-de-boardgame",
     "OWNER_UID": "7TitBObtb8a0W8GisSstSM1RHiX2",
-    "ALLOWED_ORIGINS": "http://localhost:4173,http://localhost:4174,https://thilanguis.github.io,https://manual-de-boardgame.web.app,https://manual-de-boardgame.firebaseapp.com",
+    "ALLOWED_ORIGINS": "http://localhost:4173,http://localhost:4174,https://thilanguis.github.io",
     "MAX_PDF_BYTES": "52428800",
   },
   "observability": { "enabled": false },

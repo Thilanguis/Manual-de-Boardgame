@@ -3,10 +3,13 @@ import { filterGames, playersLabel, validateGame, safeImageUrl } from './model.j
 import { inspectPdf, imageToJpeg } from './pdf.js';
 import { createReader } from './reader.js';
 import { setupPwa } from './pwa.js';
+import { createAdminPanel } from './admin-panel.js';
+import { roleLabel, statusLabel } from './permissions.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
 let repository,
+  adminPanel,
   reader,
   draft = null,
   manualBlob = null,
@@ -17,7 +20,6 @@ let repository,
   importSequence = 0,
   noticeTimer;
 const localMode = new URLSearchParams(location.search).get('local') === '1' || !APP_CONFIG.firebase;
-const onGithubPages = location.hostname.endsWith('.github.io');
 function icon(name) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   const use = document.createElementNS(svg.namespaceURI, 'use');
@@ -38,19 +40,15 @@ function errorMessage(error) {
     'auth/invalid-email': 'Informe um e-mail válido.',
     'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco e tente novamente.',
     'auth/network-request-failed': 'Não foi possível conectar. Confira sua internet.',
-    'auth/operation-not-allowed': 'Habilite E-mail/Senha no Firebase Authentication.',
+    'auth/operation-not-allowed': 'Este método de login precisa ser habilitado no Firebase Authentication.',
     'auth/configuration-not-found': 'Ative o Firebase Authentication no Console do projeto.',
     'auth/popup-blocked': 'O navegador bloqueou a janela de login. Permita popups para este site e tente novamente.',
-    'auth/account-exists-with-different-credential': 'Esta conta usa outro método de login. Entre no endereço temporário do Firebase com a senha e vincule o Google para preservar seu UID.',
+    'auth/account-exists-with-different-credential': 'Esta conta usa outro método de login. Entre com e-mail e senha e vincule o Google para preservar seu UID.',
+    'auth/email-already-in-use': 'Já existe uma conta com este e-mail. Entre ou use a recuperação de senha.',
+    'auth/weak-password': 'Use uma senha com pelo menos oito caracteres.',
     'auth/unauthorized-domain': 'Adicione este domínio aos domínios autorizados do Firebase Authentication.',
     'resource-exhausted': 'A cota gratuita do Firebase foi atingida. Aguarde a renovação da cota e tente novamente.',
-    'permission-denied': 'O Firebase negou o acesso. Publique as regras deste projeto e autorize sua conta em admins/UID com enabled: true.',
-    'storage/unauthorized': 'O Storage negou o acesso. Confira as regras e a autorização de administrador.',
-    'storage/unknown': 'O Storage não respondeu. Confira a ativação do serviço, o plano Blaze e o CORS do bucket.',
-    'storage/quota-exceeded': 'O Storage está indisponível. Confira o plano Blaze e as cotas do projeto.',
-    'functions/not-found': 'A função do BoardGameGeek ainda não foi publicada. Siga o guia de configuração.',
-    'functions/unauthenticated': 'Entre com a conta administradora para consultar o BoardGameGeek.',
-    'functions/permission-denied': 'Sua conta não tem autorização para consultar o BoardGameGeek.',
+    'permission-denied': 'Você não tem permissão para esta operação. Sua aprovação e suas permissões são verificadas no Firestore.',
   };
   if (error.name === 'PasswordException') return 'Este PDF é protegido por senha. Importe uma cópia sem senha.';
   if (error.name === 'InvalidPDFException') return 'O PDF não pôde ser lido. Verifique se o arquivo está íntegro.';
@@ -747,24 +745,85 @@ $('confirm-delete').onclick = async () => {
     $('confirm-delete').disabled = false;
   }
 };
+function authView(view = 'login') {
+  const signedIn = !!state.session.user;
+  for (const name of ['login', 'register', 'recovery']) $(`${name}-form`).hidden = signedIn || name !== view;
+  $('google-login').hidden = signedIn || view === 'recovery';
+  $('pages-login-note').hidden = true;
+  $('session-info').hidden = !signedIn;
+}
+function renderAccount() {
+  const { user, profile } = state.session;
+  if (!user) return;
+  $('session-message').textContent = `${profile?.name || user.displayName || user.email} · ${roleLabel(profile?.role)}`;
+  $('session-uid').value = user.uid;
+  $('session-status').textContent =
+    statusLabel(profile?.status) +
+    '. ' +
+    ({
+      pending: 'Sua solicitação será analisada. Você já pode ler os manuais públicos.',
+      approved: 'Seu acesso está atualizado.',
+      rejected: 'Sua solicitação foi recusada. A leitura pública continua disponível.',
+      blocked: 'Seu acesso administrativo foi revogado. A leitura pública continua disponível.',
+    }[profile?.status] || 'Sua solicitação ainda precisa ser registrada.');
+  $('retry-profile-button').hidden = !!profile || user.uid === '7TitBObtb8a0W8GisSstSM1RHiX2';
+  $('link-google-button').hidden = user.providerData?.some((provider) => provider.providerId === 'google.com');
+}
 function showLogin() {
   if (localMode || !repository) {
     showDialog('setup-dialog');
     return;
   }
-  const user = state.session.user;
-  $('login-form').hidden = !!user || onGithubPages;
-  $('google-login').hidden = !!user;
-  $('pages-login-note').hidden = !onGithubPages;
+  authView();
+  renderAccount();
   $('google-login-error').hidden = true;
-  $('session-info').hidden = !user;
-  if (user) {
-    $('session-message').textContent = state.session.canWrite ? `Você entrou como administrador: ${user.email}.` : `Conta conectada: ${user.email}. Ainda falta autorizar esta conta no Firestore.`;
-    $('session-uid').value = user.uid;
-  }
   $('login-error').hidden = true;
   showDialog('login-dialog');
 }
+document.querySelectorAll('[data-auth-view]').forEach((button) => (button.onclick = () => authView(button.dataset.authView)));
+$('register-form').onsubmit = async (event) => {
+  event.preventDefault();
+  $('register-submit').disabled = true;
+  $('register-error').hidden = true;
+  try {
+    const fields = new FormData(event.target);
+    if (fields.get('password') !== fields.get('confirmation')) throw new Error('As senhas não coincidem.');
+    await repository.register(fields.get('name'), fields.get('email'), fields.get('password'));
+    event.target.reset();
+    closeDialog('login-dialog');
+    showNotice('Conta criada! Aguarde a aprovação de um administrador.');
+  } catch (error) {
+    $('register-error').textContent = errorMessage(error);
+    $('register-error').hidden = false;
+  } finally {
+    $('register-submit').disabled = false;
+  }
+};
+$('recovery-form').onsubmit = async (event) => {
+  event.preventDefault();
+  $('recovery-submit').disabled = true;
+  $('recovery-message').hidden = true;
+  try {
+    await repository.resetPassword(new FormData(event.target).get('email'));
+    $('recovery-message').textContent = 'Se houver uma conta com este e-mail, você receberá as instruções para recuperar a senha.';
+  } catch (error) {
+    $('recovery-message').textContent = errorMessage(error);
+  } finally {
+    $('recovery-message').hidden = false;
+    $('recovery-submit').disabled = false;
+  }
+};
+$('retry-profile-button').onclick = async () => {
+  $('retry-profile-button').disabled = true;
+  try {
+    await repository.retryProfile();
+    showNotice('Solicitação registrada. Aguarde a aprovação de um administrador.');
+  } catch (error) {
+    showNotice(errorMessage(error));
+  } finally {
+    $('retry-profile-button').disabled = false;
+  }
+};
 $('account-button').onclick = showLogin;
 $('google-login-button').onclick = async () => {
   $('google-login-button').disabled = true;
@@ -833,7 +892,7 @@ $('switch-mode').onclick = () => {
   else url.searchParams.set('local', '1');
   location.href = url.href;
 };
-const install = setupPwa({ onNotice: showNotice, isBusy: () => state.busy || state.importing || !!draft, onInstallReady: (ready) => $('install-button').classList.toggle('ready', ready) });
+const install = setupPwa({ onNotice: showNotice, isBusy: () => state.busy || state.importing || !!draft || adminPanel?.isBusy(), onInstallReady: (ready) => $('install-button').classList.toggle('ready', ready) });
 async function installApp() {
   if (!(await install())) {
     setupContent();
@@ -849,8 +908,15 @@ window.addEventListener('offline', () => {
 });
 window.addEventListener('online', () => updateSession(state.session));
 function updateSession(session) {
+  const previous = state.session;
   if (state.session.user?.uid !== session.user?.uid && !$('reader').hidden) reader?.close();
   state.session = session;
+  if (previous.user?.uid === session.user?.uid && previous.profile && session.profile && previous.profile.status !== session.profile.status) showNotice(`${statusLabel(session.profile.status)}. Abra Minha conta para ver seu acesso atualizado.`);
+  adminPanel?.updateSession(session);
+  if ($('login-dialog').open) {
+    authView();
+    renderAccount();
+  }
   if (!session.canWrite && $('upload-dialog').open) closeDialog('upload-dialog');
   $('account-label').textContent = session.mode === 'local' ? 'Local' : session.user ? (session.canWrite ? 'Administrador' : 'Minha conta') : 'Entrar';
   $('account-button').querySelector('.avatar').textContent = session.mode === 'local' ? 'L' : (session.user?.email?.[0] || 'A').toUpperCase();
@@ -889,6 +955,7 @@ async function start() {
   $('bgg-attribution').hidden = !APP_CONFIG.enableBgg;
   try {
     repository = localMode ? await (await import('./local-repository.js')).createLocalRepository() : await (await import('./firebase-repository.js')).createFirebaseRepository(APP_CONFIG);
+    adminPanel = createAdminPanel({ repository, config: APP_CONFIG, onNotice: showNotice, onError: errorMessage });
     reader = createReader({ repository, getProgress, saveProgress, onError: (error) => showNotice(errorMessage(error)) });
     repository.subscribeSession(updateSession);
     repository.subscribeGames(

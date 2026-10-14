@@ -1,6 +1,7 @@
 vendor/
 public/
 node_modules/
+.test-tools/
 functions/node_modules/
 worker/node_modules/
 worker/.wrangler/

@@ -65,6 +65,10 @@
         <button class="nav-link" id="nav-favorites">Meus favoritos</button>
       </nav>
       <div class="header-actions">
+        <button class="button secondary compact" id="manage-button" hidden>
+          Gerenciar
+          <span id="pending-count" class="pending-count" hidden>0</span>
+        </button>
         <button class="icon-button" id="install-button" title="Instalar aplicativo" aria-label="Instalar aplicativo">
           <svg><use href="#i-device" /></svg>
         </button>
@@ -273,7 +277,7 @@
         <span class="brand-dot">.</span>
       </a>
       <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
-      <span>v1.1.0</span>
+      <span>v1.2.0</span>
       <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
     </footer>
     <dialog id="upload-dialog" class="wide-dialog" aria-labelledby="upload-title">
@@ -464,8 +468,12 @@
         <p id="google-login-error" class="inline-error" role="alert" hidden></p>
         <p id="pages-login-note" class="muted-text" hidden>Use sua conta Google vinculada ao Firebase. Se sua conta usa senha, vincule o Google primeiro pelo localhost ou pelo endereço temporário do Firebase.</p>
       </div>
-      <form id="login-form" class="dialog-body">
-        <p>A conta é criada no Firebase Authentication. A autorização de administrador é configurada no Firestore.</p>
+      <form id="login-form" class="dialog-body" method="dialog">
+        <div class="auth-tabs">
+          <button type="button" class="text-button" data-auth-view="register">Criar conta</button>
+          <button type="button" class="text-button" data-auth-view="recovery">Esqueci a senha</button>
+        </div>
+        <p>Entre para acompanhar sua solicitação. A leitura dos manuais públicos não exige conta.</p>
         <label>
           E-mail
           <input name="email" type="email" autocomplete="username" required />
@@ -477,21 +485,131 @@
         <button class="button primary full" id="login-submit">Entrar</button>
         <p id="login-error" class="inline-error" role="alert" hidden></p>
       </form>
+      <form id="register-form" class="dialog-body" method="dialog" hidden>
+        <p>Novas contas aguardam aprovação. O cadastro não concede acesso administrativo.</p>
+        <label>
+          Nome
+          <input name="name" autocomplete="name" maxlength="100" required />
+        </label>
+        <label>
+          E-mail
+          <input name="email" type="email" autocomplete="username" required />
+        </label>
+        <label>
+          Senha
+          <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <label>
+          Confirme a senha
+          <input name="confirmation" type="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <button class="button primary full" id="register-submit">Criar conta</button>
+        <p id="register-error" class="inline-error" role="alert" hidden></p>
+        <button type="button" class="text-button" data-auth-view="login">Já tenho uma conta</button>
+      </form>
+      <form id="recovery-form" class="dialog-body" method="dialog" hidden>
+        <p>Enviaremos as instruções de recuperação para o e-mail informado.</p>
+        <label>
+          E-mail
+          <input name="email" type="email" autocomplete="username" required />
+        </label>
+        <button class="button primary full" id="recovery-submit">Recuperar senha</button>
+        <p id="recovery-message" role="status" hidden></p>
+        <button type="button" class="text-button" data-auth-view="login">Voltar para entrar</button>
+      </form>
       <div class="dialog-body" id="session-info" hidden>
         <p id="session-message"></p>
         <label>
           UID da conta
           <input id="session-uid" readonly />
         </label>
-        <p class="muted-text">
-          Para autorizar, crie no Console do Firestore o documento
-          <strong>admins / este UID</strong>
-          , com o campo booleano
-          <strong>enabled: true</strong>
-          . Depois, saia e entre novamente.
-        </p>
+        <p class="muted-text" id="session-status" role="status"></p>
+        <button class="button secondary" id="retry-profile-button" hidden>Concluir solicitação de cadastro</button>
         <button class="button secondary" id="link-google-button">Vincular Google a esta conta</button>
         <button class="button secondary" id="logout-button">Sair da conta</button>
+      </div>
+    </dialog>
+    <dialog id="admin-dialog" class="wide-dialog admin-dialog" aria-labelledby="admin-title">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">ACERVO · ADMINISTRAÇÃO</p>
+          <h2 id="admin-title">Pessoas e solicitações</h2>
+        </div>
+        <button class="icon-button" data-close="admin-dialog" aria-label="Fechar gerenciamento">
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <nav class="admin-tabs" aria-label="Gerenciamento">
+          <button class="button secondary small" data-admin-tab="requests">
+            Solicitações
+            <span id="panel-pending-count">0</span>
+          </button>
+          <button class="button secondary small" data-admin-tab="people">Usuários</button>
+          <button class="button secondary small" data-admin-tab="history">Histórico</button>
+          <button class="button secondary small" data-admin-tab="settings" id="admin-settings-tab" hidden>Configurações</button>
+        </nav>
+        <p id="admin-error" class="inline-error" role="alert" hidden></p>
+        <section data-admin-section="requests">
+          <p class="muted-text">Solicitações ficam registradas e são atualizadas em tempo real.</p>
+          <div id="pending-users" class="people-list"></div>
+        </section>
+        <section data-admin-section="people" hidden>
+          <label>
+            Buscar pessoa
+            <input id="people-search" type="search" placeholder="Nome ou e-mail" />
+          </label>
+          <div id="all-users" class="people-list"></div>
+        </section>
+        <section data-admin-section="history" hidden>
+          <p class="muted-text">Últimas 50 alterações, com responsável e horário do servidor.</p>
+          <div id="audit-list" class="people-list"></div>
+        </section>
+        <section data-admin-section="settings" hidden>
+          <label class="check-row">
+            <input id="library-public" type="checkbox" />
+            Permitir leitura pública de toda a biblioteca
+          </label>
+          <p class="muted-text">A biblioteca começa pública. Ao desligar, visitantes ainda podem ler jogos publicados individualmente.</p>
+          <button class="button primary" id="save-library-settings">Salvar configuração</button>
+          <div class="storage-status">
+            <strong>Armazenamento central</strong>
+            <p id="admin-storage-status"></p>
+            <a href="https://drive.google.com/drive/folders/1XUgXOYRigMaYuNMbFVcjDp6obEp4r7wR" target="_blank" rel="noopener noreferrer">Abrir pasta PDFs ↗</a>
+            <p class="muted-text">A autorização do Drive é feita pelo proprietário no assistente local. Credenciais privadas não são cadastradas no site.</p>
+            <a href="https://github.com/Thilanguis/Manual-de-Boardgame/blob/main/docs/GOOGLE-DRIVE-CLOUDFLARE.md" target="_blank" rel="noopener noreferrer">Configurar conexão segura ↗</a>
+          </div>
+        </section>
+      </div>
+    </dialog>
+    <dialog id="person-dialog" class="small-dialog" aria-labelledby="person-title">
+      <div class="dialog-header">
+        <h2 id="person-title">Gerenciar pessoa</h2>
+        <button class="icon-button" data-close="person-dialog" aria-label="Fechar pessoa">
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <p id="person-email"></p>
+        <p id="person-status" class="muted-text"></p>
+        <fieldset id="person-permissions">
+          <legend>Permissões de subadministrador</legend>
+          <label class="check-row">
+            <input id="permission-approve" type="checkbox" />
+            Aprovar ou recusar cadastros
+          </label>
+          <label class="check-row">
+            <input id="permission-add" type="checkbox" />
+            Adicionar jogos e manuais
+          </label>
+          <label class="check-row">
+            <input id="permission-edit" type="checkbox" />
+            Editar jogos e substituir manuais
+          </label>
+          <p class="muted-text">Exclusão definitiva e administração de cargos são exclusivas do proprietário.</p>
+        </fieldset>
+        <div id="person-actions" class="person-actions"></div>
+        <p id="person-error" class="inline-error" role="alert" hidden></p>
       </div>
     </dialog>
     <dialog id="setup-dialog" class="small-dialog" aria-labelledby="setup-title">
