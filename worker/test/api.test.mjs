@@ -102,6 +102,7 @@ function services(options = {}) {
         assert.equal(init.headers.Authorization, 'Bearer fake-owner-access');
         return new Response('%PDF-test', { status: init.headers.Range ? 206 : 200, headers: { 'Content-Length': '9', ...(init.headers.Range ? { 'Content-Range': 'bytes 0-8/9' } : {}) } });
       }
+      if (options.metadataFailure) return new Response(null, { status: 503 });
       return Response.json(file);
     }
     throw new Error(`Unexpected test URL: ${url}`);
@@ -188,6 +189,72 @@ test('exclusão aplica CAS antes de remover qualquer PDF ou capa', async () =>
     assert.ok(lockIndex >= 0 && lockIndex < deleteIndex);
     assert.equal(s.game, null);
     assert.equal(s.files.size, 0);
+  }));
+test('PDF na lixeira deixa de ser legível e não impede excluir o cadastro', async () =>
+  isolated({}, async (s) => {
+    s.files.get('manual123').trashed = true;
+    assert.equal((await handleRequest(request(`/v1/games/${id}/manual`, { auth: false }), env)).status, 410);
+    assert.equal((await handleRequest(request(`/v1/games/${id}`, { method: 'DELETE' }), env)).status, 200);
+    assert.equal(s.game, null);
+    assert.equal(s.files.get('manual123').trashed, true);
+    assert.equal(s.files.has('cover123'), false);
+    assert.equal(
+      s.calls.some((call) => call.method === 'DELETE' && call.url.includes('/drive/v3/files/manual123')),
+      false,
+    );
+  }));
+test('PDF já removido definitivamente permite limpar o cadastro e a capa', async () =>
+  isolated({}, async (s) => {
+    s.files.delete('manual123');
+    assert.equal((await handleRequest(request(`/v1/games/${id}`, { method: 'DELETE' }), env)).status, 200);
+    assert.equal(s.game, null);
+    assert.equal(s.files.size, 0);
+  }));
+test('excluir cadastro com referência adulterada preserva o arquivo de outro jogo', async () =>
+  isolated({}, async (s) => {
+    s.files.get('manual123').appProperties.gameId = 'another-game';
+    const response = await handleRequest(request(`/v1/games/${id}`, { method: 'DELETE' }), env);
+    assert.equal(response.status, 200);
+    assert.match((await response.json()).warning, /preservados/);
+    assert.equal(s.game, null);
+    assert.equal(s.files.has('manual123'), true);
+    assert.equal(s.files.has('cover123'), false);
+  }));
+test('consulta de disponibilidade diferencia PDF ativo, lixeira e ausência; capa não oculta jogo', async () =>
+  isolated({}, async (s) => {
+    const check = async () => (await (await handleRequest(request('/v1/catalog/status', { method: 'POST', auth: false, json: { gameIds: [id] } }), env)).json()).games[0];
+    s.files.delete('cover123');
+    assert.deepEqual(await check(), { id, available: true, reason: 'available' });
+    s.files.get('manual123').trashed = true;
+    assert.deepEqual(await check(), { id, available: false, reason: 'trashed' });
+    s.files.delete('manual123');
+    assert.deepEqual(await check(), { id, available: false, reason: 'missing' });
+    assert.equal(
+      s.calls.some((call) => call.method === 'DELETE'),
+      false,
+    );
+  }));
+test('disponibilidade não consulta Drive quando regras Firestore negam a leitura', async () =>
+  isolated({ privateRead: true }, async (s) => {
+    const response = await handleRequest(request('/v1/catalog/status', { method: 'POST', auth: false, json: { gameIds: [id] } }), env);
+    assert.deepEqual((await response.json()).games, [{ id, available: false, reason: 'unavailable' }]);
+    assert.equal(
+      s.calls.some((call) => call.url.includes('/drive/')),
+      false,
+    );
+  }));
+test('falha transitória do Drive não é reportada como PDF excluído', async () =>
+  isolated({ metadataFailure: true }, async (s) => {
+    const response = await handleRequest(request('/v1/catalog/status', { method: 'POST', auth: false, json: { gameIds: [id] } }), env);
+    assert.equal(response.status, 502);
+    assert.equal((await response.json()).games, undefined);
+    assert.equal((await handleRequest(request(`/v1/games/${id}`, { method: 'DELETE' }), env)).status, 502);
+    assert.equal(s.game.deleting, false);
+  }));
+test('disponibilidade limita lote antes de consultar serviços', async () =>
+  isolated({}, async (s) => {
+    assert.equal((await handleRequest(request('/v1/catalog/status', { method: 'POST', auth: false, json: { gameIds: Array(21).fill(id) } }), env)).status, 400);
+    assert.equal(s.calls.length, 0);
   }));
 test('conflito de versão interrompe exclusão e preserva todos os arquivos', async () =>
   isolated({ conflict: true }, async (s) => {

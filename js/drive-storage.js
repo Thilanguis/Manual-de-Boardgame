@@ -40,6 +40,16 @@ export function createDriveStorage(config, getToken, getUid) {
   }
   return {
     provider: 'drive',
+    async checkGames(games) {
+      const results = [];
+      for (let offset = 0; offset < games.length; offset += 20) {
+        const response = await call('/v1/catalog/status', { method: 'POST', json: { gameIds: games.slice(offset, offset + 20).map((game) => game.id) } });
+        const data = await response.json();
+        if (!Array.isArray(data.games)) throw new Error('Não foi possível conferir os manuais do acervo.');
+        results.push(...data.games);
+      }
+      return results;
+    },
     pendingGameId(fingerprint) {
       const prefix = `acervo-upload:${config.projectId}:${getUid()}:`;
       try {
@@ -129,7 +139,7 @@ export function createDriveStorage(config, getToken, getUid) {
       storeState(reference.resumeKey, null);
     },
     async deleteGame(game) {
-      await call(`/v1/games/${encodeURIComponent(game.id)}`, { method: 'DELETE' });
+      return (await call(`/v1/games/${encodeURIComponent(game.id)}`, { method: 'DELETE' })).json();
     },
     async bggCover(id) {
       return (await call(`/v1/bgg/${encodeURIComponent(id)}/cover`)).blob();

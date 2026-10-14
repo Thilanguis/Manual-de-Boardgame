@@ -1,6 +1,7 @@
 import { createDriveStorage } from './drive-storage.js';
 import { safeImageUrl } from './model.js';
 import { OWNER_UID, accessFor, emptyPermissions, profileSummary, userChange } from './permissions.js';
+import { annotateAvailability } from './catalog-availability.js';
 const SDK = 'https://www.gstatic.com/firebasejs/13.0.0';
 
 export async function createFirebaseRepository(config) {
@@ -30,10 +31,16 @@ export async function createFirebaseRepository(config) {
     profile = null,
     publicRead = true,
     settingsLoaded = false,
-    requestedName = '';
+    requestedName = '',
+    rawGames = [],
+    availabilitySequence = 0,
+    availabilityTimer = null,
+    closed = false;
+  const availability = new Map();
   const repository = {
     mode: 'firebase',
     fileProvider: 'drive',
+    refreshAvailability,
     session: { mode: 'firebase', canRead: false, canWrite: false, canAdd: false, canEdit: false, canDelete: false, user: null },
     subscribeSession(callback) {
       sessionListeners.add(callback);
@@ -197,7 +204,7 @@ export async function createFirebaseRepository(config) {
       if (previous && game.updatedAt && game.updatedAt !== expected) throw new Error('Este jogo foi atualizado em outro dispositivo. Reabra as informações antes de editar.');
       const uploaded = [],
         record = {
-          ...game,
+          ...Object.fromEntries(Object.entries(game).filter(([key]) => key !== '_driveAvailability')),
           id,
           isPublic: game.isPublic === true,
           deleting: false,
@@ -237,10 +244,16 @@ export async function createFirebaseRepository(config) {
     },
     async deleteGame(game) {
       requireWrite('delete');
-      await files.deleteGame(game);
+      const result = await files.deleteGame(game);
       revokeURLs();
+      return result;
     },
     close() {
+      closed = true;
+      ++availabilitySequence;
+      clearTimeout(availabilityTimer);
+      window.removeEventListener('focus', scheduleAvailability);
+      document.removeEventListener('visibilitychange', scheduleAvailability);
       unsubscribe?.();
       stopProfile?.();
       stopSettings();
@@ -248,6 +261,34 @@ export async function createFirebaseRepository(config) {
       revokeURLs();
     },
   };
+  function publishGames() {
+    repository.games = annotateAvailability(rawGames, availability);
+    for (const callback of gameListeners) callback(repository.games);
+  }
+  async function refreshAvailability() {
+    if (closed || !config.fileStorage?.apiBase || !rawGames.length) return;
+    const sequence = ++availabilitySequence,
+      query = querySequence,
+      candidates = rawGames.filter((game) => !game.deleting),
+      manualIds = new Map(candidates.map((game) => [game.id, game.manual?.driveFileId]));
+    try {
+      const results = await files.checkGames(candidates);
+      if (closed || query !== querySequence || sequence !== availabilitySequence) return;
+      for (const result of results) if (manualIds.has(result.id) && typeof result.available === 'boolean') availability.set(result.id, { manualId: manualIds.get(result.id), result });
+      publishGames();
+    } catch (error) {
+      // Falha transitória não significa que o arquivo foi removido.
+      if (!closed && query === querySequence && sequence === availabilitySequence) report(error);
+      throw error;
+    }
+  }
+  function scheduleAvailability() {
+    if (document.visibilityState !== 'visible' || closed) return;
+    clearTimeout(availabilityTimer);
+    availabilityTimer = setTimeout(() => refreshAvailability().catch(() => {}), 350);
+  }
+  window.addEventListener('focus', scheduleAvailability);
+  document.addEventListener('visibilitychange', scheduleAvailability);
   function revokeURLs() {
     for (const url of urls.values()) URL.revokeObjectURL(url);
     urls.clear();
@@ -281,6 +322,9 @@ export async function createFirebaseRepository(config) {
     unsubscribe?.();
     revokeURLs();
     const sequence = ++querySequence;
+    ++availabilitySequence;
+    availability.clear();
+    rawGames = [];
     repository.games = [];
     for (const callback of gameListeners) callback([]);
     const collection = dbSDK.collection(db, 'games');
@@ -289,8 +333,9 @@ export async function createFirebaseRepository(config) {
       query,
       (snapshot) => {
         if (sequence !== querySequence) return;
-        repository.games = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id, createdAt: doc.data().createdAt?.toMillis?.() || 0, updatedAt: doc.data().updatedAt?.toMillis?.() || 0 }));
-        for (const callback of gameListeners) callback(repository.games);
+        rawGames = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id, createdAt: doc.data().createdAt?.toMillis?.() || 0, updatedAt: doc.data().updatedAt?.toMillis?.() || 0 }));
+        publishGames();
+        refreshAvailability().catch(() => {});
       },
       (error) => {
         if (sequence === querySequence) report(error);

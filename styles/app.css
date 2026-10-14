@@ -1,5 +1,33 @@
 @import url('../vendor/pdfjs/text-layer.css');
 
+.library-maintenance {
+  margin: 20px 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.library-maintenance h3 {
+  margin: 0 0 8px;
+}
+.unavailable-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.unavailable-row strong {
+  overflow-wrap: anywhere;
+}
+.unavailable-row p {
+  margin: 6px 0 0;
+}
+#refresh-library {
+  margin: 8px 0 16px;
+}
 :root {
   color-scheme: dark;
   --bg: #101012;

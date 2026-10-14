@@ -5,6 +5,7 @@ import { createReader } from './reader.js';
 import { setupPwa } from './pwa.js';
 import { createAdminPanel } from './admin-panel.js';
 import { roleLabel, statusLabel } from './permissions.js';
+import { readableGame, unavailableReason } from './catalog-availability.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
@@ -148,14 +149,13 @@ async function populateImage(image, game) {
   }
 }
 function renderGrid() {
-  const games = filterGames(
-    state.games.filter((game) => !game.deleting || state.session.canDelete),
-    { ...state, favorites: readPreferences('favorites') },
-  );
-  $('game-count').textContent = `${state.games.length} ${state.games.length === 1 ? 'jogo' : 'jogos'}`;
+  const available = state.games.filter(readableGame);
+  const games = filterGames(available, { ...state, favorites: readPreferences('favorites') });
+  $('game-count').textContent = `${available.length} ${available.length === 1 ? 'jogo' : 'jogos'}`;
   $('games-grid').replaceChildren();
-  $('empty-state').hidden = state.games.length > 0;
-  $('no-results').hidden = !state.games.length || games.length > 0;
+  $('empty-state').hidden = available.length > 0;
+  $('no-results').hidden = !available.length || games.length > 0;
+  renderUnavailable();
   for (const game of games) {
     const card = node('article', 'game-card'),
       button = node('button', 'card-main');
@@ -204,10 +204,37 @@ function renderGrid() {
   $('nav-favorites').classList.toggle('active', state.filter === 'favorites');
   $('nav-library').classList.toggle('active', state.filter !== 'favorites');
 }
+function renderUnavailable() {
+  const missing = state.games.filter((game) => !readableGame(game));
+  $('unavailable-games').hidden = !(state.session.canEdit || state.session.canDelete) || !missing.length;
+  $('unavailable-list').replaceChildren();
+  if ($('unavailable-games').hidden) return;
+  for (const game of missing) {
+    const row = node('div', 'unavailable-row'),
+      text = node('div');
+    text.append(node('strong', null, game.title), node('p', 'muted-text', unavailableReason(game)));
+    const button = node('button', 'button secondary small', 'Gerenciar cadastro');
+    button.type = 'button';
+    button.onclick = () => showGame(game);
+    row.append(text, button);
+    $('unavailable-list').append(row);
+  }
+}
+$('refresh-library').onclick = async () => {
+  $('refresh-library').disabled = true;
+  try {
+    await repository?.refreshAvailability?.();
+    showNotice('Biblioteca atualizada.');
+  } catch (error) {
+    showNotice(errorMessage(error));
+  } finally {
+    $('refresh-library').disabled = false;
+  }
+};
 let heroSequence = 0;
 async function renderHero() {
   const token = ++heroSequence;
-  const game = [...state.games].filter((game) => !game.deleting).sort((a, b) => b.createdAt - a.createdAt)[0];
+  const game = [...state.games].filter(readableGame).sort((a, b) => b.createdAt - a.createdAt)[0];
   const hero = document.querySelector('.hero');
   hero.classList.toggle('has-game', !!game);
   $('hero-art').hidden = !!game;
@@ -250,7 +277,7 @@ function renderRecent() {
   if (!repository) return;
   const reading = readPreferences('reading');
   const games = state.games
-    .filter((game) => reading[game.id] && !game.deleting)
+    .filter((game) => reading[game.id] && readableGame(game))
     .sort((a, b) => reading[b.id].lastRead - reading[a.id].lastRead)
     .slice(0, 6);
   $('recent-section').hidden = !games.length;
@@ -332,17 +359,22 @@ function showGame(game) {
     stat.append(icon(symbol), content);
     $('detail-stats').append(stat);
   }
-  $('detail-manual').textContent = `${game.manual?.pages || '—'} páginas · ${formatBytes(game.manual?.size)} · ${game.manual?.name || 'Manual PDF'}${repository.mode === 'firebase' ? ' · Drive central' : ''}`;
+  updateManualStatus(game);
   $('detail-admin').hidden = !state.session.canEdit && !state.session.canDelete;
   $('edit-game').hidden = !state.session.canEdit;
   $('delete-game').hidden = !state.session.canDelete;
   $('edit-game').disabled = game.deleting === true;
-  $('read-manual').disabled = game.deleting === true;
+  $('read-manual').disabled = !readableGame(game);
   $('delete-game').textContent = game.deleting ? 'Concluir exclusão pendente' : 'Excluir jogo';
   $('detail-source').hidden = !game.bgg?.id;
   if (game.bgg?.id) $('detail-source').href = `https://boardgamegeek.com/boardgame/${Number(game.bgg.id)}`;
   renderFavorite();
   showDialog('detail-dialog');
+}
+function updateManualStatus(game) {
+  $('detail-manual').textContent = readableGame(game)
+    ? `${game.manual?.pages || '—'} páginas · ${formatBytes(game.manual?.size)} · ${game.manual?.name || 'Manual PDF'}${repository.mode === 'firebase' ? ' · Drive central' : ''}`
+    : `${unavailableReason(game)}. Você pode corrigir ou remover este cadastro.`;
 }
 $('detail-favorite').onclick = () => toggleFavorite(state.selected.id);
 $('read-manual').onclick = () => reader.open(state.selected);
@@ -731,12 +763,12 @@ $('confirm-delete').onclick = async () => {
   $('confirm-delete').disabled = true;
   $('delete-error').hidden = true;
   try {
-    await repository.deleteGame(state.selected);
+    const result = await repository.deleteGame(state.selected);
     state.busy = false;
     closeDialog('delete-dialog');
     closeDialog('detail-dialog');
     state.selected = null;
-    showNotice('Jogo excluído da biblioteca.');
+    showNotice(result?.warning || 'Jogo excluído da biblioteca.');
   } catch (error) {
     $('delete-error').textContent = `${errorMessage(error)} A exclusão não terminou; tente novamente.`;
     $('delete-error').hidden = false;
@@ -919,6 +951,7 @@ function updateSession(session) {
   }
   if (!session.canWrite && $('upload-dialog').open) closeDialog('upload-dialog');
   $('account-label').textContent = session.mode === 'local' ? 'Local' : session.user ? (session.canWrite ? 'Administrador' : 'Minha conta') : 'Entrar';
+  $('refresh-library').hidden = session.mode !== 'firebase';
   $('account-button').querySelector('.avatar').textContent = session.mode === 'local' ? 'L' : (session.user?.email?.[0] || 'A').toUpperCase();
   $('connection-status').replaceChildren(
     node('span', 'status-dot'),
@@ -956,7 +989,18 @@ async function start() {
   try {
     repository = localMode ? await (await import('./local-repository.js')).createLocalRepository() : await (await import('./firebase-repository.js')).createFirebaseRepository(APP_CONFIG);
     adminPanel = createAdminPanel({ repository, config: APP_CONFIG, onNotice: showNotice, onError: errorMessage });
-    reader = createReader({ repository, getProgress, saveProgress, onError: (error) => showNotice(errorMessage(error)) });
+    reader = createReader({
+      repository,
+      getProgress,
+      saveProgress,
+      onError: (error) => {
+        if ([403, 404, 410].includes(error.status)) {
+          showNotice('Este manual não está disponível. Conferindo a biblioteca…');
+          reader.close().catch(() => {});
+          repository.refreshAvailability?.().catch(() => {});
+        } else showNotice(errorMessage(error));
+      },
+    });
     repository.subscribeSession(updateSession);
     repository.subscribeGames(
       (games) => {
@@ -965,6 +1009,14 @@ async function start() {
         renderGrid();
         renderHero();
         renderRecent();
+        if (state.selected) {
+          const latest = games.find((game) => game.id === state.selected.id);
+          if (latest) {
+            state.selected = latest;
+            $('read-manual').disabled = !readableGame(latest);
+            updateManualStatus(latest);
+          }
+        }
         if (state.selected && !games.some((game) => game.id === state.selected.id) && !state.busy) {
           state.selected = null;
           if ($('detail-dialog').open) closeDialog('detail-dialog');

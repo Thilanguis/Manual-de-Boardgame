@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.2.2';
+const VERSION = 'acervo-v1.2.3';
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
 const ESSENTIAL = [
@@ -18,6 +18,7 @@ const ESSENTIAL = [
   './js/firebase-repository.js',
   './js/drive-storage.js',
   './js/permissions.js',
+  './js/catalog-availability.js',
   './js/admin-panel.js',
   './assets/icon.svg',
   './assets/icon-192.png',

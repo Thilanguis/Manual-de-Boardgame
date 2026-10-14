@@ -214,6 +214,7 @@
             </label>
           </div>
         </div>
+        <button class="button secondary small" id="refresh-library" hidden>Atualizar biblioteca</button>
         <div class="filter-chips" role="group" aria-label="Filtrar jogos">
           <button class="chip active" data-filter="all" aria-pressed="true">Todos os jogos</button>
           <button class="chip" data-filter="favorites" aria-pressed="false">
@@ -228,6 +229,11 @@
           </button>
         </div>
         <div class="games-grid" id="games-grid" aria-live="polite"></div>
+        <section id="unavailable-games" class="library-maintenance" aria-labelledby="unavailable-title" hidden>
+          <h3 id="unavailable-title">Cadastros que precisam de atenção</h3>
+          <p class="muted-text">Estes manuais não aparecem no catálogo. Corrija o PDF ou remova o cadastro.</p>
+          <div id="unavailable-list"></div>
+        </section>
         <section class="empty-state" id="empty-state">
           <div class="empty-icon">
             <svg><use href="#i-book" /></svg>

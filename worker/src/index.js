@@ -1,5 +1,5 @@
 import { ApiError, bearer, verifyFirebaseToken, sealTicket, openTicket } from './auth.js';
-import { getDocument, requirePermission, driveToken, requireProjectFile, deleteProjectFile, belongsToProject, safeDriveSession, validateUpload, parseRange, firestoreURL } from './services.js';
+import { getDocument, requirePermission, driveToken, driveMetadata, requireProjectFile, deleteProjectFile, belongsToProject, safeDriveSession, validateUpload, parseRange, firestoreURL } from './services.js';
 import { XMLParser } from 'fast-xml-parser';
 import { parseSearch, parseThing } from '../../backend/bgg-parser.js';
 
@@ -162,13 +162,18 @@ async function deleteGame(env, identity, id) {
   await requirePermission(env, identity, 'delete');
   let game = await getDocument(env, `games/${id}`, identity.token);
   if (!game) return json({ ok: true });
-  // Validar TODOS os arquivos antes de qualquer exclusão.
+  // Validar TODOS os arquivos antes de qualquer exclusão. Referências inválidas
+  // não impedem remover o cadastro autorizado; seus arquivos permanecem intactos.
+  const safeKinds = [],
+    preservedKinds = [];
   for (const kind of ['manual', 'cover'])
     if (game[kind]?.driveFileId) {
       try {
-        await requireProjectFile(env, game[kind].driveFileId, { gameId: id, kind });
+        await requireProjectFile(env, game[kind].driveFileId, { gameId: id, kind, allowTrashed: true });
+        safeKinds.push(kind);
       } catch (error) {
-        if (error.status !== 404) throw error;
+        if (error.status === 403) preservedKinds.push(kind);
+        else if (error.status !== 404) throw error;
       }
     }
   if (game.deleting !== true) {
@@ -191,14 +196,36 @@ async function deleteGame(env, identity, id) {
     game = await getDocument(env, `games/${id}`, identity.token);
     if (!game || game.deleting !== true) throw new ApiError(409, 'Não foi possível confirmar a exclusão. Nenhum arquivo foi removido.');
   }
-  for (const kind of ['manual', 'cover']) if (game[kind]?.driveFileId) await deleteProjectFile(env, game[kind].driveFileId, { gameId: id, kind });
+  for (const kind of safeKinds) await deleteProjectFile(env, game[kind].driveFileId, { gameId: id, kind });
   const response = await fetch(`${firestoreURL(env, `games/${id}`)}?currentDocument.updateTime=${encodeURIComponent(game._updateTime)}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${identity.token}` },
     signal: AbortSignal.timeout(15000),
   });
   if (!response.ok && response.status !== 404) throw new ApiError(409, 'A exclusão dos arquivos terminou, mas o cadastro não pôde ser removido. Repita a exclusão pendente.');
-  return json({ ok: true });
+  return json({ ok: true, ...(preservedKinds.length ? { warning: 'Cadastro removido. Arquivos com referências fora deste jogo foram preservados no Drive.' } : {}) });
+}
+async function catalogStatus(request, env, identity) {
+  const input = await readJSON(request);
+  if (!Array.isArray(input.gameIds) || input.gameIds.length > 20 || input.gameIds.some((id) => typeof id !== 'string' || !gameIdPattern.test(id))) throw new ApiError(400, 'Informe até 20 jogos válidos.');
+  const games = await Promise.all(
+    [...new Set(input.gameIds)].map(async (id) => {
+      let game;
+      try {
+        game = await getDocument(env, `games/${id}`, identity?.token);
+      } catch (error) {
+        if ([401, 403].includes(error.status)) return { id, available: false, reason: 'unavailable' };
+        throw error;
+      }
+      if (!game || game.deleting || !game.manual?.driveFileId) return { id, available: false, reason: 'missing' };
+      // O ID vem do documento efetivamente autorizado pelo Firestore, nunca do cliente.
+      const file = await driveMetadata(env, game.manual.driveFileId);
+      if (!file) return { id, available: false, reason: 'missing' };
+      if (!belongsToProject(file, env, { gameId: id, kind: 'manual', allowTrashed: true })) return { id, available: false, reason: 'unavailable' };
+      return { id, available: file.trashed !== true, reason: file.trashed ? 'trashed' : 'available' };
+    }),
+  );
+  return json({ games });
 }
 async function bgg(request, env, identity) {
   // Tanto admin como subadmin com edição/adição podem reconhecer manuais.
@@ -275,7 +302,8 @@ export async function handleRequest(request, env) {
         const claims = await verifyFirebaseToken(token, env.FIREBASE_PROJECT_ID);
         identity = { uid: claims.sub, token };
       }
-      if (url.pathname === '/v1/uploads' && request.method === 'POST') response = await uploadStart(request, env, identity);
+      if (url.pathname === '/v1/catalog/status' && request.method === 'POST') response = await catalogStatus(request, env, identity);
+      else if (url.pathname === '/v1/uploads' && request.method === 'POST') response = await uploadStart(request, env, identity);
       else if (url.pathname === '/v1/uploads/chunk' && request.method === 'PUT') response = await uploadChunk(request, env, identity);
       else if (url.pathname === '/v1/uploads/status' && request.method === 'POST') response = await uploadChunk(request, env, identity, true);
       else if (url.pathname === '/v1/uploads/finalize' && request.method === 'POST') response = await finishUpload(request, env, identity);

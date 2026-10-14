@@ -77,11 +77,11 @@ export async function driveMetadata(env, id, fetcher = fetch) {
   if (!response.ok) throw new ApiError(response.status === 429 || response.status === 403 ? 429 : 502, 'Não foi possível consultar o Drive central. Confira suas cotas e a autorização da pasta.');
   return response.json();
 }
-export function belongsToProject(file, env, { gameId, kind, nonce } = {}) {
+export function belongsToProject(file, env, { gameId, kind, nonce, allowTrashed = false } = {}) {
   const owner = file?.owners?.some((owner) => owner.me === true && owner.emailAddress?.toLowerCase() === env.DRIVE_OWNER_EMAIL.toLowerCase());
   return (
     !!file &&
-    file.trashed !== true &&
+    (allowTrashed || file.trashed !== true) &&
     owner &&
     file.appProperties?.acervoProject === env.FIREBASE_PROJECT_ID &&
     (kind === 'folder'
@@ -92,14 +92,17 @@ export function belongsToProject(file, env, { gameId, kind, nonce } = {}) {
 export async function requireProjectFile(env, id, context, fetcher = fetch) {
   const file = await driveMetadata(env, id, fetcher);
   if (!file) throw new ApiError(404, 'O arquivo não está disponível no Drive.');
-  if (!belongsToProject(file, env, context)) throw new ApiError(403, 'O arquivo não pertence à pasta e ao jogo autorizados.');
+  if (!belongsToProject(file, env, { ...context, allowTrashed: true })) throw new ApiError(403, 'O arquivo não pertence à pasta e ao jogo autorizados.');
+  if (file.trashed === true && !context?.allowTrashed) throw new ApiError(410, 'Este arquivo foi removido para a lixeira do Google Drive.');
   return file;
 }
 export async function deleteProjectFile(env, id, context, fetcher = fetch) {
   if (!id) return;
   const file = await driveMetadata(env, id, fetcher);
   if (!file) return;
-  if (!belongsToProject(file, env, context)) throw new ApiError(403, 'A exclusão de arquivos fora da pasta do projeto foi bloqueada.');
+  if (!belongsToProject(file, env, { ...context, allowTrashed: true })) throw new ApiError(403, 'A exclusão de arquivos fora da pasta do projeto foi bloqueada.');
+  // O proprietário já removeu o arquivo. Preservar a possibilidade de restauração na lixeira.
+  if (file.trashed === true) return;
   const response = await fetcher(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${await driveToken(env, fetcher)}` }, signal: AbortSignal.timeout(15000) });
   if (!response.ok && response.status !== 404) throw new ApiError(502, 'Não foi possível concluir a exclusão no Drive. Tente novamente.');
 }

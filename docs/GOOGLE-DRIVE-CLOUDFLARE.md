@@ -75,6 +75,12 @@ Uploads são retomáveis em blocos de 8 MiB; a URL da sessão Google fica em tic
 
 Visitantes leem arquivos públicos pelo proxy, com Range para PDF.js e sem login Google. Não compartilhe a pasta como “qualquer pessoa com o link”. A PWA não armazena todos os PDFs em lote.
 
+Se o PDF for removido diretamente no Drive, a biblioteca o oculta após verificar a disponibilidade ao abrir, voltar ao site ou clicar em **Atualizar biblioteca**. O Drive não envia uma notificação instantânea para esta página. A verificação é somente de leitura, em lotes de até 20 jogos, respeitando a autorização real do Firestore; falhas temporárias não são tratadas como exclusões. Não há consulta contínua em segundo plano. Cada conferência consome leituras do Firestore e requisições das APIs dentro das cotas gratuitas.
+
+Administradores com edição ou exclusão encontram esses registros em **Cadastros que precisam de atenção**, para substituir o PDF ou excluir o cadastro. Restaurar o mesmo PDF no Drive o disponibiliza na próxima conferência. Remover somente a capa mantém o jogo legível com uma imagem substituta. O estado de disponibilidade é derivado e não modifica documentos no Firestore.
+
+A exclusão pelo proprietário conclui mesmo quando o PDF já está na lixeira ou foi removido definitivamente. Arquivos já na lixeira não são apagados definitivamente por essa limpeza; referências que não pertencem à pasta, ao proprietário e ao jogo são preservadas, com aviso. O cadastro só é removido com as permissões efetivas do superadmin, e erros temporários permitem tentar novamente.
+
 ## 5. Validação real obrigatória
 
 A conexão não está concluída somente porque o build ou testes simulados passaram. Após autorizar e publicar:
