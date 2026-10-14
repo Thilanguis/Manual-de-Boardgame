@@ -18,6 +18,13 @@ try {
   await page.locator('#account-button').click();
   await page.locator('#google-login-button').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#login-form').isVisible(), true);
+  await page.locator('#login-form [data-auth-view=register]').click();
+  assert.equal(await page.locator('#register-form').isVisible(), true);
+  assert.equal(await page.locator('#register-form').getAttribute('method'), 'dialog');
+  await page.locator('#register-form [data-auth-view=login]').click();
+  await page.locator('#login-form [data-auth-view=recovery]').click();
+  assert.equal(await page.locator('#recovery-form').isVisible(), true);
+  await page.locator('#recovery-form [data-auth-view=login]').click();
   await page.screenshot({ path: 'test-output/cloud-login.png', fullPage: false });
   await page.locator('[data-close=login-dialog]').click();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -27,7 +34,9 @@ try {
   const documents = `https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/documents`;
   for (const [path, status] of [
     ['settings/library', 200],
-    ['games', 403],
+    ['games', 200],
+    ['users', 403],
+    ['users/7TitBObtb8a0W8GisSstSM1RHiX2', 403],
     ['admins/7TitBObtb8a0W8GisSstSM1RHiX2', 403],
   ]) {
     const result = await fetch(`${documents}/${path}`);
@@ -49,7 +58,7 @@ try {
     }),
   });
   assert.equal(query.status, 200, 'Consulta anônima limitada aos jogos publicados');
-  console.log('Hosting HTTPS, módulos Firebase, PWA, login e regras reais: configuração pública legível; catálogo privado e autorização administrativa negados para acesso anônimo.');
+  console.log('Pages HTTPS, Firebase, PWA e formulários publicados verificados: catálogo público legível; perfis de usuários, proprietário e admins legados negados para acesso anônimo.');
 } finally {
   await browser.close();
 }

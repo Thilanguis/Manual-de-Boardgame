@@ -24,6 +24,8 @@ API compilada em dry-run. Auditoria npm do projeto corrigida, sem vulnerabilidad
 
 O conector Google Drive confirmou a existência da pasta PDFs e sua condição privada. Isso não valida a autorização OAuth do cliente do aplicativo.
 
+Publicação GitHub Pages concluída com workflow aprovado. Verificação anônima no endereço real confirmou carregamento da interface, Firebase e PWA, formulários de login/cadastro/recuperação e leitura do catálogo público; listagem de pessoas, perfil do proprietário e admins legados retornaram acesso negado.
+
 ## Dependências de autorização manual
 
 - **Google Cloud/Drive:** cliente OAuth Web, Drive API/Picker API habilitadas, chave pública Picker restrita a localhost e autorização da conta proprietária pelo helper. Informar somente caminho local do JSON e e-mail; não anexar secrets ao chat.
