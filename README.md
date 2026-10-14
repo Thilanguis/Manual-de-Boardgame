@@ -11,7 +11,11 @@ Biblioteca pessoal em HTML, CSS e JavaScript puro, publicada no [GitHub Pages](h
 
 Não há dependência de Firebase Hosting, Storage ou Functions, nem token privado GitHub no JavaScript. A API não usa o Drive do subadministrador. Refresh token e client secret ficam em secrets do Worker.
 
-**O Drive central ainda exige autorização real:** apiBase está vazia até publicar o Worker e conectar a conta proprietária. A confirmação da pasta pelo conector, os testes simulados e um dry-run não comprovam upload real.
+O Drive central está configurado no Worker e em `config/app-config.js`. Consulte [a configuração e reconexão do Drive](docs/GOOGLE-DRIVE-CLOUDFLARE.md) para manutenção das credenciais privadas.
+
+## Guias e consulta rápida
+
+Cada jogo oferece **Aprender a jogar**, **Consulta rápida** e **Manual completo**. Administradores com `editGames` podem analisar todas as páginas, organizar sugestões extraídas, editar seções com imagens e publicar após revisão. Rascunhos ficam privados; texto de índices completos é comprimido no Drive, com busca em Web Worker no navegador. A versão não usa IA nem OCR pago. [Uso, arquitetura, limites e testes](docs/BIBLIOTECA-INTELIGENTE.md).
 
 ## Pessoas e permissões
 

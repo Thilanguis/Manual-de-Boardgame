@@ -70,6 +70,76 @@ beforeEach(async () => {
 });
 after(async () => env?.cleanup());
 
+const guideRecord = (id, revision = 1, overrides = {}) => ({
+  gameId: id,
+  schemaVersion: 1,
+  revision,
+  content: JSON.stringify([{ title: 'Objetivo', text: 'Texto revisado.', reviewed: true }]),
+  sourceHash: 'a'.repeat(64),
+  assets: {},
+  indexFileId: '',
+  reviewed: true,
+  updatedAt: serverTimestamp(),
+  updatedBy: OWNER_UID,
+  ...overrides,
+});
+async function publish(database, id, revision = 1, overrides = {}) {
+  const eventId = crypto.randomUUID();
+  return runTransaction(database, async (tx) => {
+    tx.set(doc(database, 'gameGuides', id), { ...guideRecord(id, revision), draftRevision: 1, lastEventId: eventId, ...overrides });
+    tx.set(doc(database, 'auditEvents', eventId), {
+      id: eventId,
+      targetType: 'guide',
+      targetId: id,
+      actorUid: OWNER_UID,
+      action: 'publishGuide',
+      before: { revision: revision - 1 },
+      after: { revision },
+      version: revision,
+      createdAt: serverTimestamp(),
+    });
+  });
+}
+test('rascunhos privados exigem editGames e controle de revisão', async () => {
+  await assertSucceeds(setDoc(doc(ownerDb, 'guideDrafts', 'existing'), guideRecord('existing')));
+  for (const uid of [null, 'pending', 'member', 'blocked', 'addonly']) {
+    await assertFails(getDoc(doc(db(uid), 'guideDrafts', 'existing')));
+    await assertFails(setDoc(doc(db(uid), 'guideDrafts', 'published'), guideRecord('published', 1, { updatedBy: uid || '' })));
+  }
+  await assertSucceeds(getDoc(doc(db('sub'), 'guideDrafts', 'existing')));
+  await assertFails(updateDoc(doc(ownerDb, 'guideDrafts', 'existing'), { content: '[]', updatedAt: serverTimestamp() }));
+  await assertSucceeds(setDoc(doc(ownerDb, 'guideDrafts', 'existing'), guideRecord('existing', 2)));
+});
+test('publicação exige rascunho revisado, versão do PDF, cópia fiel e auditoria', async () => {
+  await assertSucceeds(setDoc(doc(ownerDb, 'guideDrafts', 'existing'), guideRecord('existing', 1, { reviewed: false })));
+  await assertFails(publish(ownerDb, 'existing'));
+  await assertSucceeds(setDoc(doc(ownerDb, 'guideDrafts', 'published'), guideRecord('published')));
+  await assertFails(setDoc(doc(ownerDb, 'gameGuides', 'published'), guideRecord('published')));
+  await assertFails(publish(ownerDb, 'published', 1, { content: 'Texto diferente do rascunho' }));
+  await assertSucceeds(publish(ownerDb, 'published'));
+  assert.match((await getDoc(doc(db(), 'gameGuides', 'published'))).data().content, /Texto revisado/);
+  await assertSucceeds(setDoc(doc(ownerDb, 'guideDrafts', 'published'), guideRecord('published', 2, { content: 'Alteração privada', reviewed: false })));
+  assert.match((await getDoc(doc(db(), 'gameGuides', 'published'))).data().content, /Texto revisado/);
+  await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'published'), { manual: { ...game('published').manual, sha256: 'b'.repeat(64) }, updatedAt: serverTimestamp() }));
+  await assertSucceeds(getDoc(doc(db(), 'gameGuides', 'published')));
+  await assertFails(publish(ownerDb, 'published', 2, { draftRevision: 2 }));
+  await assertFails(deleteDoc(doc(db('sub'), 'gameGuides', 'published')));
+});
+test('guia publicado herda visibilidade do jogo; limpeza é exclusiva do proprietário', async () => {
+  await assertSucceeds(setDoc(doc(ownerDb, 'guideDrafts', 'existing'), guideRecord('existing')));
+  await assertSucceeds(publish(ownerDb, 'existing'));
+  await env.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), 'settings', 'library'), { publicRead: false });
+  });
+  await assertFails(getDoc(doc(db(), 'gameGuides', 'existing')));
+  await assertFails(setDoc(doc(ownerDb, 'guideDeletion', 'existing'), { remaining: [], preserved: false }));
+  await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), { deleting: true, deleteRequestedBy: OWNER_UID, updatedAt: serverTimestamp() }));
+  await assertSucceeds(setDoc(doc(ownerDb, 'guideDeletion', 'existing'), { remaining: ['asset123'], preserved: false }));
+  await assertFails(getDoc(doc(db('sub'), 'guideDeletion', 'existing')));
+  await assertFails(setDoc(doc(ownerDb, 'guideDrafts', 'existing'), guideRecord('existing', 2)));
+  await assertSucceeds(deleteDoc(doc(ownerDb, 'guideDrafts', 'existing')));
+});
+
 test('visitante lê catálogo público e manual referenciado sem login, mas não escreve', async () => {
   const guest = db();
   await assertSucceeds(getDoc(doc(guest, 'games', 'existing')));

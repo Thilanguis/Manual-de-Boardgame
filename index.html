@@ -283,7 +283,7 @@
         <span class="brand-dot">.</span>
       </a>
       <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
-      <span>v1.2.0</span>
+      <span>v1.3.0</span>
       <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
     </footer>
     <dialog id="upload-dialog" class="wide-dialog" aria-labelledby="upload-title">
@@ -342,7 +342,7 @@
               </label>
               <div id="title-suggestions" class="title-suggestions"></div>
               <div class="bgg-search">
-                <button class="button secondary small" type="button" id="bgg-search">
+                <button class="button secondary small" type="button" id="bgg-search" aria-describedby="bgg-status">
                   <svg><use href="#i-search" /></svg>
                   Identificar no BoardGameGeek
                 </button>
@@ -380,6 +380,25 @@
                   <option value="es">Espanhol</option>
                   <option value="other">Outro</option>
                 </select>
+              </label>
+              <div class="form-row">
+                <label>
+                  Idade recomendada
+                  <input type="number" name="recommendedAge" min="1" max="100" placeholder="Não informada" />
+                </label>
+                <label>
+                  Tipo de jogo
+                  <input name="gameType" maxlength="80" placeholder="Cooperativo, competitivo…" />
+                </label>
+              </div>
+              <label>
+                Mecânicas
+                <span class="label-hint">separadas por vírgula, quando identificadas</span>
+                <input name="mechanics" maxlength="320" />
+              </label>
+              <label>
+                Edição / versão
+                <input name="edition" maxlength="100" placeholder="Não identificada" />
               </label>
               <label class="confirm-check">
                 <input name="isPublic" type="checkbox" />
@@ -421,13 +440,17 @@
           <div class="detail-actions">
             <button class="button primary" id="read-manual">
               <svg><use href="#i-book" /></svg>
-              Ler manual
+              Manual completo
             </button>
             <button class="icon-button favorite-button" id="detail-favorite" aria-label="Adicionar aos favoritos">
               <svg><use href="#i-heart" /></svg>
             </button>
           </div>
           <p class="manual-caption" id="detail-manual"></p>
+          <div class="guide-entry-actions">
+            <button class="button secondary" id="learn-game">Aprender a jogar</button>
+            <button class="button secondary" id="quick-rules">Consulta rápida</button>
+          </div>
           <a class="text-button" id="detail-source" target="_blank" rel="noopener noreferrer" hidden>Dados do BoardGameGeek ↗</a>
           <div class="admin-actions" id="detail-admin" hidden>
             <button class="text-button" id="edit-game">
@@ -435,8 +458,32 @@
               Editar informações
             </button>
             <button class="text-button danger" id="delete-game">Excluir jogo</button>
+            <button class="text-button" id="edit-guide">Editar guia e índice</button>
           </div>
         </div>
+      </div>
+    </dialog>
+    <dialog id="guide-dialog" class="guide-dialog" aria-labelledby="guide-title">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">REGRAS AO SEU ALCANCE</p>
+          <h2 id="guide-title"></h2>
+        </div>
+        <button id="guide-close" class="button secondary small" type="button">Fechar</button>
+      </div>
+      <div class="dialog-body">
+        <nav class="guide-toolbar" aria-label="Modo de consulta">
+          <button id="guide-tab-learn" class="button secondary small" type="button">Aprender a jogar</button>
+          <button id="guide-tab-quick" class="button secondary small" type="button">Consulta rápida</button>
+          <button id="guide-edit" class="button secondary small" type="button" data-mutate hidden>Editar rascunho</button>
+          <button id="guide-analyze" class="button secondary small" type="button" data-mutate>Analisar PDF completo</button>
+          <button id="guide-cancel-analysis" class="button secondary small" type="button" hidden>Cancelar análise</button>
+        </nav>
+        <p id="guide-stale" class="guide-warning" hidden></p>
+        <p id="guide-status" role="status" aria-live="polite" hidden></p>
+        <progress id="guide-progress" max="1" value="0" hidden></progress>
+        <input id="guide-search" type="search" placeholder="Pesquisar movimento, ataque, pontuação…" aria-label="Pesquisar regras" hidden />
+        <div id="guide-content"></div>
       </div>
     </dialog>
     <dialog id="delete-dialog" class="small-dialog" aria-labelledby="delete-title">
@@ -448,7 +495,7 @@
       </div>
       <div class="dialog-body">
         <p id="delete-message"></p>
-        <p>A exclusão remove o cadastro, o manual e a capa armazenados neste acervo.</p>
+        <p>A exclusão remove o cadastro, o manual, a capa, o guia e seus arquivos armazenados neste acervo.</p>
         <div class="form-actions">
           <button class="button secondary" data-close="delete-dialog">Cancelar</button>
           <button class="button primary" id="confirm-delete">Excluir jogo</button>

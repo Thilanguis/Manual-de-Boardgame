@@ -2,6 +2,7 @@ import { ApiError, bearer, verifyFirebaseToken, sealTicket, openTicket } from '.
 import { getDocument, requirePermission, driveToken, driveMetadata, requireProjectFile, deleteProjectFile, belongsToProject, safeDriveSession, validateUpload, parseRange, firestoreURL } from './services.js';
 import { XMLParser } from 'fast-xml-parser';
 import { parseSearch, parseThing } from '../../backend/bgg-parser.js';
+import { cleanupGuides } from './guide-assets.js';
 
 const CHUNK_LIMIT = 8 * 1024 * 1024,
   JSON_LIMIT = 16384;
@@ -62,6 +63,7 @@ async function uploadStart(request, env, identity) {
   checkGameId(input.gameId);
   const previous = await getDocument(env, `games/${input.gameId}`, identity?.token);
   if (previous?.deleting === true) throw new ApiError(409, 'Este jogo está em processo de exclusão.');
+  if (input.kind === 'guideAsset' && !previous) throw new ApiError(404, 'Cadastre o jogo antes de criar o guia.');
   const action = previous ? 'edit' : 'add';
   await requirePermission(env, identity, action);
   await requireProjectFile(env, env.DRIVE_FOLDER_ID, { kind: 'folder' });
@@ -118,7 +120,12 @@ async function finishUpload(request, env, identity, cleanup = false) {
     receipt = await openTicket(input.receipt, env.TICKET_KEY, identity.uid, 'receipt');
   await requirePermission(env, identity, receipt.action);
   const game = await getDocument(env, `games/${receipt.gameId}`, identity.token);
-  const linked = game?.[receipt.kind]?.driveFileId === receipt.fileId;
+  let linked = game?.[receipt.kind]?.driveFileId === receipt.fileId;
+  if (receipt.kind === 'guideAsset') {
+    const draft = await getDocument(env, `guideDrafts/${receipt.gameId}`, identity.token),
+      published = await getDocument(env, `gameGuides/${receipt.gameId}`, identity.token);
+    linked = !!(draft?.assets?.[receipt.fileId] || published?.assets?.[receipt.fileId]);
+  }
   if (cleanup) {
     if (linked) throw new ApiError(409, 'O arquivo já está vinculado ao jogo e não pode ser descartado como upload incompleto.');
     await deleteProjectFile(env, receipt.fileId, { gameId: receipt.gameId, kind: receipt.kind, nonce: receipt.nonce });
@@ -130,13 +137,22 @@ async function finishUpload(request, env, identity, cleanup = false) {
   }
   return json({ ok: true });
 }
-async function media(request, env, identity, gameId, kind) {
+async function media(request, env, identity, gameId, kind, assetId = '') {
   checkGameId(gameId);
   // As regras reais do Firestore autorizam o visitante ou a conta desta requisição.
   const game = await getDocument(env, `games/${gameId}`, identity?.token);
   if (!game) throw new ApiError(404, 'Jogo não encontrado.');
   if (game.deleting === true) throw new ApiError(410, 'Este jogo está em processo de exclusão.');
-  const id = game[kind]?.driveFileId;
+  let id = game[kind]?.driveFileId;
+  if (kind === 'guideAsset') {
+    const published = await getDocument(env, `gameGuides/${gameId}`, identity?.token);
+    if (published?.assets?.[assetId]) id = assetId;
+    else {
+      await requirePermission(env, identity, 'edit');
+      const draft = await getDocument(env, `guideDrafts/${gameId}`, identity.token);
+      if (draft?.assets?.[assetId]) id = assetId;
+    }
+  }
   if (!id) throw new ApiError(404, 'Este arquivo ainda não foi enviado ao Drive central.');
   const file = await requireProjectFile(env, id, { gameId, kind });
   const headers = { Authorization: `Bearer ${await driveToken(env)}` };
@@ -148,7 +164,7 @@ async function media(request, env, identity, gameId, kind) {
   const upstream = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media`, { headers, redirect: 'manual' });
   if (!upstream.ok && upstream.status !== 416) throw new ApiError(upstream.status === 429 || upstream.status === 403 ? 429 : 502, 'O Drive não disponibilizou o arquivo agora. Tente novamente.');
   const result = new Headers({
-    'Content-Type': kind === 'manual' ? 'application/pdf' : 'image/jpeg',
+    'Content-Type': kind === 'guideAsset' ? (['image/jpeg', 'application/gzip'].includes(file.mimeType) ? file.mimeType : 'application/octet-stream') : kind === 'manual' ? 'application/pdf' : 'image/jpeg',
     'Cache-Control': 'no-store',
     'Accept-Ranges': 'bytes',
     'X-Content-Type-Options': 'nosniff',
@@ -196,6 +212,8 @@ async function deleteGame(env, identity, id) {
     game = await getDocument(env, `games/${id}`, identity.token);
     if (!game || game.deleting !== true) throw new ApiError(409, 'Não foi possível confirmar a exclusão. Nenhum arquivo foi removido.');
   }
+  const cleanup = await cleanupGuides(env, identity, id);
+  if (cleanup.pending) return json(cleanup, 202);
   for (const kind of safeKinds) await deleteProjectFile(env, game[kind].driveFileId, { gameId: id, kind });
   const response = await fetch(`${firestoreURL(env, `games/${id}`)}?currentDocument.updateTime=${encodeURIComponent(game._updateTime)}`, {
     method: 'DELETE',
@@ -203,7 +221,7 @@ async function deleteGame(env, identity, id) {
     signal: AbortSignal.timeout(15000),
   });
   if (!response.ok && response.status !== 404) throw new ApiError(409, 'A exclusão dos arquivos terminou, mas o cadastro não pôde ser removido. Repita a exclusão pendente.');
-  return json({ ok: true, ...(preservedKinds.length ? { warning: 'Cadastro removido. Arquivos com referências fora deste jogo foram preservados no Drive.' } : {}) });
+  return json({ ok: true, ...(preservedKinds.length || cleanup.preserved ? { warning: 'Cadastro removido. Arquivos com referências fora deste jogo foram preservados no Drive.' } : {}) });
 }
 async function catalogStatus(request, env, identity) {
   const input = await readJSON(request);
@@ -313,9 +331,11 @@ export async function handleRequest(request, env) {
         const cover = /^\/v1\/bgg\/(\d+)\/cover$/.exec(url.pathname);
         if (cover && request.method === 'GET') response = await bggCover(request, env, identity, cover[1]);
         else {
-          const read = /^\/v1\/games\/([^/]+)\/(manual|cover)$/.exec(url.pathname),
+          const asset = /^\/v1\/games\/([^/]+)\/guide-assets\/([A-Za-z0-9_-]{6,200})$/.exec(url.pathname),
+            read = /^\/v1\/games\/([^/]+)\/(manual|cover)$/.exec(url.pathname),
             remove = /^\/v1\/games\/([^/]+)$/.exec(url.pathname);
-          if (read && ['GET', 'HEAD'].includes(request.method)) response = await media(request, env, identity, read[1], read[2]);
+          if (asset && ['GET', 'HEAD'].includes(request.method)) response = await media(request, env, identity, asset[1], 'guideAsset', asset[2]);
+          else if (read && ['GET', 'HEAD'].includes(request.method)) response = await media(request, env, identity, read[1], read[2]);
           else if (remove && request.method === 'DELETE') response = await deleteGame(env, identity, remove[1]);
           else throw new ApiError(404, 'Operação não encontrada.');
         }

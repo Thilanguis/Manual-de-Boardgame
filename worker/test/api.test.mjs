@@ -47,6 +47,17 @@ function services(options = {}) {
       ['manual123', owned('manual123')],
       ['cover123', owned('cover123', 'cover')],
     ]);
+  const guides = new Map();
+  if (options.guideAssets) {
+    const assets = {};
+    for (let i = 0; i < options.guideAssets; i++) {
+      const assetId = `asset-${String(i).padStart(6, '0')}`;
+      assets[assetId] = { mimeType: 'image/jpeg' };
+      files.set(assetId, owned(assetId, 'guideAsset'));
+    }
+    guides.set(`guideDrafts/${id}`, { assets });
+    if (!options.draftOnly) guides.set(`gameGuides/${id}`, { assets });
+  }
   let game = options.noGame ? null : { deleting: false, isPublic: true, manual: { driveFileId: 'manual123' }, cover: { driveFileId: 'cover123' } },
     upload,
     received = 0;
@@ -60,10 +71,25 @@ function services(options = {}) {
     if (url.includes('/documents:commit')) {
       if (options.conflict) return Response.json({ error: 'ABORTED' }, { status: 409 });
       const body = JSON.parse(init.body);
+      if (body.writes[0].update.name.includes('/guideDeletion/')) {
+        const fields = body.writes[0].update.fields;
+        guides.set(`guideDeletion/${id}`, { remaining: fields.remaining.arrayValue.values.map((v) => v.stringValue), preserved: fields.preserved.booleanValue });
+        return Response.json({ writeResults: [{}] });
+      }
       assert.equal(body.writes[0].currentDocument.updateTime, '2026-10-14T00:00:00Z');
       assert.deepEqual(body.writes[0].updateMask.fieldPaths, ['deleting', 'deleteRequestedBy']);
       game = { ...game, deleting: true, deleteRequestedBy: 'owner' };
       return Response.json({ writeResults: [{}] });
+    }
+    const guidePath = /\/documents\/((?:guideDrafts|gameGuides|guideDeletion)\/[^?]+)/.exec(url)?.[1];
+    if (guidePath) {
+      if (init.method === 'DELETE') {
+        guides.delete(guidePath);
+        return new Response(null, { status: 204 });
+      }
+      if (guidePath.startsWith('guideDrafts') && !init.headers?.Authorization) return new Response(null, { status: 403 });
+      const data = guides.get(guidePath);
+      return data ? Response.json({ fields: value(data).mapValue.fields, updateTime: '2026-10-14T00:00:00Z' }) : new Response(null, { status: 404 });
     }
     if (url.includes(`/documents/games/${id}`)) {
       if (init.method === 'DELETE') {
@@ -110,6 +136,7 @@ function services(options = {}) {
   return {
     calls,
     files,
+    guides,
     get game() {
       return game;
     },
@@ -145,6 +172,62 @@ test('CORS e ausência de autenticação bloqueiam mutações sem tocar no Drive
       s.calls.some((call) => call.url.includes('/drive/')),
       false,
     );
+  }));
+test('imagem publicada pode ser lida; imagem exclusiva de rascunho exige edição', async () => {
+  await isolated({ guideAssets: 1 }, async () => {
+    assert.equal((await handleRequest(request(`/v1/games/${id}/guide-assets/asset-000000`, { auth: false }), env)).status, 200);
+  });
+  await isolated({ guideAssets: 1, draftOnly: true }, async (s) => {
+    assert.equal((await handleRequest(request(`/v1/games/${id}/guide-assets/asset-000000`, { auth: false }), env)).status, 401);
+    assert.equal(
+      s.calls.some((call) => call.url.includes('alt=media')),
+      false,
+    );
+    assert.equal((await handleRequest(request(`/v1/games/${id}/guide-assets/asset-000000`), env)).status, 200);
+  });
+});
+test('imagem de outro jogo e imagem sem referência não vazam pelo guia', async () =>
+  isolated({ guideAssets: 1 }, async (s) => {
+    s.files.get('asset-000000').appProperties.gameId = 'another-game';
+    assert.equal((await handleRequest(request(`/v1/games/${id}/guide-assets/asset-000000`, { auth: false }), env)).status, 403);
+    assert.equal((await handleRequest(request(`/v1/games/${id}/guide-assets/unknown-file`, { auth: false }), env)).status, 401);
+    assert.equal(
+      s.calls.some((call) => call.url.includes('alt=media')),
+      false,
+    );
+  }));
+test('exclusão de guia é retomável em lotes abaixo do limite de subrequests gratuitos', async () =>
+  isolated({ guideAssets: 10 }, async (s) => {
+    const first = await handleRequest(request(`/v1/games/${id}`, { method: 'DELETE' }), env);
+    assert.equal(first.status, 202);
+    assert.equal((await first.json()).remaining, 2);
+    assert.equal(s.game.deleting, true);
+    assert.ok(s.calls.length < 50);
+    assert.equal((await handleRequest(request(`/v1/games/${id}`, { method: 'DELETE' }), env)).status, 200);
+    assert.equal(s.game, null);
+    assert.equal(s.files.size, 0);
+    assert.equal(s.guides.size, 0);
+  }));
+test('índice gzip usa upload retomável privado e só fica legível após publicação', async () =>
+  isolated({}, async (s) => {
+    const start = await handleRequest(request('/v1/uploads', { method: 'POST', json: { gameId: id, kind: 'guideAsset', size: 262147, mimeType: 'application/gzip', name: 'indice.json.gz' } }), env);
+    assert.equal(start.status, 200);
+    const { ticket } = await start.json();
+    const completed = await (
+      await handleRequest(request('/v1/uploads/chunk', { method: 'PUT', headers: { 'X-Upload-Ticket': ticket, 'Content-Range': 'bytes 0-262146/262147', 'Content-Length': '262147' }, body: new Uint8Array(262147) }), env)
+    ).json();
+    assert.equal(completed.complete, true);
+    const finalize = () => handleRequest(request('/v1/uploads/finalize', { method: 'POST', json: { receipt: completed.receipt } }), env);
+    assert.equal((await finalize()).status, 409);
+    const document = { assets: { [completed.driveFileId]: { mimeType: 'application/gzip' } } };
+    s.guides.set(`guideDrafts/${id}`, document);
+    assert.equal((await finalize()).status, 200);
+    assert.equal(s.files.has('manual123'), true);
+    assert.equal((await handleRequest(request(`/v1/games/${id}/guide-assets/${completed.driveFileId}`, { auth: false }), env)).status, 401);
+    s.guides.set(`gameGuides/${id}`, document);
+    const response = await handleRequest(request(`/v1/games/${id}/guide-assets/${completed.driveFileId}`, { auth: false }), env);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Content-Type'), 'application/gzip');
   }));
 test('perfil revogado bloqueia exclusão mesmo com JWT válido', async () =>
   isolated({ enabled: false }, async (s) => {

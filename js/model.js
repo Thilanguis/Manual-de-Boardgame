@@ -42,7 +42,19 @@ export function validateGame(input) {
     ),
   ].slice(0, 8);
   if (tags.some((t) => t.length > 40)) throw new Error('Cada categoria deve ter até 40 caracteres.');
-  return { title, description, minPlayers, maxPlayers, durationMinutes, tags, language: String(input.language || 'pt-BR').slice(0, 20), isPublic: input.isPublic === true || input.isPublic === 'on' };
+  const recommendedAge = number(input.recommendedAge, 'Idade recomendada', 100),
+    gameType = String(input.gameType || '').trim(),
+    edition = String(input.edition || '').trim(),
+    mechanics = [
+      ...new Set(
+        String(input.mechanics || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      ),
+    ].slice(0, 8);
+  if (gameType.length > 80 || edition.length > 100 || mechanics.some((s) => s.length > 40)) throw new Error('Revise o tipo, a edição e as mecânicas: os textos excedem o limite.');
+  return { title, description, minPlayers, maxPlayers, durationMinutes, recommendedAge, gameType, edition, mechanics, tags, language: String(input.language || 'other').slice(0, 20), isPublic: input.isPublic === true || input.isPublic === 'on' };
 }
 
 export function playersLabel(game) {

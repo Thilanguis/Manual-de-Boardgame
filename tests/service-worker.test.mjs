@@ -22,7 +22,19 @@ function worker({ networkFails = false, cachedConfig = null } = {}) {
     },
     caches: {
       open: async () => cache,
-      keys: async () => ['buraco-v309', 'other-app', 'acervo-v0-shell', 'acervo-v1.0.1-shell', 'acervo-v1.1.0-shell', 'acervo-v1.2.0-shell', 'acervo-v1.2.1-shell', 'acervo-v1.2.2-shell', 'acervo-v1.2.3-shell', 'acervo-sdk-13.0.0'],
+      keys: async () => [
+        'buraco-v309',
+        'other-app',
+        'acervo-v0-shell',
+        'acervo-v1.0.1-shell',
+        'acervo-v1.1.0-shell',
+        'acervo-v1.2.0-shell',
+        'acervo-v1.2.1-shell',
+        'acervo-v1.2.2-shell',
+        'acervo-v1.2.3-shell',
+        'acervo-v1.3.0-shell',
+        'acervo-sdk-13.0.0',
+      ],
       delete: async (key) => deleted.push(key),
     },
     self: {
@@ -52,7 +64,7 @@ test('ativação preserva caches de outros aplicativos e limpa somente versões 
   let pending;
   context.handlers.activate({ waitUntil: (promise) => (pending = promise) });
   await pending;
-  assert.deepEqual(context.deleted, ['acervo-v0-shell', 'acervo-v1.0.1-shell', 'acervo-v1.1.0-shell', 'acervo-v1.2.0-shell', 'acervo-v1.2.1-shell', 'acervo-v1.2.2-shell']);
+  assert.deepEqual(context.deleted, ['acervo-v0-shell', 'acervo-v1.0.1-shell', 'acervo-v1.1.0-shell', 'acervo-v1.2.0-shell', 'acervo-v1.2.1-shell', 'acervo-v1.2.2-shell', 'acervo-v1.2.3-shell']);
 });
 test('PDFs, Storage, APIs e range não são interceptados', () => {
   const context = worker();

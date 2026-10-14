@@ -148,7 +148,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
   );
   return {
     close,
-    async open(nextGame) {
+    async open(nextGame, { page } = {}) {
       if (!reader.hidden) await close();
       const sequence = ++openSequence;
       returnFocus = document.activeElement;
@@ -173,7 +173,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
           return;
         }
         documentPdf = pdf;
-        pageNumber = Math.min(documentPdf.numPages, getProgress(game.id)?.page || 1);
+        pageNumber = Math.max(1, Math.min(documentPdf.numPages, Number.isInteger(page) ? page : getProgress(game.id)?.page || 1));
         element('pdf-page').hidden = false;
         updateControls();
         requestRender();

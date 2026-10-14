@@ -2,6 +2,8 @@ import { createDriveStorage } from './drive-storage.js';
 import { safeImageUrl } from './model.js';
 import { OWNER_UID, accessFor, emptyPermissions, profileSummary, userChange } from './permissions.js';
 import { annotateAvailability } from './catalog-availability.js';
+import { requestBgg } from './bgg-client.js';
+import { createGuideRepository } from './guide-repository.js';
 const SDK = 'https://www.gstatic.com/firebasejs/13.0.0';
 
 export async function createFirebaseRepository(config) {
@@ -157,14 +159,7 @@ export async function createFirebaseRepository(config) {
       requireWrite();
       const endpoint = config.bggEndpoint || (config.fileStorage.apiBase ? `${config.fileStorage.apiBase.replace(/\/$/, '')}/v1/bgg` : '');
       if (!config.enableBgg || !endpoint) throw new Error('A consulta ao BGG ainda não foi ativada neste acervo.');
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await auth.currentUser.getIdToken()}` },
-        body: JSON.stringify(action === 'search' ? { action, query: value } : { action, id: value }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Não foi possível consultar o BGG.');
-      return result;
+      return requestBgg(endpoint, () => auth.currentUser.getIdToken(), action === 'search' ? { action, query: value } : { action, id: value });
     },
     fetchBggCover(id) {
       requireWrite();
@@ -180,8 +175,8 @@ export async function createFirebaseRepository(config) {
       urls.set(key, url);
       return url;
     },
-    getManual(game) {
-      return files.get(game, 'manual', config.maxPdfBytes);
+    getManual(game, options) {
+      return files.get(game, 'manual', config.maxPdfBytes, options);
     },
     getManualSource(game) {
       return files.readerSource(game);
@@ -374,5 +369,6 @@ export async function createFirebaseRepository(config) {
       report,
     );
   });
+  Object.assign(repository, createGuideRepository(repository, { db, dbSDK, auth, files }));
   return repository;
 }

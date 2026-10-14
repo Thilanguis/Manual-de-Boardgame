@@ -1,4 +1,138 @@
 @import url('../vendor/pdfjs/text-layer.css');
+.guide-dialog {
+  width: min(1000px, calc(100vw - 24px));
+  max-height: 92dvh;
+}
+.guide-entry-actions,
+.guide-toolbar,
+.guide-editor-actions,
+.guide-section-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0;
+}
+.guide-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+  padding: 12px 0;
+}
+.guide-index {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 24px;
+}
+.guide-section,
+.rule-result,
+.guide-topic,
+.guide-editor-section {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 16px 0;
+  padding: 18px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.guide-section {
+  scroll-margin-top: 150px;
+}
+.guide-section summary {
+  cursor: pointer;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+.guide-section-body {
+  margin-top: 16px;
+  line-height: 1.75;
+}
+.guide-section p,
+.rule-result p {
+  margin: 10px 0;
+}
+.guide-aviso,
+.guide-warning {
+  border-left: 3px solid var(--red);
+  background: rgba(255, 68, 94, 0.07);
+  padding: 16px;
+  border-radius: 8px;
+}
+.guide-exemplo {
+  background: rgba(255, 255, 255, 0.035);
+}
+.guide-pergunta summary::before {
+  content: 'Dúvida · ';
+  color: var(--red);
+}
+.guide-section figure {
+  margin: 16px 0;
+}
+.guide-section img,
+.guide-editor-section img {
+  max-width: 100%;
+  max-height: 600px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.guide-editor-section label {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  font-size: 0.85rem;
+}
+.guide-editor-section textarea,
+.guide-editor-section input:not([type='checkbox']),
+.guide-editor-section select,
+#guide-search {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+  padding: 12px;
+}
+.guide-editor-section label.check-row {
+  display: flex;
+  align-items: center;
+}
+.guide-editor-section textarea {
+  resize: vertical;
+}
+#guide-progress {
+  width: 100%;
+}
+.guide-topic {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.guide-topic small {
+  flex: 1;
+}
+.guide-dialog button {
+  min-height: 44px;
+}
+@media (max-width: 600px) {
+  .guide-dialog .dialog-body {
+    padding: 16px;
+  }
+  .guide-toolbar {
+    position: static;
+  }
+  .guide-section,
+  .guide-editor-section {
+    padding: 14px;
+  }
+  .guide-entry-actions > button {
+    flex: 1;
+  }
+}
 
 .library-maintenance {
   margin: 20px 0;
@@ -86,7 +220,10 @@ button {
 }
 button:disabled {
   opacity: 0.5;
-  cursor: wait;
+  cursor: not-allowed;
+}
+button[aria-busy='true'] {
+  cursor: progress;
 }
 a {
   color: inherit;

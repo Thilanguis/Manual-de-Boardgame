@@ -11,9 +11,14 @@ function endpointRoot(value) {
 }
 export function createDriveStorage(config, getToken, getUid) {
   const api = () => endpointRoot(config.apiBase);
-  async function call(path, { method = 'GET', json, body, headers = {} } = {}) {
+  async function call(path, { method = 'GET', json, body, headers = {}, signal } = {}) {
     const token = await getToken();
-    const response = await fetch(`${api()}${path}`, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(json ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: json ? JSON.stringify(json) : body });
+    const response = await fetch(`${api()}${path}`, {
+      method,
+      signal,
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(json ? { 'Content-Type': 'application/json' } : {}), ...headers },
+      body: json ? JSON.stringify(json) : body,
+    });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       const error = new Error(data.error || 'A API do Drive não respondeu.');
@@ -66,7 +71,8 @@ export function createDriveStorage(config, getToken, getUid) {
     },
     async put(path, blob, onProgress = () => {}, options = {}) {
       const gameId = /^games\/([^/]+)\//.exec(path)?.[1],
-        kind = path.endsWith('/manual.pdf') ? 'manual' : 'cover';
+        kind = options.kind || (path.endsWith('/manual.pdf') ? 'manual' : 'cover'),
+        mimeType = options.mimeType || (kind === 'manual' ? 'application/pdf' : 'image/jpeg');
       if (!gameId) throw new Error('Referência de arquivo inválida.');
       const digest = options.fingerprint || Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), (b) => b.toString(16).padStart(2, '0')).join('');
       const key = `acervo-upload:${config.projectId}:${getUid()}:${gameId}:${kind}:${digest}`;
@@ -85,9 +91,7 @@ export function createDriveStorage(config, getToken, getUid) {
         }
       }
       if (!state) {
-        const result = await (
-          await call('/v1/uploads', { method: 'POST', json: { gameId, kind, size: blob.size, mimeType: kind === 'manual' ? 'application/pdf' : 'image/jpeg', name: options.name || (kind === 'manual' ? 'manual.pdf' : 'capa.jpg') } })
-        ).json();
+        const result = await (await call('/v1/uploads', { method: 'POST', json: { gameId, kind, size: blob.size, mimeType, name: options.name || (kind === 'manual' ? 'manual.pdf' : 'capa.jpg') } })).json();
         state = { ticket: result.ticket, startedAt: Date.now() };
         storeState(key, state);
       }
@@ -95,7 +99,7 @@ export function createDriveStorage(config, getToken, getUid) {
       let failures = 0;
       while (position < blob.size) {
         const end = Math.min(position + 8 * 1024 * 1024, blob.size),
-          chunk = blob.slice(position, end, kind === 'manual' ? 'application/pdf' : 'image/jpeg');
+          chunk = blob.slice(position, end, mimeType);
         try {
           const result = await (await call('/v1/uploads/chunk', { method: 'PUT', headers: { 'X-Upload-Ticket': state.ticket, 'Content-Range': `bytes ${position}-${end - 1}/${blob.size}`, 'Content-Type': chunk.type }, body: chunk })).json();
           if (result.complete) {
@@ -119,8 +123,8 @@ export function createDriveStorage(config, getToken, getUid) {
       }
       throw new Error('O Drive não confirmou o arquivo. Selecione-o novamente para retomar.');
     },
-    async get(game, kind, maxBytes) {
-      const response = await call(`/v1/games/${encodeURIComponent(game.id)}/${kind}`);
+    async get(game, kind, maxBytes, { signal } = {}) {
+      const response = await call(`/v1/games/${encodeURIComponent(game.id)}/${kind}`, { signal });
       if (Number(response.headers.get('Content-Length')) > maxBytes) throw new Error('Arquivo maior que o permitido.');
       const blob = await response.blob();
       if (blob.size > maxBytes) throw new Error('Arquivo maior que o permitido.');
@@ -139,10 +143,25 @@ export function createDriveStorage(config, getToken, getUid) {
       storeState(reference.resumeKey, null);
     },
     async deleteGame(game) {
-      return (await call(`/v1/games/${encodeURIComponent(game.id)}`, { method: 'DELETE' })).json();
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const result = await (await call(`/v1/games/${encodeURIComponent(game.id)}`, { method: 'DELETE' })).json();
+        if (!result.pending) return result;
+      }
+      throw new Error('A limpeza precisa continuar. Repita a exclusão pendente.');
+    },
+    async getGuideAsset(game, id) {
+      const response = await call(`/v1/games/${encodeURIComponent(game.id)}/guide-assets/${encodeURIComponent(id)}`);
+      const blob = await response.blob();
+      if (blob.size > 8 * 1024 * 1024) throw new Error('Arquivo do guia maior que o limite.');
+      return blob;
     },
     async bggCover(id) {
-      return (await call(`/v1/bgg/${encodeURIComponent(id)}/cover`)).blob();
+      try {
+        return (await call(`/v1/bgg/${encodeURIComponent(id)}/cover`, { signal: AbortSignal.timeout(25000) })).blob();
+      } catch (error) {
+        if (error.name === 'TimeoutError') throw new Error('A capa do BGG demorou a responder. Use a capa do PDF.');
+        throw error;
+      }
     },
     close() {},
   };

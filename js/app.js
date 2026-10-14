@@ -6,11 +6,13 @@ import { setupPwa } from './pwa.js';
 import { createAdminPanel } from './admin-panel.js';
 import { roleLabel, statusLabel } from './permissions.js';
 import { readableGame, unavailableReason } from './catalog-availability.js';
+import { createGuidePanel } from './guide-panel.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
 let repository,
   adminPanel,
+  guidePanel,
   reader,
   draft = null,
   manualBlob = null,
@@ -106,6 +108,10 @@ function showDialog(id) {
   document.body.classList.add('modal-open');
 }
 function closeDialog(id) {
+  if (id === 'guide-dialog') {
+    guidePanel?.close();
+    return;
+  }
   if (state.busy && ['upload-dialog', 'delete-dialog'].includes(id)) {
     showNotice('Aguarde a operação terminar para fechar.');
     return;
@@ -347,11 +353,12 @@ function showGame(game) {
   $('detail-description').textContent = game.description || 'Descrição não informada. Você pode completar as informações na área de administração.';
   $('detail-cover').alt = `Capa de ${game.title}`;
   populateImage($('detail-cover'), game);
-  $('detail-tags').replaceChildren(...(game.tags || []).map((tag) => node('span', null, tag)));
+  $('detail-tags').replaceChildren(...[...(game.tags || []), ...(game.mechanics || []), game.gameType, game.edition ? `Edição · ${game.edition}` : ''].filter(Boolean).map((tag) => node('span', null, tag)));
   $('detail-stats').replaceChildren();
   for (const [symbol, label, value] of [
     ['users', 'JOGADORES', playersLabel(game)],
     ['clock', 'DURAÇÃO', game.durationMinutes ? `${game.durationMinutes} minutos` : 'Não informada'],
+    ['users', 'IDADE', game.recommendedAge ? `${game.recommendedAge}+ anos` : 'Não informada'],
   ]) {
     const stat = node('div'),
       content = node('div');
@@ -362,6 +369,8 @@ function showGame(game) {
   updateManualStatus(game);
   $('detail-admin').hidden = !state.session.canEdit && !state.session.canDelete;
   $('edit-game').hidden = !state.session.canEdit;
+  $('edit-guide').hidden = !state.session.canEdit;
+  $('edit-guide').disabled = game.deleting === true;
   $('delete-game').hidden = !state.session.canDelete;
   $('edit-game').disabled = game.deleting === true;
   $('read-manual').disabled = !readableGame(game);
@@ -378,11 +387,15 @@ function updateManualStatus(game) {
 }
 $('detail-favorite').onclick = () => toggleFavorite(state.selected.id);
 $('read-manual').onclick = () => reader.open(state.selected);
+$('learn-game').onclick = () => guidePanel.open(state.selected, 'learn');
+$('quick-rules').onclick = () => guidePanel.open(state.selected, 'quick');
+$('edit-guide').onclick = () => guidePanel.open(state.selected, 'edit');
 function formatBytes(size = 0) {
   return size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(size / 1024)} KB`;
 }
 function resetDraft() {
   ++bggSequence;
+  $('bgg-search').removeAttribute('aria-busy');
   importAbort?.abort();
   ++importSequence;
   if (draftCoverURL.startsWith('blob:')) URL.revokeObjectURL(draftCoverURL);
@@ -426,7 +439,8 @@ function previewCover() {
 }
 function fillForm() {
   const form = $('game-form');
-  for (const field of ['title', 'description', 'minPlayers', 'maxPlayers', 'durationMinutes', 'language']) form.elements.namedItem(field).value = draft[field] ?? (field === 'language' ? 'pt-BR' : '');
+  for (const field of ['title', 'description', 'minPlayers', 'maxPlayers', 'durationMinutes', 'language', 'recommendedAge', 'gameType', 'edition']) form.elements.namedItem(field).value = draft[field] ?? (field === 'language' ? 'other' : '');
+  form.elements.namedItem('mechanics').value = (draft.mechanics || []).join(', ');
   form.elements.namedItem('tags').value = (draft.tags || []).join(', ');
   form.elements.namedItem('isPublic').checked = draft.isPublic === true;
   form.elements.namedItem('confirmed').checked = false;
@@ -438,11 +452,12 @@ function fillForm() {
   $('use-pdf-cover').hidden = !originalPdfCover;
   $('replace-pdf-label').hidden = !draft.id || !state.session.canEdit;
   $('bgg-search').disabled = !APP_CONFIG.enableBgg || repository.mode !== 'firebase';
-  $('bgg-status').textContent = APP_CONFIG.enableBgg && repository.mode === 'firebase' ? '' : 'Consulta externa opcional. A capa do PDF e os dados encontrados já podem ser usados.';
+  $('bgg-search').title = $('bgg-search').disabled ? 'A consulta ao BoardGameGeek ainda não está ativa neste acervo.' : 'Buscar informações complementares no BoardGameGeek';
+  $('bgg-status').textContent = APP_CONFIG.enableBgg && repository.mode === 'firebase' ? '' : 'Consulta ao BoardGameGeek indisponível neste acervo. Você pode continuar com a capa e os dados do PDF.';
 }
 function renderEvidence() {
   $('source-evidence').replaceChildren();
-  const labels = { title: 'Nome', players: 'Jogadores', duration: 'Duração', description: 'Descrição', cover: 'Capa' };
+  const labels = { title: 'Nome', players: 'Jogadores', duration: 'Duração', description: 'Descrição', cover: 'Capa', recommendedAge: 'Idade', gameType: 'Tipo', edition: 'Edição', mechanics: 'Mecânicas', tags: 'Categorias', language: 'Idioma' };
   for (const [key, value] of Object.entries(draft.sources || {})) {
     const paragraph = node('p');
     paragraph.append(node('strong', null, `${labels[key] || key}: ${value.source}`), document.createElement('br'), document.createTextNode(value.excerpt || 'Sem trecho disponível.'));
@@ -475,7 +490,7 @@ async function importFile(file) {
     const duplicate = state.games.find((game) => game.manual?.sha256 === inspected.manual.sha256);
     if (duplicate) throw new Error(`Este manual já está na biblioteca como “${duplicate.title}”. Edite o jogo existente para alterar suas informações.`);
     const { coverBlob, candidates, textFound, ...record } = inspected;
-    draft = { ...record, tags: [], language: 'pt-BR' };
+    draft = { ...record };
     manualBlob = file;
     draftCoverBlob = originalPdfCover = coverBlob;
     $('upload-status').textContent = '';
@@ -496,7 +511,6 @@ async function importFile(file) {
       $('title-suggestions').append(button);
     }
     $('game-title').focus();
-    if (APP_CONFIG.enableBgg && repository.mode === 'firebase' && draft.title) await searchBgg();
   } catch (error) {
     if (error.name !== 'AbortError' && token === importSequence) $('upload-status').textContent = errorMessage(error);
   } finally {
@@ -585,7 +599,7 @@ $('replace-pdf-file').onchange = async (event) => {
 };
 let bggSequence = 0;
 async function searchBgg() {
-  if (!draft || !APP_CONFIG.enableBgg) return;
+  if (!draft || !APP_CONFIG.enableBgg || state.busy || state.importing) return;
   const token = ++bggSequence,
     currentDraft = draft,
     query = $('game-title').value.trim();
@@ -594,6 +608,7 @@ async function searchBgg() {
     return;
   }
   $('bgg-search').disabled = true;
+  $('bgg-search').setAttribute('aria-busy', 'true');
   $('bgg-results').replaceChildren();
   $('bgg-status').textContent = 'Procurando jogos com esse nome…';
   try {
@@ -610,14 +625,19 @@ async function searchBgg() {
   } catch (error) {
     if (token === bggSequence && draft === currentDraft) $('bgg-status').textContent = errorMessage(error);
   } finally {
-    if (token === bggSequence) $('bgg-search').disabled = false;
+    if (token === bggSequence) {
+      $('bgg-search').disabled = false;
+      $('bgg-search').removeAttribute('aria-busy');
+    }
   }
 }
 $('bgg-search').onclick = searchBgg;
 async function selectBgg(id, currentDraft) {
-  if (draft !== currentDraft) return;
+  if (draft !== currentDraft || state.busy || state.importing) return;
   const selection = ++bggSequence;
   state.importing = true;
+  $('bgg-search').disabled = true;
+  $('bgg-search').setAttribute('aria-busy', 'true');
   $('save-game').disabled = true;
   $('bgg-results')
     .querySelectorAll('button')
@@ -673,6 +693,8 @@ async function selectBgg(id, currentDraft) {
     if (selection === bggSequence) {
       state.importing = false;
       $('save-game').disabled = false;
+      $('bgg-search').disabled = !APP_CONFIG.enableBgg || repository.mode !== 'firebase';
+      $('bgg-search').removeAttribute('aria-busy');
     }
     $('bgg-results')
       .querySelectorAll('button')
@@ -698,6 +720,10 @@ $('game-form').onsubmit = async (event) => {
       ['minPlayers', 'players'],
       ['maxPlayers', 'players'],
       ['durationMinutes', 'duration'],
+      ['recommendedAge', 'recommendedAge'],
+      ['gameType', 'gameType'],
+      ['edition', 'edition'],
+      ['language', 'language'],
     ])
       if ((draft[field] ?? '') !== (normalized[field] ?? '')) sources[sourceField] = { source: 'Conferido e ajustado por você', excerpt: sourceField === 'players' ? playersLabel(normalized) : String(normalized[field] ?? '') };
     state.busy = true;
@@ -924,7 +950,7 @@ $('switch-mode').onclick = () => {
   else url.searchParams.set('local', '1');
   location.href = url.href;
 };
-const install = setupPwa({ onNotice: showNotice, isBusy: () => state.busy || state.importing || !!draft || adminPanel?.isBusy(), onInstallReady: (ready) => $('install-button').classList.toggle('ready', ready) });
+const install = setupPwa({ onNotice: showNotice, isBusy: () => state.busy || state.importing || !!draft || adminPanel?.isBusy() || guidePanel?.isBusy(), onInstallReady: (ready) => $('install-button').classList.toggle('ready', ready) });
 async function installApp() {
   if (!(await install())) {
     setupContent();
@@ -943,6 +969,7 @@ function updateSession(session) {
   const previous = state.session;
   if (state.session.user?.uid !== session.user?.uid && !$('reader').hidden) reader?.close();
   state.session = session;
+  guidePanel?.updateSession(session);
   if (previous.user?.uid === session.user?.uid && previous.profile && session.profile && previous.profile.status !== session.profile.status) showNotice(`${statusLabel(session.profile.status)}. Abra Minha conta para ver seu acesso atualizado.`);
   adminPanel?.updateSession(session);
   if ($('login-dialog').open) {
@@ -1002,6 +1029,7 @@ async function start() {
       },
     });
     repository.subscribeSession(updateSession);
+    guidePanel = createGuidePanel({ repository, openManual: (game, options) => reader.open(game, options), onNotice: showNotice, scope: APP_CONFIG.firebase?.projectId || 'local' });
     repository.subscribeGames(
       (games) => {
         state.games = games;
@@ -1013,11 +1041,13 @@ async function start() {
           const latest = games.find((game) => game.id === state.selected.id);
           if (latest) {
             state.selected = latest;
+            guidePanel?.invalidate(latest);
             $('read-manual').disabled = !readableGame(latest);
             updateManualStatus(latest);
           }
         }
         if (state.selected && !games.some((game) => game.id === state.selected.id) && !state.busy) {
+          guidePanel?.close(true);
           state.selected = null;
           if ($('detail-dialog').open) closeDialog('detail-dialog');
         }

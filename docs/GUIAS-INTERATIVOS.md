@@ -1,5 +1,7 @@
 # Proposta — Aprender a jogar
 
+A primeira versão foi implementada na v1.3.0, incluindo consulta rápida sem IA. Consulte [a documentação atual](BIBLIOTECA-INTELIGENTE.md). O texto abaixo registra a proposta original.
+
 Esta é uma proposta para avaliação, antes de implementar os guias. O PDF original permanece disponível pelo leitor existente. A arquitetura continua com HTML/CSS/JavaScript, GitHub Pages, Firebase Authentication/Firestore Spark e o Worker Free que acessa a pasta PDFs existente do proprietário.
 
 ## O que o código atual oferece

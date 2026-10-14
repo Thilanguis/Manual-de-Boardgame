@@ -1,14 +1,14 @@
 import { normalizeText } from './model.js';
 
 const genericTitle =
-  /^(manual|regras?|rule\s*book|rules?|instructions?|instru[cç][oõ]es|sum[aá]rio|contents|introdu[cç][aã]o|objetivo|game rules|untitled|document|microsoft|adobe|componente|prepara[cç][aã]o|setup|dura[cç][aã]o|jogadores|players|playing time|conte[uú]do|vis[aã]o geral|overview|game overview)/i;
+  /^(livro de(?: regras)?$|manual|regras?|rule\s*book|rules?|instructions?|instru[cç][oõ]es|sum[aá]rio|contents|introdu[cç][aã]o|objetivo|game rules|untitled|document|microsoft|adobe|componente|prepara[cç][aã]o|setup|dura[cç][aã]o|jogadores|players|playing time|conte[uú]do|vis[aã]o geral|overview|game overview)/i;
 
 export function titleCandidates({ metadataTitle = '', filename = '', lines = [] } = {}) {
   const clean = (value) =>
     String(value)
       .replace(/\.pdf$/i, '')
-      .replace(/[_]+/g, ' ')
-      .replace(/\b(manual|rulebook|regras|rules|pt[-_ ]?br|portugu[eê]s|english)\b/gi, ' ')
+      .replace(/[_\-–—]+/g, ' ')
+      .replace(/\b(manual|rulebook|regras|rules|pt\s?br|layout|portugu[eê]s|english)\b/gi, ' ')
       .replace(/\s+/g, ' ')
       .replace(/^[\s\-–:]+|[\s\-–:]+$/g, '')
       .trim();
@@ -66,7 +66,45 @@ export function extractMetadata(text) {
   if (minPlayers) sources.players = { source: 'PDF', excerpt: playerMatch[0] };
   if (timeMatch) sources.duration = { source: 'PDF', excerpt: timeMatch[0] };
   if (description) sources.description = { source: 'PDF · objetivo do jogo', excerpt: description };
-  return { minPlayers, maxPlayers, durationMinutes, description, sources };
+  const age = normalized.match(/(?:idade(?: recomendada)?|ages?|age recommendation)\s*[:：]?\s*(\d{1,2})\s*(?:\+|anos|years)?/i) || normalized.match(/\b(\d{1,2})\s*(?:\+\s*anos|anos ou mais|years and up)\b/i);
+  const recommendedAge = age && Number(age[1]) >= 1 ? Number(age[1]) : null;
+  const type = normalized.match(/(?:jogo|game)\s+(cooperativo|competitivo|por equipes|cooperative|competitive|team[- ]based)/i) || normalized.match(/(cooperative|competitive|team[- ]based)\s+game/i);
+  const types = { cooperative: 'Cooperativo', cooperativo: 'Cooperativo', competitive: 'Competitivo', competitivo: 'Competitivo', 'por equipes': 'Por equipes', 'team-based': 'Por equipes', 'team based': 'Por equipes' };
+  const gameType = type ? types[type[1].toLowerCase()] || '' : '';
+  const editionMatch = normalized.match(/^(?:edi[cç][aã]o|vers[aã]o|edition|version)\s*[:：]\s*(.{1,100})$/im);
+  const edition = editionMatch?.[1]?.trim() || '';
+  const mechanicsMatch = normalized.match(/^(?:mec[aâ]nicas?|mechanics)\s*[:：]\s*(.{1,320})$/im),
+    categoriesMatch = normalized.match(/^(?:categorias?|categories)\s*[:：]\s*(.{1,320})$/im);
+  const list = (match) =>
+    match
+      ? match[1]
+          .split(/[,;]/)
+          .map((s) => s.trim().slice(0, 40))
+          .filter(Boolean)
+          .slice(0, 8)
+      : [];
+  const mechanics = list(mechanicsMatch),
+    tags = list(categoriesMatch);
+  const vocab = {
+    'pt-BR': ['jogadores', 'preparação', 'jogo', 'vitória', 'rodada', 'cartas', 'tabuleiro', 'pontos', 'peças'],
+    en: ['players', 'setup', 'game', 'victory', 'round', 'cards', 'board', 'points', 'pieces'],
+    es: ['jugadores', 'preparación', 'juego', 'victoria', 'ronda', 'cartas', 'tablero', 'puntos', 'fichas'],
+  };
+  const tokens = new Set(normalized.toLowerCase().split(/[^a-zà-ÿ]+/));
+  const scores = Object.entries(vocab)
+    .map(([code, words]) => [code, words.filter((w) => tokens.has(w)).length])
+    .sort((a, b) => b[1] - a[1]);
+  const language = scores[0][1] >= 5 && scores[0][1] >= scores[1][1] * 1.5 ? scores[0][0] : 'other';
+  for (const [field, match] of [
+    ['recommendedAge', age],
+    ['gameType', type],
+    ['edition', editionMatch],
+    ['mechanics', mechanicsMatch],
+    ['tags', categoriesMatch],
+  ])
+    if (match) sources[field] = { source: 'PDF · informação explícita', excerpt: match[0] };
+  if (language !== 'other') sources.language = { source: 'PDF · idioma sugerido por vocabulário; confirmar', excerpt: language };
+  return { minPlayers, maxPlayers, durationMinutes, description, recommendedAge, gameType, edition, mechanics, tags, language, sources };
 }
 
 export function linesFromItems(items) {

@@ -107,9 +107,10 @@ export async function deleteProjectFile(env, id, context, fetcher = fetch) {
   if (!response.ok && response.status !== 404) throw new ApiError(502, 'Não foi possível concluir a exclusão no Drive. Tente novamente.');
 }
 export function validateUpload(input, maxPdfBytes) {
-  if (!/^[a-f0-9-]{36}$/i.test(input.gameId) || !['manual', 'cover'].includes(input.kind)) throw new ApiError(400, 'Jogo ou tipo de arquivo inválido.');
+  if (!/^[a-f0-9-]{36}$/i.test(input.gameId) || !['manual', 'cover', 'guideAsset'].includes(input.kind)) throw new ApiError(400, 'Jogo ou tipo de arquivo inválido.');
   const max = input.kind === 'manual' ? maxPdfBytes : 8 * 1024 * 1024;
-  if (!Number.isInteger(input.size) || input.size < 1 || input.size > max || input.mimeType !== (input.kind === 'manual' ? 'application/pdf' : 'image/jpeg')) throw new ApiError(400, 'O arquivo tem tamanho ou formato não permitido.');
+  const mimeTypes = input.kind === 'guideAsset' ? ['image/jpeg', 'application/gzip'] : [input.kind === 'manual' ? 'application/pdf' : 'image/jpeg'];
+  if (!Number.isInteger(input.size) || input.size < 1 || input.size > max || !mimeTypes.includes(input.mimeType)) throw new ApiError(400, 'O arquivo tem tamanho ou formato não permitido.');
   const name = String(input.name || '')
     .replace(/[\r\n\x00-\x1f]/g, ' ')
     .trim()

@@ -67,7 +67,7 @@ service cloud.firestore {
       return signedIn() && e.keys().hasOnly(['id','targetType','targetId','actorUid','action','before','after','version','createdAt'])
         && e.keys().hasAll(['id','targetType','targetId','actorUid','action','before','after','version','createdAt'])
         && e.id == id && e.actorUid == request.auth.uid && e.createdAt == request.time
-        && ((e.targetType == 'user' && validUserEvent(e,id)) || (e.targetType == 'settings' && validSettingsEvent(e,id)));
+        && ((e.targetType == 'user' && validUserEvent(e,id)) || (e.targetType == 'settings' && validSettingsEvent(e,id)) || (e.targetType == 'guide' && validGuideEvent(e,id)));
     }
     match /users/{uid} {
       allow get: if (signedIn() && request.auth.uid == uid) || reviewer();
@@ -103,7 +103,7 @@ service cloud.firestore {
     function optionalNumber(value, max) { return value == null || (value is int && value >= 1 && value <= max); }
     function validGame(id) {
       let g = request.resource.data;
-      return g.keys().hasOnly(['id','title','description','minPlayers','maxPlayers','durationMinutes','tags','language','manual','cover','sources','bgg','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting','deleteRequestedBy'])
+      return g.keys().hasOnly(['id','title','description','minPlayers','maxPlayers','durationMinutes','tags','language','manual','cover','sources','bgg','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting','deleteRequestedBy','recommendedAge','gameType','mechanics','edition'])
         && g.keys().hasAll(['id','title','description','minPlayers','maxPlayers','durationMinutes','tags','language','manual','cover','sources','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting'])
         && g.id == id && g.schemaVersion == 1 && g.isPublic is bool && g.deleting is bool
         && g.title is string && g.title.size() > 0 && g.title.size() <= 160
@@ -112,6 +112,10 @@ service cloud.firestore {
         && ((g.minPlayers == null && g.maxPlayers == null) || (g.minPlayers != null && g.maxPlayers != null && g.minPlayers <= g.maxPlayers))
         && optionalNumber(g.durationMinutes,1440)
         && g.tags is list && g.tags.size() <= 8 && g.language is string && g.language.size() <= 20
+        && (!('recommendedAge' in g) || optionalNumber(g.recommendedAge,100))
+        && (!('gameType' in g) || (g.gameType is string && g.gameType.size() <= 80))
+        && (!('edition' in g) || (g.edition is string && g.edition.size() <= 100))
+        && (!('mechanics' in g) || (g.mechanics is list && g.mechanics.size() <= 8))
         && g.manual is map && g.manual.path == 'games/' + id + '/manual.pdf'
         && g.manual.name is string && g.manual.name.size() <= 255
         && g.manual.type == 'application/pdf' && g.manual.size is int && g.manual.size > 0 && g.manual.size <= 52428800
@@ -130,6 +134,58 @@ service cloud.firestore {
         || (owner() && request.resource.data.deleting == true && request.resource.data.deleteRequestedBy == request.auth.uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleting','deleteRequestedBy','updatedAt'])));
       allow delete: if owner();
+    }
+    function guideGame(id) { return get(/databases/$(database)/documents/games/$(id)).data; }
+    function canReadGuide(id) {
+      let g = guideGame(id);
+      return admin() || (g.deleting == false && (publicLibrary() || g.isPublic == true));
+    }
+    function canEditGuide(id) { return allowed('editGames') && guideGame(id).deleting == false; }
+    function validGuide(g, id) {
+      return g.keys().hasOnly(['gameId','schemaVersion','revision','content','sourceHash','assets','indexFileId','reviewed','updatedAt','updatedBy','lastEventId','draftRevision'])
+        && g.keys().hasAll(['gameId','schemaVersion','revision','content','sourceHash','assets','indexFileId','reviewed','updatedAt','updatedBy'])
+        && g.gameId == id && g.schemaVersion == 1 && g.revision is int && g.revision >= 1
+        && g.content is string && g.content.size() <= 350000
+        && g.sourceHash is string && g.sourceHash.matches('^[a-f0-9]{64}$')
+        && g.assets is map && g.assets.size() <= 100 && g.indexFileId is string && g.indexFileId.size() <= 200
+        && g.reviewed is bool && g.updatedAt == request.time && g.updatedBy == request.auth.uid;
+    }
+    function validGuideEvent(e, eventId) {
+      let after = getAfter(/databases/$(database)/documents/gameGuides/$(e.targetId)).data;
+      return canEditGuide(e.targetId) && e.action == 'publishGuide' && after.lastEventId == eventId
+        && after.revision == e.version && e.after == {'revision':after.revision}
+        && e.before == {'revision':after.revision - 1};
+    }
+    match /guideDrafts/{id} {
+      allow get: if allowed('editGames');
+      allow list: if false;
+      allow create: if canEditGuide(id) && validGuide(request.resource.data,id) && request.resource.data.revision == 1;
+      allow update: if canEditGuide(id) && validGuide(request.resource.data,id) && request.resource.data.revision == resource.data.revision + 1;
+      allow delete: if owner();
+    }
+    function publishGuide(id) {
+      let g = request.resource.data;
+      let draft = getAfter(/databases/$(database)/documents/guideDrafts/$(id)).data;
+      return canEditGuide(id) && validGuide(g,id) && g.reviewed == true && draft.reviewed == true
+        && g.content == draft.content && g.sourceHash == draft.sourceHash && g.sourceHash == guideGame(id).manual.sha256
+        && g.draftRevision == draft.revision && g.indexFileId == draft.indexFileId
+        && g.assets.keys().hasOnly(draft.assets.keys())
+        && validEvent(getAfter(/databases/$(database)/documents/auditEvents/$(g.lastEventId)).data,g.lastEventId);
+    }
+    match /gameGuides/{id} {
+      allow get: if canReadGuide(id);
+      allow list: if false;
+      allow create: if publishGuide(id) && request.resource.data.revision == 1;
+      allow update: if publishGuide(id) && request.resource.data.revision == resource.data.revision + 1;
+      allow delete: if owner();
+    }
+    match /guideDeletion/{id} {
+      allow get, delete: if owner();
+      allow create, update: if owner() && guideGame(id).deleting == true
+        && request.resource.data.keys().hasOnly(['remaining','preserved'])
+        && request.resource.data.remaining is list && request.resource.data.remaining.size() <= 200
+        && request.resource.data.preserved is bool;
+      allow list: if false;
     }
     match /{document=**} { allow read, write: if false; }
   }

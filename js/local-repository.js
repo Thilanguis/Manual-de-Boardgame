@@ -1,3 +1,4 @@
+import { createLocalGuides } from './guide-repository.js';
 const DATABASE = 'acervo-library-v1';
 
 function openDatabase() {
@@ -59,7 +60,7 @@ export async function createLocalRepository() {
     channel?.postMessage({ id });
     emit();
   };
-  return {
+  const repository = {
     mode: 'local',
     session: { mode: 'local', canRead: true, canWrite: true, canAdd: true, canEdit: true, canDelete: true, user: null },
     subscribeSession(callback) {
@@ -105,6 +106,7 @@ export async function createLocalRepository() {
       return url;
     },
     async deleteGame(game) {
+      await repository.deleteGuides(game);
       await transact(db, ['games', 'files'], 'readwrite', (tx) => {
         tx.objectStore('games').delete(game.id);
         tx.objectStore('files').delete(`${game.id}/manual`);
@@ -123,6 +125,9 @@ export async function createLocalRepository() {
       channel?.close();
       for (const url of urls.values()) URL.revokeObjectURL(url);
       db.close();
+      repository.closeGuides?.();
     },
   };
+  Object.assign(repository, await createLocalGuides(repository));
+  return repository;
 }
