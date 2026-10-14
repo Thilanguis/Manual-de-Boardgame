@@ -11,6 +11,8 @@ Biblioteca pessoal de manuais, em HTML, CSS e JavaScript puro. Interface escura 
 
 O Worker conserva as credenciais OAuth em secrets. O frontend recebe somente tickets criptografados e referências aos arquivos; nunca recebe o refresh token, client secret ou access token Google. Uploads usam blocos de 8 MiB e sessões retomáveis; a leitura permite requisições Range. Os arquivos permanecem privados no Drive. Visitantes leem pelo site conforme a publicação de cada jogo ou da biblioteca inteira.
 
+O frontend está publicado em [thilanguis.github.io/Manual-de-Boardgame](https://thilanguis.github.io/Manual-de-Boardgame/). Regras e índices Firestore foram publicados; o proprietário está autorizado e o domínio Pages foi adicionado ao Authentication. A verificação anônima confirmou a consulta de jogos publicados e o bloqueio de leituras irrestritas/admins.
+
 **A autorização externa ainda é necessária:** `fileStorage.apiBase` está vazia até publicar o Worker e conectar o Drive. O código e a configuração Firebase, isoladamente, não tornam os uploads centrais disponíveis. Siga o [guia completo do Google Cloud, OAuth e Cloudflare](docs/GOOGLE-DRIVE-CLOUDFLARE.md) e o [guia Firebase](docs/FIREBASE.md). Não anexe credenciais privadas ao chat ou ao repositório.
 
 ## Funcionalidades
@@ -46,9 +48,11 @@ npm --prefix worker test
 npm --prefix worker run build
 ```
 
-O build estático copia somente os recursos públicos para `public/`. O build do Worker é um dry-run sem publicação. O workflow `.github/workflows/pages.yml` verifica os dois componentes e publica somente `public/` no Pages; selecione **GitHub Actions** em Settings → Pages.
+O build estático copia somente os recursos públicos para `public/`. O build do Worker é um dry-run sem publicação. O workflow `.github/workflows/pages.yml` verifica os dois componentes e publica somente `public/` no Pages; **GitHub Actions** já está configurado em Settings → Pages.
 
 Os testes automatizados cobrem reconhecimento, cache, verificação JWT, tickets, permissões, limites de upload, vínculo de arquivos e operações da API com serviços simulados. `tests/browser.mjs` verifica importação de um PDF gerado, persistência, substituição, leitor, edição e exclusão em contexto isolado; requer Playwright, pdf-lib e Chrome. Eles não substituem a validação final no Drive real após a conexão OAuth.
+
+Validação realizada: 30 testes automatizados aprovados, interface verificada no computador/celular/tablet, API compilada em dry-run e workflow Pages concluído com sucesso. OAuth proprietário, operações Drive reais e CPU no Workers Free aguardam a conexão das contas.
 
 Para Prettier e VS Code, execute `npm ci`; as preferências de formatação e extensão recomendada estão no projeto.
 

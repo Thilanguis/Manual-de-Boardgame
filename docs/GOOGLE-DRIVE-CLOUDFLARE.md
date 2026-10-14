@@ -1,8 +1,8 @@
 # Google Drive central, Cloudflare Worker e GitHub Pages
 
-O Acervo usa o espaço do Google Drive pessoal do proprietário, incluindo a capacidade já contratada no Google One. O frontend fica no GitHub Pages; Firebase Spark mantém login, catálogo e permissões; um Cloudflare Worker Free faz a ponte com o Drive. PDFs e capas ficam privados no Drive e são lidos pelo proxy conforme a política da biblioteca.
+O Acervo usa o espaço do Google Drive pessoal do proprietário, incluindo a capacidade já contratada no Google One. O frontend está publicado no [GitHub Pages](https://thilanguis.github.io/Manual-de-Boardgame/); Firebase Spark mantém login, catálogo e permissões; um Cloudflare Worker Free faz a ponte com o Drive quando a conexão OAuth estiver configurada. PDFs e capas ficam privados no Drive e são lidos pelo proxy conforme a política da biblioteca.
 
-A configuração Firebase e a primeira versão em `https://manual-de-boardgame.web.app` já existem. A integração Drive depende da autorização OAuth do proprietário, dos secrets no Worker, da publicação do backend e da configuração de sua URL no frontend. Este guia não certifica que essas etapas externas tenham sido concluídas.
+A interface também está publicada no [host Firebase de transição](https://manual-de-boardgame.web.app), com regras Firestore compiladas e índices publicados. O perfil proprietário já tem `enabled: true`/`role: 'admin'`, e `thilanguis.github.io` foi autorizado no Firebase. Pages foi publicado pelo [workflow 38611621664](https://github.com/Thilanguis/Manual-de-Boardgame/actions/runs/38611621664), concluído com sucesso. Chrome anônimo no Pages carregou SDK, PWA e catálogo sem erros, exibiu o botão Google, ocultou senha e permitiu a consulta pública restrita. A validação Firebase negou catálogo irrestrito/coleção `admins`. Provider Google/vinculação ainda não foram verificados; Cloudflare e OAuth Drive ainda não foram autenticados. A integração de arquivos depende desses passos, dos secrets no Worker, do deploy e da URL no frontend.
 
 ## 1. Preparar o Google Cloud
 
@@ -49,7 +49,7 @@ O build do Worker é um dry-run do Wrangler; prepara `.build/` sem publicar. Rev
 }
 ```
 
-A origem `https://thilanguis.github.io` já está preparada em `ALLOWED_ORIGINS`. O endereço previsto do frontend é `https://thilanguis.github.io/Manual-de-Boardgame/`; a origem CORS não inclui o caminho `/Manual-de-Boardgame/`. O host Firebase temporário continua autorizado durante a transição. CORS limita chamadas de navegadores; a autorização dos dados depende da validação de tokens e das permissões no servidor.
+A origem `https://thilanguis.github.io` já está preparada em `ALLOWED_ORIGINS`. O frontend publicado está em `https://thilanguis.github.io/Manual-de-Boardgame/`; a origem CORS não inclui o caminho `/Manual-de-Boardgame/`. O host Firebase temporário continua autorizado durante a transição. CORS limita chamadas de navegadores; a autorização dos dados depende da validação de tokens e das permissões no servidor.
 
 Não coloque refresh token, client secret ou token BGG em `vars`. Eles ficam em bindings secretos do Worker. [Secrets do Cloudflare](https://developers.cloudflare.com/workers/configuration/secrets/).
 
@@ -110,21 +110,21 @@ Os PDFs não são copiados para o GitHub ou para o cache da PWA em lote. O catá
 
 ## 5. Preservar o administrador ao habilitar login Google
 
-No Firebase Authentication → Sign-in method, habilite Google e confira os Authorized domains. A conta administrativa existente usa o UID `7TitBObtb8a0W8GisSstSM1RHiX2`; esse identificador precisa continuar associado ao proprietário.
+No Firebase Authentication → Sign-in method, habilite Google. A ativação desse provider e a vinculação ainda estão pendentes e não foram verificadas. O domínio `thilanguis.github.io` já foi adicionado aos Authorized domains, preservando os existentes. A conta administrativa usa o UID `7TitBObtb8a0W8GisSstSM1RHiX2`, com perfil `enabled: true`/`role: 'admin'`; esse identificador precisa continuar associado ao proprietário.
 
 Para vincular Google, acesse `https://manual-de-boardgame.web.app` ou localhost com uma versão que ofereça a vinculação. Entre com o e-mail/senha da conta existente, abra **Minha Conta → Vincular Google** e conclua o popup Google. A vinculação com `linkWithPopup` preserva o UID Firebase. Depois, use o botão Google no GitHub Pages. Não crie uma segunda conta esperando que ela herde os privilégios da primeira. [Vincular providers Firebase](https://firebase.google.com/docs/auth/web/account-linking).
 
 O frontend mantém `allowPasswordLogin: true` para o acesso local/host Firebase de transição, mas oculta o formulário de senha em hosts `.github.io`. Assim, no Pages o login Google abre o provider; não se digita senha no formulário do site. O consentimento Drive do passo 3 é separado desse login Firebase.
 
-## 6. Publicar no GitHub Pages
+## 6. GitHub Pages publicado e atualizações
 
-O repositório confirmado é público: [Thilanguis/Manual-de-Boardgame](https://github.com/Thilanguis/Manual-de-Boardgame), com branch padrão `main`. Envie o código a esse repositório, mantendo JSON OAuth, tokens, arquivos `.env`/`.dev.vars` e manuais fora dos commits. Abra **Settings → Pages → Build and deployment → Source: GitHub Actions**. O endereço previsto é `https://thilanguis.github.io/Manual-de-Boardgame/`; a publicação só estará confirmada quando o workflow terminar e esse site estiver disponível.
+O repositório público é [Thilanguis/Manual-de-Boardgame](https://github.com/Thilanguis/Manual-de-Boardgame), com branch padrão `main`. Pages usa source **GitHub Actions** (`build_type: workflow`), e a primeira publicação foi concluída e verificada em [thilanguis.github.io/Manual-de-Boardgame](https://thilanguis.github.io/Manual-de-Boardgame/). O [workflow 38611621664](https://github.com/Thilanguis/Manual-de-Boardgame/actions/runs/38611621664) terminou com sucesso. Nas atualizações, mantenha JSON OAuth, tokens, arquivos `.env`/`.dev.vars` e manuais fora dos commits.
 
 O workflow da aplicação usa Node.js 22, executa os testes do frontend, gera `public/` e publica um artifact Pages. O frontend continua HTML/CSS/JS puro; as dependências de desenvolvimento e do Worker não precisam ser incluídas no artifact. O Worker é publicado separadamente, pela conta Cloudflare. [Workflows Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
 
 O repositório confirmado é público, modalidade em que GitHub Pages está disponível no GitHub Free. [Disponibilidade do Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages).
 
-Adicione ou confirme `thilanguis.github.io` em Firebase Authentication → Authorized domains. A origem `https://thilanguis.github.io` já está configurada no Worker; ela será aplicada ao publicar o backend. A URL completa do app inclui `/Manual-de-Boardgame/`; a origem CORS não inclui esse caminho. A publicação da interface não publica os PDFs privados. O login via provider também evita usar Pages para um formulário que envia senhas, conforme os [limites de uso do Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits).
+`thilanguis.github.io` já está autorizado no Firebase Authentication. A origem `https://thilanguis.github.io` já está configurada no Worker; ela será aplicada ao publicar o backend. A URL completa do app inclui `/Manual-de-Boardgame/`; a origem CORS não inclui esse caminho. A publicação da interface não publica os PDFs privados. O login via provider também evita usar Pages para um formulário que envia senhas, conforme os [limites de uso do Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits).
 
 ## 7. Custos, limites e verificação
 
