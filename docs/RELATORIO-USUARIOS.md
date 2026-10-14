@@ -14,7 +14,7 @@
 
 ## Efetivamente testado
 
-46 testes automatizados disponíveis: 16 no aplicativo/assistente local, 17 na API com Google/Firestore simulados e 13 nas regras reais do emulador Firestore. A atualização 1.2.1 acrescenta o diagnóstico de Drive API desativada sem expor a resposta privada. Os 16 testes do aplicativo passaram na atualização; as suítes de API e regras passaram na etapa anterior e são novamente executadas pelo workflow de publicação. Cobrem leitura anônima, cadastro pending, ausência de autoaprovação, hierarquia, flags, auditoria, bloqueio da mesma sessão, JWT/tickets, SSRF/pasta, Range, retomada e exclusão concorrente.
+46 testes automatizados aprovados na publicação 1.2.1: 16 no aplicativo/assistente local, 17 na API com Google/Firestore simulados e 13 nas regras reais do emulador Firestore. A atualização acrescenta o diagnóstico de Drive API desativada sem expor a resposta privada. Cobrem leitura anônima, cadastro pending, ausência de autoaprovação, hierarquia, flags, auditoria, bloqueio da mesma sessão, JWT/tickets, SSRF/pasta, Range, retomada e exclusão concorrente.
 
 QA administrativa com três contextos Chrome isolados e Auth/Firestore emulados: cadastro, aviso/contador sem reload, aprovação, promoção, aprovação por subadmin, bloqueio imediato, histórico e desktop/celular/tablet. QA de regressão com PDF gerado: importação, identificação, persistência, substituição, texto, páginas, zoom, favoritos, busca, edição/exclusão e shell offline.
 
@@ -25,6 +25,8 @@ API compilada em dry-run. Auditoria npm do projeto corrigida, sem vulnerabilidad
 O conector Google Drive confirmou a existência da pasta PDFs e sua condição privada. Isso não valida a autorização OAuth do cliente do aplicativo.
 
 Publicação GitHub Pages concluída com workflow aprovado. Verificação anônima no endereço real confirmou carregamento da interface, Firebase e PWA, formulários de login/cadastro/recuperação e leitura do catálogo público; listagem de pessoas, perfil do proprietário e admins legados retornaram acesso negado.
+
+Após conectar o Worker, essa verificação passou novamente no GitHub Pages e em `http://127.0.0.1:5500/`. Uma chamada Authentication originada do navegador retornou 200 em ambos; o endereço real do Worker foi confirmado no arquivo público de configuração. Nenhuma senha foi usada e nenhuma conta foi criada por essa QA. O workflow [38638340723](https://github.com/Thilanguis/Manual-de-Boardgame/actions/runs/38638340723) terminou com sucesso.
 
 ## Conexão realizada e validações pendentes
 

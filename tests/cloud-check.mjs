@@ -2,11 +2,14 @@
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
 import { APP_CONFIG } from '../config/app-config.js';
 const require = createRequire(process.env.ACERVO_TEST_MODULES ? resolve(process.env.ACERVO_TEST_MODULES, 'package.json') : import.meta.url);
 const { chromium } = require('playwright');
 const project = 'manual-de-boardgame',
-  base = process.env.ACERVO_TEST_URL || 'https://thilanguis.github.io/Manual-de-Boardgame/';
+  base = process.env.ACERVO_TEST_URL || 'https://thilanguis.github.io/Manual-de-Boardgame/',
+  screenshotDirectory = resolve(process.env.ACERVO_TEST_OUTPUT || 'test-output');
+await mkdir(screenshotDirectory, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }),
@@ -28,11 +31,11 @@ try {
   await page.locator('#login-form [data-auth-view=recovery]').click();
   assert.equal(await page.locator('#recovery-form').isVisible(), true);
   await page.locator('#recovery-form [data-auth-view=login]').click();
-  await page.screenshot({ path: 'test-output/cloud-login.png', fullPage: false });
+  await page.screenshot({ path: resolve(screenshotDirectory, 'cloud-login.png'), fullPage: false });
   await page.locator('[data-close=login-dialog]').click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: 'test-output/cloud-mobile.png', fullPage: true });
-  await page.evaluate(async () => navigator.serviceWorker.ready);
+  await page.screenshot({ path: resolve(screenshotDirectory, 'cloud-mobile.png'), fullPage: true });
+  await page.waitForFunction(() => !!navigator.serviceWorker.controller, undefined, { timeout: 30000 });
   assert.deepEqual(errors, []);
   const documents = `https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/documents`;
   for (const [path, status] of [
