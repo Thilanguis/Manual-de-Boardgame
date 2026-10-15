@@ -19,6 +19,8 @@ Avaliação realizada em 14/10/2026. Implementação 1.4.0. O reconhecimento do 
 
 “Não localizamos” descreve o resultado da investigação, não prova que uma integração privada não exista. Nenhuma mensagem foi enviada às empresas. Os links das lojas abrem seus próprios sites para consulta humana; não preenchem campos automaticamente.
 
+Também foi investigado o [OpenTabletop](https://tabletop-commons.github.io/OpenTabletop/): é uma especificação de esquema/vocabulário e contrato de API, não um catálogo de jogos pronto para conectar. Sua licença de código/documentação não concede licença aos dados de catálogos de terceiros. Não adicionamos um conector sem uma fonte de dados e condições de uso verificadas.
+
 ## Uso no site
 
 1. Envie um PDF. A capa, o título e os fatos extraídos aparecem imediatamente.
@@ -48,6 +50,8 @@ Proveniência fica em `sources`: campo, fonte, URL, idioma, licença/condição 
 As imagens dos catálogos não são copiadas/re-hospedadas. O PDF continua fornecendo a capa; imagem própria pode ser enviada como antes. Importação antiga de capa BGG também está bloqueada sem autorização específica. Configurar token não prova licença de cada capa.
 
 ## Ativar Ludopedia com segurança
+
+Veja o [passo a passo de cadastro e solicitação de acesso](LUDOPEDIA.md), com os campos do formulário e contato oficial. O proprietário confirmou que ainda não tem credenciais; o conector permanece preparado e desativado.
 
 1. Entre na [área oficial de aplicativos](https://ludopedia.com.br/aplicativos) com sua conta Ludopedia. Cadastre o Manual de Boardgames, informe finalidade pessoal/não comercial e o endereço `https://thilanguis.github.io/Manual-de-Boardgame/`. Leia e aceite os termos somente se o projeto se enquadrar; em dúvida, consulte o canal indicado pela Ludopedia.
 2. A documentação informa que a criação fornece `app_id`, `app_key` e `access_token` do proprietário. O catálogo usa Bearer `access_token`. Não precisamos acessar coleções, loja, pedidos nem pedir login Ludopedia dos visitantes.

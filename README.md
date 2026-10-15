@@ -59,6 +59,8 @@ Ferramentas de desenvolvimento têm overrides de correção para dependências t
 
 ## Ativação
 
+Para o catálogo brasileiro, siga o [cadastro oficial da API Ludopedia e configuração privada do token](docs/LUDOPEDIA.md). A fonte permanece opcional; PDF e Wikidata não dependem dessa autorização.
+
 O [guia Firebase](docs/FIREBASE.md) explica bootstrap seguro do UID proprietário, regras, estados, painel e cotas. O [guia Google Drive/Cloudflare](docs/GOOGLE-DRIVE-CLOUDFLARE.md) contém Console Google Cloud, OAuth Web, escopo mínimo, Picker local autorizado, secrets e teste de envio real à pasta existente. Nenhuma nova pasta é criada automaticamente.
 
 BGG é opcional, via Worker com token secreto aprovado; vem desativado. PDFs escaneados não passam por OCR; campos sem evidência ficam desconhecidos para revisão. Favoritos e progresso continuam locais. Manuais interativos e consulta rápida já estão disponíveis.
