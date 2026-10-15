@@ -262,7 +262,6 @@ function renderUnavailable() {
   }
 }
 $('refresh-library').onclick = async () => {
-  $('refresh-library').closest('details').open = false;
   $('refresh-library').disabled = true;
   try {
     await repository?.refreshAvailability?.();
