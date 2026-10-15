@@ -3,6 +3,180 @@
   --muted: #b4aebb;
   --line: #ffffff20;
 }
+
+/* Resultado primeiro; opções e diagnóstico ficam disponíveis sob demanda. */
+.research-card h4 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.4;
+}
+.research-panel .research-source {
+  color: var(--muted);
+  font-size: 12px;
+}
+.research-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 4px 0;
+}
+.research-facts div {
+  min-width: 0;
+}
+.research-facts dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.research-facts dd {
+  margin: 3px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.research-panel .research-card > p {
+  font-size: 14px;
+}
+.research-panel .research-card > button {
+  align-self: start;
+}
+.research-results {
+  max-height: 520px;
+}
+.research-panel .research-choice > span {
+  display: grid;
+  gap: 5px;
+}
+.research-panel .research-choice > span > strong {
+  font-size: 13px;
+  color: var(--muted);
+}
+.research-panel .research-choice > span > span {
+  font-size: 14px;
+}
+.research-panel .research-choice small {
+  padding: 0;
+  color: #ffcc9c;
+}
+.research-panel details {
+  margin-bottom: 12px;
+}
+.research-panel summary,
+.library-options summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.research-panel summary::before {
+  content: '+';
+}
+.research-panel details[open] > summary::before {
+  content: '−';
+}
+.research-panel details .form-row {
+  margin: 10px 0;
+}
+.research-panel [data-research-status]:empty,
+[data-research-ocr-status]:empty,
+#hero-description:empty {
+  display: none;
+}
+.research-card details p {
+  margin: 8px 0;
+}
+.research-review {
+  scroll-margin: 12px;
+}
+.library-secondary {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.library-options {
+  position: relative;
+}
+.library-options summary {
+  padding: 8px 4px;
+}
+.library-options-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 5;
+  width: 220px;
+  padding: 8px 14px;
+  background: #202026;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px #0005;
+}
+.library-options-menu button {
+  display: block;
+  text-align: left;
+  width: 100%;
+}
+.has-library .hero {
+  min-height: 0;
+}
+.has-library .hero-content {
+  padding-top: 28px;
+  padding-bottom: 28px;
+}
+.has-library .hero-content > .eyebrow {
+  display: none;
+}
+.has-library .hero h1 {
+  margin-bottom: 16px;
+}
+@media (min-width: 1100px) {
+  main.few-games {
+    display: grid;
+    grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.4fr);
+    max-width: 1800px;
+    margin: 0 auto;
+    gap: 24px;
+    padding: 26px clamp(20px, 4vw, 64px);
+    align-items: start;
+  }
+  .few-games .hero {
+    margin: 0;
+    border-radius: 14px;
+    width: 100%;
+  }
+  .few-games .hero-content {
+    padding: 30px;
+    max-width: none;
+  }
+  .few-games .hero h1 {
+    font-size: clamp(30px, 2.6vw, 44px);
+  }
+  .few-games .hero-actions > a {
+    display: none;
+  }
+  .few-games .library-container {
+    padding: 0;
+    margin: 0;
+    width: 100%;
+  }
+  .few-games .library-toolbar {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .few-games .search-field {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .few-games .games-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+  }
+  .few-games .game-card {
+    max-width: 260px;
+  }
+}
 .button {
   font-size: 14px;
   min-height: 44px;
@@ -537,6 +711,10 @@ label,
   gap: 24px 20px;
 }
 .card-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
   font-size: 16px;
   line-height: 1.4;
 }
@@ -658,6 +836,9 @@ label,
   }
 }
 @media (max-width: 600px) {
+  .search-field kbd {
+    display: none;
+  }
   dialog {
     width: calc(100% - 20px);
     border-radius: 14px;

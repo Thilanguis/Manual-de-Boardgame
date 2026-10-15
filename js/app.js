@@ -2,7 +2,7 @@ import { createGameSteps } from './game-steps.js';
 import { titleCandidates } from './recognition.js';
 import { createAccountPanel } from './account-panel.js';
 import { APP_CONFIG } from '../config/app-config.js';
-import { filterGames, playersLabel, validateGame, safeImageUrl, durationRange, durationLabel, isTechnicalTitle, displayTitle } from './model.js';
+import { filterGames, playersLabel, validateGame, safeImageUrl, durationRange, durationLabel, isTechnicalTitle, displayTitle, displayDescription } from './model.js';
 import { inspectPdf, imageToJpeg } from './pdf.js';
 import { createReader } from './reader.js';
 import { setupPwa } from './pwa.js';
@@ -12,6 +12,7 @@ import { readableGame, unavailableReason } from './catalog-availability.js';
 import { createGuidePanel } from './guide-panel.js';
 import { bggWebsiteSearch } from './bgg-client.js';
 import { createResearchPanel } from './research-panel.js';
+import { RESEARCH_VERSION } from './research-contract.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { gamesLoading: true, games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
@@ -60,7 +61,7 @@ function errorMessage(error) {
     'auth/email-already-in-use': 'Já existe uma conta com este e-mail. Entre ou use a recuperação de senha.',
     'auth/weak-password': 'Use uma senha com pelo menos oito caracteres.',
     'auth/unauthorized-domain': 'Este endereço não está autorizado para login. Use o endereço oficial do Acervo ou avise o administrador.',
-    'resource-exhausted': 'A cota gratuita do Firebase foi atingida. Aguarde a renovação da cota e tente novamente.',
+    'resource-exhausted': 'O limite de uso foi atingido. Tente novamente mais tarde.',
     'permission-denied': 'Você não tem permissão para esta operação. Confira sua situação em Minha conta ou fale com o administrador.',
   };
   if (error.name === 'PasswordException') return 'Este PDF é protegido por senha. Importe uma cópia sem senha.';
@@ -205,7 +206,7 @@ function renderGrid() {
       image = node('img');
     image.alt = '';
     image.loading = 'lazy';
-    cover.append(icon('book'), image, node('span', 'card-pdf', 'MANUAL PDF'));
+    cover.append(icon('book'), image);
     const overlay = node('div', 'card-overlay'),
       overlayLabel = node('span', null, 'Ver jogo');
     overlayLabel.prepend(icon('book'));
@@ -261,6 +262,7 @@ function renderUnavailable() {
   }
 }
 $('refresh-library').onclick = async () => {
+  $('refresh-library').closest('details').open = false;
   $('refresh-library').disabled = true;
   try {
     await repository?.refreshAvailability?.();
@@ -276,6 +278,9 @@ async function renderHero() {
   const token = ++heroSequence;
   const game = [...state.games].filter((g) => readableGame(g) && !isTechnicalTitle(g.title)).sort((a, b) => b.createdAt - a.createdAt)[0];
   const hero = document.querySelector('.hero');
+  document.querySelector('main').classList.toggle('has-library', state.games.some(readableGame));
+  const total = state.games.filter(readableGame).length;
+  document.querySelector('main').classList.toggle('few-games', total > 0 && total <= 3);
   hero.classList.toggle('has-game', !!game);
   $('hero-art').hidden = !!game;
   $('hero-meta').hidden = !game;
@@ -288,27 +293,25 @@ async function renderHero() {
     .setAttribute('href', `#i-${game ? 'book' : 'plus'}`);
   if (!game && state.games.some(readableGame)) {
     $('hero-title').textContent = 'Sua próxima partida está na estante.';
-    $('hero-description').textContent = 'Os manuais estão disponíveis logo abaixo. Escolha um jogo para consultar as regras e preparar a partida.';
+    $('hero-description').textContent = '';
     $('hero-main').querySelector('span').textContent = 'Explorar biblioteca';
     $('hero-main').querySelector('use').setAttribute('href', '#i-book');
     $('hero-main').onclick = () => $('biblioteca').scrollIntoView({ behavior: 'smooth' });
-    $('hero-caption').replaceChildren(node('span', 'status-dot'), document.createTextNode('Algumas informações dos jogos estão em revisão.'));
     return;
   }
   if (!game) {
     const lineBreak = document.createElement('br'),
       emphasized = node('em', null, 'aqui.');
     $('hero-title').replaceChildren(document.createTextNode('A próxima partida'), lineBreak, document.createTextNode('começa '), emphasized);
-    $('hero-description').textContent = 'Todos os seus manuais, em um só lugar. Menos tempo procurando. Mais tempo jogando.';
-    $('hero-caption').replaceChildren(node('span', 'status-dot'), document.createTextNode('Uma biblioteca feita para a sua mesa.'));
+    $('hero-description').textContent = 'Escolha um jogo. Encontre as regras.';
     $('hero-main').onclick = addGame;
     return;
   }
   $('hero-title').textContent = game.title;
-  $('hero-description').textContent = game.description || 'Abra o manual para consultar as regras oficiais e preparar sua próxima partida.';
-  const wikiDescription = (game.sources?.catalog?.matches || []).find((match) => match.source === 'wikipedia' && match.licenseUrl);
+  $('hero-description').textContent = displayDescription(game);
+  const wikiDescription = displayDescription(game) && (game.sources?.catalog?.matches || []).find((match) => match.source === 'wikipedia' && match.licenseUrl);
   if (wikiDescription) {
-    const source = node('a', null, 'Autores da Wikipédia · trecho editável');
+    const source = node('a', null, 'Wikipédia · autores');
     source.href = wikiDescription.url;
     source.target = '_blank';
     source.rel = 'noopener noreferrer';
@@ -329,7 +332,6 @@ async function renderHero() {
     $('hero-meta').append(span);
   }
   $('hero-main').onclick = () => reader.open(game);
-  $('hero-caption').replaceChildren(node('span', 'status-dot'), document.createTextNode('Adicionado recentemente à sua biblioteca.'));
   try {
     const url = await repository.getCoverURL(game);
     if (token === heroSequence && url) $('hero-backdrop').style.backgroundImage = `url(${JSON.stringify(url)})`;
@@ -427,7 +429,8 @@ function showGame(game) {
     .catch(() => {
       if (state.selected?.id === selectedId) $('detail-guide-status').textContent = 'Não foi possível conferir o guia agora. O manual completo continua disponível.';
     });
-  $('detail-description').textContent = game.description || 'O resumo deste jogo ainda está em revisão. Consulte o manual oficial para conhecer as regras.';
+  $('detail-description').textContent = displayDescription(game);
+  $('detail-description').hidden = !displayDescription(game);
   $('detail-cover').alt = `Capa de ${displayTitle(game)}`;
   populateImage($('detail-cover'), game);
   $('detail-tags').replaceChildren(...[...(game.tags || []), ...(game.mechanics || []), game.gameType].filter(Boolean).map((tag) => node('span', null, tag)));
@@ -487,9 +490,7 @@ function showGame(game) {
   showDialog('detail-dialog');
 }
 function updateManualStatus(game) {
-  $('detail-manual').textContent = readableGame(game)
-    ? `${game.manual?.pages || '—'} páginas · ${formatBytes(game.manual?.size)} · ${game.manual?.name || 'Manual PDF'}${repository.mode === 'firebase' ? ' · Drive central' : ''}`
-    : `${unavailableReason(game)}. Você pode corrigir ou remover este cadastro.`;
+  $('detail-manual').textContent = readableGame(game) ? `${game.manual?.pages || '—'} páginas · ${formatBytes(game.manual?.size)} · ${game.manual?.name || 'Manual PDF'}` : `${unavailableReason(game)}. Você pode corrigir ou remover este cadastro.`;
 }
 $('detail-favorite').onclick = () => toggleFavorite(state.selected.id);
 $('read-manual').onclick = () => reader.open(state.selected);
@@ -751,11 +752,11 @@ const researchPanel = createResearchPanel({
   writePreference: (language) => writePreferences('recognition', { language }),
   onSuggestions(count) {
     $('research-pending').hidden = !count;
-    $('research-pending-text').textContent = `${count} resultado(s) da pesquisa aguardam revisão. As sugestões só preenchem os campos abaixo depois de você confirmar sua origem e selecionar os dados.`;
+    $('research-pending-text').textContent = 'Há sugestões para revisar antes de preencher estes campos.';
   },
   onApplied(values) {
     $('research-applied').textContent =
-      `Preenchido pela pesquisa: ${[...new Set(Object.keys(values).map((key) => ({ description: 'resumo', minDurationMinutes: 'duração', maxDurationMinutes: 'duração', minPlayers: 'jogadores', maxPlayers: 'jogadores', recommendedAge: 'idade', tags: 'categorias', mechanics: 'mecânicas', gameType: 'tipo', title: 'nome', edition: 'edição' })[key] || key))].join(', ')}. Confira os valores antes de publicar.`;
+      `Preenchido: ${[...new Set(Object.keys(values).map((key) => ({ description: 'resumo', minDurationMinutes: 'duração', maxDurationMinutes: 'duração', minPlayers: 'jogadores', maxPlayers: 'jogadores', recommendedAge: 'idade', tags: 'categorias', mechanics: 'mecânicas', gameType: 'tipo', title: 'nome', edition: 'edição' })[key] || key))].join(', ')}.`;
     $('research-applied').hidden = false;
     gameSteps.go(2);
   },
@@ -882,7 +883,7 @@ $('game-form').onsubmit = async (event) => {
       coverBlob: draftCoverBlob,
       onProgress: (percent) => {
         $('upload-progress').value = percent;
-        $('upload-status').textContent = `Enviando para o Drive central: ${percent}%`;
+        $('upload-status').textContent = `Enviando manual: ${percent}%`;
       },
     });
     state.busy = false;
@@ -978,10 +979,13 @@ $('account-button').onclick = showLogin;
 function setupContent() {
   $('setup-mode').textContent = localMode
     ? 'Você está usando a biblioteca deste dispositivo. PDFs e dados ficam neste navegador, sem sincronização. Apagar os dados do site remove essa biblioteca.'
-    : `Este Acervo usa o Firebase Spark para dados e permissões. PDFs e capas são guardados na conta Drive do proprietário. ${APP_CONFIG.fileStorage?.apiBase ? 'Os administradores usam suas próprias contas Firebase para enviar arquivos à mesma pasta central.' : 'A conexão do Drive central ainda precisa ser configurada. Siga o guia Google Drive e Cloudflare do projeto.'}`;
-  $('switch-mode').textContent = localMode ? 'Abrir a biblioteca no Firebase' : 'Usar biblioteca deste dispositivo';
+    : 'Consulte os manuais públicos sem conta. Entre para acessar as funções disponíveis para você.';
+  $('setup-technical').textContent = `Versão ${RESEARCH_VERSION} · Firebase Spark · Firestore e Authentication · Google Drive · Cloudflare Workers Free · GitHub Pages.`;
+  $('setup-connection').textContent = $('connection-status').textContent;
+  $('switch-mode').textContent = localMode ? 'Abrir biblioteca compartilhada' : 'Usar biblioteca deste dispositivo';
 }
 $('setup-button').onclick = () => {
+  $('setup-button').closest('details').open = false;
   setupContent();
   showDialog('setup-dialog');
 };
@@ -1008,8 +1012,13 @@ $('footer-install').onclick = installApp;
 $('setup-install').onclick = installApp;
 window.addEventListener('offline', () => {
   $('connection-status').textContent = repository?.mode === 'local' ? 'Neste dispositivo · disponível offline' : 'Sem conexão · os PDFs na nuvem precisam de internet';
+  $('connection-warning').textContent = 'Você está sem internet. Os manuais compartilhados precisam de conexão.';
+  $('connection-warning').hidden = repository?.mode === 'local';
 });
-window.addEventListener('online', () => updateSession(state.session));
+window.addEventListener('online', () => {
+  $('connection-warning').hidden = true;
+  updateSession(state.session);
+});
 function updateSession(session) {
   const previous = state.session;
   if (state.session.user?.uid !== session.user?.uid && !$('reader').hidden) reader?.close();
@@ -1023,32 +1032,24 @@ function updateSession(session) {
   if (!session.canWrite && $('upload-dialog').open) closeDialog('upload-dialog');
   $('account-label').textContent = session.mode === 'local' ? 'Local' : session.user ? 'Minha conta' : 'Entrar';
   $('refresh-library').hidden = session.mode !== 'firebase';
+  $('connection-warning').hidden = navigator.onLine || session.mode === 'local';
+  $('connection-warning').textContent = 'Você está sem internet. Os manuais compartilhados precisam de conexão.';
   $('account-button').querySelector('.avatar').textContent = session.mode === 'local' ? 'L' : (session.user?.email?.[0] || 'A').toUpperCase();
   $('connection-status').replaceChildren(
     node('span', 'status-dot'),
     document.createTextNode(
-      session.mode === 'local'
-        ? 'Neste dispositivo · sem sincronização'
-        : session.canWrite
-          ? session.role === 'subadmin'
-            ? 'Firebase Spark · subadministrador'
-            : 'Firebase Spark · administrador'
-          : session.canRead
-            ? 'Acervo na nuvem · leitura pública'
-            : session.user
-              ? 'Conta conectada · autorização pendente'
-              : 'Acervo privado · entre para acessar',
+      session.mode === 'local' ? 'Neste dispositivo · sem sincronização' : session.canRead ? 'Biblioteca conectada · leitura pública' : session.user ? 'Conta conectada · autorização pendente' : 'Acervo privado · entre para acessar',
     ),
   );
   $('empty-description').textContent = session.canWrite
-    ? 'Adicione um manual em PDF. A gente prepara a capa e procura as informações para você conferir.'
+    ? 'Adicione seu primeiro manual em PDF.'
     : session.canRead
-      ? 'Ainda não há manuais publicados nesta biblioteca. Os jogos aparecerão aqui quando o administrador liberar a leitura.'
+      ? 'Ainda não há manuais publicados.'
       : session.user
         ? 'Sua conta aguarda aprovação. Você pode acompanhar a situação em Minha conta.'
-        : 'Sua coleção fica protegida no Firebase. Entre com a conta autorizada para acessar seus jogos e manuais.';
+        : 'Entre com sua conta para acessar esta biblioteca.';
   $('empty-action').querySelector('span').textContent = session.canAdd ? 'Escolher um manual' : session.user ? 'Ver autorização da conta' : 'Entrar na biblioteca';
-  $('empty-note').textContent = session.mode === 'local' ? 'PDF de até 50 MB · Armazenado somente neste navegador' : 'Firebase · Acesso controlado pelo administrador';
+  $('empty-note').textContent = session.mode === 'local' ? 'PDF de até 50 MB · Somente neste navegador' : session.canAdd ? 'PDF de até 50 MB' : '';
   if (!session.canWrite) $('detail-admin').hidden = true;
   renderGrid();
   renderRecent();
@@ -1109,7 +1110,7 @@ async function start() {
     $('connection-status').textContent = 'A conexão não ficou pronta';
     $('library-error').textContent = `${errorMessage(error)} Você pode abrir “Sobre o acervo” e escolher a biblioteca deste dispositivo.`;
     $('library-error').hidden = false;
-    $('empty-description').textContent = 'Verifique a conexão com o Firebase ou use a biblioteca deste dispositivo em “Sobre o acervo”.';
+    $('empty-description').textContent = 'Não foi possível carregar a biblioteca. Verifique sua conexão e tente novamente.';
   }
 }
 start();

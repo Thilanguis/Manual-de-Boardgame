@@ -34,6 +34,19 @@ export function durationLabel(game, unit = 'min') {
 
 export const displayTitle = (game) => (isTechnicalTitle(game.title) ? 'Título a revisar' : game.title || 'Jogo sem título');
 
+// Rótulos de catálogo identificam a obra, mas não são sinopses.
+export function synopsisText(value) {
+  const text = String(value || '').trim();
+  return /^(?:(?:a |an |um |un |une )?(?:\d{4} )?(?:board game|tabletop game|card game|jogo de tabuleiro|jogo de cartas|jeu de soci[eé]t[eé]|jeu de plateau)(?: (?:de |from |released in |de l'ann[eé]e )?\d{4})?[.!]?)$/i.test(text) ? '' : text;
+}
+
+export function displayDescription(game) {
+  const evidence = game.sources?.description;
+  const language = evidence?.language || '';
+  if (language && language !== 'unknown' && !/^pt(?:-|$)/i.test(language) && !evidence.confirmedAt && !/confirmad|ajustado por você/i.test(evidence.source || '')) return '';
+  return synopsisText(game.description);
+}
+
 export function validateGame(input) {
   const title = String(input.title || '').trim();
   if (!title || title.length > 160) throw new Error('Informe um título com até 160 caracteres.');

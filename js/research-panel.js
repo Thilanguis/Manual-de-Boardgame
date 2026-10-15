@@ -1,6 +1,7 @@
 import { parallelResearch, normalizedQuery, sourceNames, manualSources, sameWork, matchWarnings, selectedFields, fieldLabels, researchSummary } from './research-client.js';
 import { RESEARCH_PROTOCOL, RESEARCH_VERSION } from './research-contract.js';
 import { recognizePdfImages } from './pdf-ocr.js';
+import { presentCandidate, candidateFacts, resultSummary } from './research-presentation.js';
 
 const node = (tag, text = '') => {
   const el = document.createElement(tag);
@@ -15,6 +16,11 @@ const link = (label, url) => {
   return el;
 };
 const display = (value) => (Array.isArray(value) ? value.join(', ') : String(value ?? 'não informado'));
+const disclosure = (title) => {
+  const details = node('details');
+  details.append(node('summary', title));
+  return details;
+};
 export function createResearchPanel({ root, getRepository, getCurrent, getPdf, apply, canUse, readPreference, writePreference, onApplied = () => {}, onSuggestions = () => {} }) {
   let controller,
     detailController,
@@ -51,7 +57,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     controller?.abort();
     detailController?.abort();
     ocrController?.abort();
-    if (ocrActive && ocrStatus) ocrStatus.textContent = 'Leitura local cancelada. Nenhum campo foi aplicado automaticamente.';
+    if (ocrActive && ocrStatus) ocrStatus.textContent = 'Leitura do PDF cancelada.';
     if (ocrButton) ocrButton.disabled = false;
     ocrActive = false;
     detailActive = false;
@@ -76,12 +82,12 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     const preference = readPreference();
     language.value = ['pt-BR', 'en', 'fr'].includes(preference) ? preference : 'pt-BR';
     kind.value = 'unknown';
-    status.textContent = 'O PDF é a fonte principal. Confirme a edição antes de aplicar sugestões externas.';
+    status.textContent = 'Pesquise para completar os dados do manual.';
   }
   async function loadSources(signal) {
     if (getRepository().mode === 'local') {
       sources = [];
-      sourceFailure = 'Modo local: fontes externas não consultadas; entre no acervo conectado para usar as APIs. O PDF e o OCR local continuam disponíveis.';
+      sourceFailure = 'A pesquisa externa está disponível na biblioteca compartilhada. Você pode continuar com o PDF.';
       sourcesUntil = 0;
       return;
     }
@@ -143,21 +149,42 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     }
     list.replaceChildren();
     const priority = (c) => (c.source === 'ludopedia' ? 0 : c.fields?.title && ['pt-BR', 'pt-br', 'pt'].includes(c.language) ? 1 : getCurrent()?.language === 'fr' && c.language === 'fr' ? 2 : 3);
-    for (const candidate of [...(ocrCandidate ? [ocrCandidate] : []), ...candidates].sort((a, b) => priority(a) - priority(b))) {
+    for (const original of [...(ocrCandidate ? [ocrCandidate] : []), ...candidates].sort((a, b) => priority(a) - priority(b))) {
+      const candidate = presentCandidate(original, candidates);
       const card = node('article');
       card.className = 'research-card';
       card.dataset.researchSource = candidate.source;
-      const heading = node('strong', candidate.fields.title || getCurrent()?.title || 'Trechos do PDF'),
-        p = node('p', `${sourceNames[candidate.source]} · ${candidate.language || 'idioma não informado'} · ${candidate.kind === 'base' ? 'jogo base' : candidate.kind === 'expansion' ? 'expansão' : 'tipo não confirmado'} · edição exige revisão`);
-      const names = node('small', [...new Set((candidate.names || []).map((n) => n.value))].slice(0, 8).join(' / '));
+      const heading = node('h4', candidate.fields.title || getCurrent()?.title || 'Trechos do PDF');
       const related = candidates.filter((c) => c !== candidate && sameWork(c, candidate));
       const action = node('button', 'Revisar sugestões');
       action.type = 'button';
       action.className = 'button secondary small';
-      action.onclick = () => select(candidate);
-      card.append(heading, p, names);
-      if (candidate.url) card.append(link('Fonte ↗', candidate.url));
-      if (candidate.identityNote) card.append(node('p', candidate.identityNote));
+      action.onclick = () => select(original);
+      card.append(heading);
+      if (candidate.secondaryTitle) card.append(node('p', candidate.secondaryTitle));
+      const source = candidate.url ? link(sourceNames[candidate.source], candidate.url) : node('small', sourceNames[candidate.source]);
+      source.className = 'research-source';
+      card.append(source);
+      if (candidate.fields.description) card.append(node('p', candidate.fields.description));
+      const facts = candidateFacts(candidate),
+        metadata = node('dl');
+      metadata.className = 'research-facts';
+      for (const [label, value] of facts) {
+        const item = node('div');
+        item.append(node('dt', label), node('dd', value));
+        metadata.append(item);
+      }
+      if (facts.length) card.append(metadata);
+      const additional = selectedFields(candidate, {}).filter((field) => field.key !== 'title').length;
+      card.append(node('small', additional ? 'Escolha quais informações usar na revisão.' : candidate.needsDetail ? 'Abra a revisão para consultar os dados desta fonte.' : 'Só o título foi encontrado. Sem outros dados para preencher.'));
+      const details = disclosure('Edição, nomes e direitos de uso');
+      details.append(node('p', candidate.edition ? `Edição: ${candidate.edition}` : 'A fonte não confirmou a edição do seu manual.'));
+      const names = [...new Set(candidate.names.map((name) => name.value))];
+      if (names.length) details.append(node('p', names.join(' · ')));
+      if (candidate.identityNote) details.append(node('p', candidate.identityNote));
+      details.append(node('p', `Uso: ${candidate.license || 'Confira as condições na fonte.'}`));
+      if (candidate.licenseUrl) details.append(link('Licença', candidate.licenseUrl));
+      if (original.fields.description && !candidate.fields.description) details.append(node('p', `Rótulo de identificação: ${original.fields.description}. Não usado como resumo.`));
       if (candidate.attributionLogo) {
         const a = link('', candidate.url),
           img = document.createElement('img');
@@ -167,7 +194,8 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
         a.append(img);
         card.append(a);
       }
-      if (related.length) card.append(node('p', `Mesmo jogo identificado em ${related.map((c) => sourceNames[c.source]).join(', ')}. A edição continua exigindo revisão.`));
+      if (related.length) details.append(node('p', `Também identificado em ${related.map((c) => sourceNames[c.source]).join(', ')}.`));
+      card.append(details);
       if (kind.value !== 'unknown' && candidate.kind !== 'unknown' && candidate.kind !== kind.value) {
         action.disabled = true;
         card.append(node('p', 'Tipo incompatível com o manual; não aplicar.'));
@@ -175,7 +203,9 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       card.append(action);
       list.append(card);
     }
-    status.textContent = sourceFailure || researchSummary(sources, statuses);
+    const diagnostics = root.querySelector('[data-research-diagnostics]');
+    if (diagnostics) diagnostics.textContent = sourceFailure || researchSummary(sources, statuses);
+    status.textContent = sourceFailure ? (getRepository().mode === 'local' ? sourceFailure : 'Não foi possível pesquisar agora. Tente novamente.') : resultSummary(candidates, sources, statuses);
   }
   async function run(expanded = false) {
     const current = getCurrent();
@@ -195,7 +225,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     cancel.hidden = false;
     search.disabled = expand.disabled = true;
     search.setAttribute('aria-busy', 'true');
-    status.textContent = 'Consultando fontes disponíveis… Você já pode salvar os dados do PDF.';
+    status.textContent = 'Pesquisando…';
     try {
       await loadSources(signal);
       if (signal.aborted || n !== sequence) return;
@@ -248,8 +278,9 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
         render();
       }
       if (signal.aborted || n !== sequence || !canUse()) return;
-      selected = candidate;
+      selected = presentCandidate(candidate, candidates);
       showReview();
+      review.scrollIntoView({ block: 'start', behavior: 'smooth' });
     } catch (error) {
       if (!signal.aborted && n === sequence) review.replaceChildren(node('p', error.message));
     } finally {
@@ -263,14 +294,21 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     const current = getCurrent();
     if (!current || !selected) return;
     review.replaceChildren();
-    review.append(node('h4', `Revisar · ${sourceNames[selected.source]}`), node('p', `Uso: ${selected.license}. Descrição: ${selected.descriptionLanguage || 'não disponível'}. Você pode editar ou traduzir manualmente após aplicar.`));
-    if (selected.url) review.append(link('Consultar a origem', selected.url));
-    if (selected.licenseUrl) review.append(link('Licença do trecho', selected.licenseUrl));
-    for (const warning of selected.source === 'pdf' ? ['O OCR pode errar letras e números. Confira os trechos nas páginas indicadas.'] : matchWarnings(selected, { ...current, kind: kind.value }, candidates)) {
+    review.append(node('h4', 'Revisar sugestões'), node('p', 'Selecione os campos que deseja usar.'));
+    const details = disclosure('Origem, edição e direitos de uso');
+    details.append(node('p', `Fonte: ${sourceNames[selected.source]} · ${selected.license || 'consulte as condições de uso'}`));
+    if (selected.url) details.append(link('Consultar a origem', selected.url));
+    if (selected.licenseUrl) details.append(link('Licença do trecho', selected.licenseUrl));
+    if (selected.descriptionLanguage)
+      details.append(node('p', `Idioma do resumo: ${{ pt: 'Português', 'pt-BR': 'Português brasileiro', 'pt-br': 'Português brasileiro', en: 'Inglês', fr: 'Francês' }[selected.descriptionLanguage] || selected.descriptionLanguage}`));
+    const warnings = selected.source === 'pdf' ? ['O OCR pode errar letras e números. Confira os trechos nas páginas indicadas.'] : matchWarnings(selected, { ...current, kind: kind.value }, candidates);
+    if (selected.conflicts?.length) review.append(node('p', 'Esta fonte tem informações divergentes. Confira os campos com o manual.'));
+    for (const warning of warnings) {
       const p = node('p', warning);
       p.className = 'research-warning';
-      review.append(p);
+      details.append(p);
     }
+    review.append(node('p', selected.source === 'pdf' ? 'Confira o texto reconhecido nas páginas do manual.' : 'Confira se o título e a edição correspondem ao seu manual.'), details);
     const choices = [];
     for (const field of selectedFields(selected, current)) {
       const label = node('label'),
@@ -280,20 +318,24 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       if (selected.source === 'pdf') checkbox.checked = false;
       checkbox.dataset.researchField = field.key;
       label.className = 'research-choice';
-      label.append(checkbox, node('span', `${fieldLabels[field.key]}: ${display(field.value)}${field.conflict ? ` · diverge do PDF/cadastro: ${display(field.current)}` : ''}`));
+      const content = node('span');
+      content.append(node('strong', fieldLabels[field.key]), node('span', display(field.value)));
+      if (field.conflict) content.append(node('small', `Substituirá: ${display(field.current)}`));
+      label.append(checkbox, content);
       const evidence = selected.evidence?.[field.key === 'minPlayers' || field.key === 'maxPlayers' ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(field.key) ? 'duration' : field.key];
-      if (evidence) label.append(node('small', `${evidence.page ? 'p. ' + evidence.page + ' · ' : ''}${evidence.excerpt}`));
+      if (evidence) details.append(node('p', `${fieldLabels[field.key]}${evidence.page ? ' · p. ' + evidence.page : ''}: ${evidence.excerpt}`));
       review.append(label);
       choices.push([field, checkbox]);
     }
     const pairs = [choices.filter(([f]) => ['minPlayers', 'maxPlayers'].includes(f.key)), choices.filter(([f]) => ['minDurationMinutes', 'maxDurationMinutes'].includes(f.key))];
-    for (const [field, reason] of Object.entries(selected.fieldReasons || {})) if (reason && !selected.fields[field]) review.append(node('p', `${fieldLabels[field] || (field === 'durationMinutes' ? 'Duração' : field)}: ${reason}`));
+    for (const [field, reason] of Object.entries(selected.fieldReasons || {})) if (reason && !selected.fields[field]) details.append(node('p', `${fieldLabels[field] || (field === 'durationMinutes' ? 'Duração' : field)}: ${reason}`));
+    for (const pair of pairs) if (pair.some(([field]) => field.conflict)) pair.forEach(([, checkbox]) => (checkbox.checked = false));
     for (const pair of pairs) for (const [, checkbox] of pair) checkbox.onchange = () => pair.forEach(([, other]) => (other.checked = checkbox.checked));
     const label = node('label'),
       confirm = document.createElement('input');
     confirm.type = 'checkbox';
     label.className = 'research-choice';
-    label.append(confirm, node('span', 'Conferi o jogo, a edição e os campos escolhidos com o PDF original.'));
+    label.append(confirm, node('span', 'Conferi o jogo, a edição e os campos selecionados.'));
     review.append(label);
     const selectionStatus = node('p'),
       errorMessage = node('p'),
@@ -306,9 +348,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     button.disabled = true;
     function updateSelection() {
       const count = choices.filter(([, box]) => box.checked).length;
-      selectionStatus.textContent = count
-        ? `${count} campo(s) selecionado(s) para preencher em “Conferir dados”. Valores diferentes do PDF só serão substituídos se você os selecionar.`
-        : 'Selecione pelo menos um campo para usar em “Conferir dados”.';
+      selectionStatus.textContent = count ? `${count} campo(s) selecionado(s).` : 'Selecione ao menos um campo.';
       button.disabled = !confirm.checked || !count;
     }
     review.addEventListener('change', updateSelection, { signal: detailController.signal });
@@ -319,13 +359,21 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       if (kind.value !== 'unknown' && selected.kind !== 'unknown' && kind.value !== selected.kind) return;
       const values = Object.fromEntries(choices.filter(([, box]) => box.checked).map(([field]) => [field.key, field.value]));
       if (!Object.keys(values).length) return;
+      const latest = getCurrent();
+      if (choices.some(([field, box]) => box.checked && JSON.stringify(field.current) !== JSON.stringify(latest[field.key]))) {
+        showReview();
+        const warning = node('p', 'Você alterou os dados enquanto revisava. Confira a seleção novamente.');
+        warning.setAttribute('role', 'alert');
+        review.prepend(warning);
+        return;
+      }
       // Nenhum campo muda enquanto o administrador não confirmar explicitamente.
       try {
         apply(values, selected);
         appliedCandidates.add(candidateKey(selected));
         notifySuggestions();
         review.hidden = true;
-        status.textContent = 'Campos confirmados preenchidos na etapa 2. Você pode conferir e editar antes de salvar.';
+        status.textContent = 'Campos preenchidos. Confira antes de salvar.';
         onApplied(values);
       } catch (error) {
         errorMessage.textContent = error.message;
@@ -335,7 +383,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
   }
   search.onclick = () => void run(false);
   expand.onclick = () => void run(true);
-  cancel.onclick = () => cancelWork('Pesquisa cancelada. Você pode salvar os dados do PDF.');
+  cancel.onclick = () => cancelWork('Pesquisa cancelada.');
   async function runOcr() {
     if (!canUse() || !getPdf || ocrActive) return;
     const current = getCurrent();
@@ -357,7 +405,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       const fields = Object.fromEntries(Object.entries(metadata).filter(([key, value]) => fieldLabels[key] && value != null && value !== '' && (!Array.isArray(value) || value.length)));
       if (!Object.keys(fields).length) {
         ocrCandidate = null;
-        if (ocrStatus) ocrStatus.textContent = 'A leitura não encontrou campos com evidência suficiente. Consulte o PDF e preencha somente o que puder confirmar.';
+        if (ocrStatus) ocrStatus.textContent = 'Nenhum dado legível encontrado. Você pode preencher pelo manual.';
         render();
         return;
       }
@@ -375,7 +423,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
         evidence,
         conflicts: [],
       };
-      if (ocrStatus) ocrStatus.textContent = `OCR local: ${result.pages.length} página(s) lida(s), ${Object.keys(fields).length} campo(s) sugerido(s). Revise antes de aplicar.`;
+      if (ocrStatus) ocrStatus.textContent = `${result.pages.length} página(s) lida(s). Há sugestões para revisar.`;
       render();
     } catch (error) {
       if (!control.signal.aborted && ocrStatus) ocrStatus.textContent = error.message;
@@ -394,7 +442,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
   };
   kind.onchange = () => invalidate();
   function invalidate() {
-    cancelWork('Nome, idioma ou tipo alterado. Clique em pesquisar para atualizar as sugestões.');
+    cancelWork('Dados da busca alterados. Pesquise novamente.');
     candidates = [];
     statuses.clear();
     selected = null;

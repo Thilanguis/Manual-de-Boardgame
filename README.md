@@ -23,6 +23,8 @@ Cada jogo oferece **Aprender a jogar**, **Consulta rápida** e **Manual completo
 
 ## Reconhecimento com múltiplas fontes
 
+[Refinamento 1.7: revisão manual, preenchimento confirmado, página inicial e testes de Sina da Sociedade](docs/UX-PESQUISA-1.7.md).
+
 O PDF continua como fonte principal. A pesquisa automática usa conectores independentes, resultados progressivos e prazos curtos, com idioma preferido PT-BR, cancelamento e opção **Ampliar pesquisa**. Cada campo externo exige revisão antes de aplicar; identidades, aliases, conflitos e atribuições são preservados. Wikidata e Wikipédia estão ativos sem chave; descrições Wikipédia preservam atribuição e licença CC BY-SA. PDFs sem texto podem ser lidos por OCR no dispositivo, com confirmação dos campos. Ludopedia tem prioridade brasileira e conector preparado, aguardando token da aplicação autorizada. BGG aguarda aplicação aprovada, token e logo oficial. Editoras/lojas brasileiras, francesas e canadenses permanecem referências manuais enquanto não houver integração autorizada. [Investigação, fontes, condições e ativação segura](docs/FONTES-RECONHECIMENTO.md). [Resultados reais com três PDFs e limites da versão 1.5.0](docs/RELATORIO-RECONHECIMENTO-1.5.md).
 
 ## Pessoas e permissões

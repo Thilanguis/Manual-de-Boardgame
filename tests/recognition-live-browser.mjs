@@ -88,6 +88,7 @@ await context.route('https://recognition-test.invalid/**', async (route) => {
 page.on('pageerror', (error) => errors.push(error.message));
 const formValues = () => page.evaluate(() => Object.fromEntries(new FormData(document.getElementById('game-form')).entries()));
 async function applyFields(source, fields) {
+  if (await page.locator('[data-game-step="2"]').isVisible()) await page.locator('#game-back').click();
   const id = source === 'Wikipédia' ? 'wikipedia' : source === 'Wikidata' ? 'wikidata' : 'pdf';
   await page.locator(`[data-research-source=${id}]`).locator('button').click();
   for (const field of fields) {
@@ -120,7 +121,7 @@ try {
     await page.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
     currentReport.pdfFields = await formValues();
     if (title.includes('Sina')) {
-      await page.waitForFunction(() => /OCR local:|atingiu|não encontrou|not a function|Failed/.test(document.querySelector('[data-research-ocr-status]').textContent), null, { timeout: 25000 });
+      await page.waitForFunction(() => /página\(s\) lida|atingiu|Nenhum dado|not a function|Failed/.test(document.querySelector('[data-research-ocr-status]').textContent), null, { timeout: 25000 });
       currentReport.ocrStatus = await page.locator('[data-research-ocr-status]').textContent();
       await applyFields('PDF · OCR local', ['description', 'gameType', 'tags']);
       assert((await page.locator('#game-form [name=description]').inputValue()).includes('Controlando os membros'));

@@ -33,7 +33,7 @@ export function createAccountPanel({ root, getRepository, getSession, openDialog
     $('session-status').textContent =
       {
         pending: 'Sua conta aguarda aprovação. Enquanto isso, todos os manuais públicos continuam disponíveis.',
-        approved: 'Sua conta está aprovada. Seu tipo de acesso define as ações disponíveis.',
+        approved: 'Sua conta está aprovada.',
         rejected: 'Sua solicitação foi recusada. Você continua podendo ler o conteúdo público.',
         blocked: 'Os acessos da sua conta foram bloqueados. A leitura pública continua disponível.',
       }[profile?.status] || (user.uid === OWNER_UID ? 'O perfil do proprietário ainda precisa ser preparado pelo procedimento seguro do projeto.' : 'Conclua sua solicitação para entrar na fila de aprovação.');

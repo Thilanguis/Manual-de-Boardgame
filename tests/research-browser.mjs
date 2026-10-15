@@ -35,7 +35,7 @@ try {
       source: 'wikidata',
       id: 'Q17271',
       url: 'https://www.wikidata.org/wiki/Q17271',
-      fields: { title: 'Colonizadores de Catan', minPlayers: 3, maxPlayers: 4, durationMinutes: 75, description: 'jogo de tabuleiro' },
+      fields: { title: 'Colonizadores de Catan', minPlayers: 3, maxPlayers: 4, durationMinutes: 75, description: 'Negocie recursos para desenvolver seus povoados.' },
       names: [
         { value: 'Catan édition Québec', language: 'fr' },
         { value: 'Catan', language: 'en' },
@@ -98,7 +98,7 @@ try {
   await page.locator('.research-card').first().waitFor();
   assert.equal(await page.locator('.research-card').count(), 1);
   assert.equal(await page.locator('#save-game').isEnabled(), true);
-  assert.match(await page.locator('[data-research-status]').textContent(), /Ludopedia: consultando/);
+  assert.match(await page.locator('[data-research-status]').textContent(), /jogo encontrado.*Buscando mais/);
   await page.locator('.research-card button').first().click();
   assert.equal(await page.locator('[data-research-field=minPlayers]').isChecked(), false);
   assert.equal(await page.locator('[data-research-field=minDurationMinutes]').isChecked(), false);
@@ -107,12 +107,13 @@ try {
   await page.locator('[data-research-field=description]').check();
   await page.locator('[data-research-review] input[type=checkbox]').last().check();
   await page.locator('[data-research-review] button').click();
-  assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'jogo de tabuleiro');
+  assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'Negocie recursos para desenvolver seus povoados.');
   assert.equal(await page.locator('[name=minPlayers]').inputValue(), '2');
   assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '45');
   assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true);
   await page.locator('#game-back').click();
   await page.waitForFunction(() => document.querySelectorAll('.research-card').length === 2);
+  await page.locator('.research-options summary').click();
   await page.locator('[data-research-kind]').selectOption('base');
   await page.locator('[data-research-search]').click();
   await page.waitForFunction(() => document.querySelectorAll('.research-card').length === 2);

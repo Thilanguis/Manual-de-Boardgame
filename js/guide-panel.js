@@ -546,7 +546,7 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
         setBusy(true);
         const packed = await packIndex(index),
           receipt = await repository.uploadGuideAsset(activeGame, packed, `${activeGame.title} — índice de regras.json.gz`, (p) => {
-            if (token === sequence) message(`Salvando índice no Drive: ${p}%`);
+            if (token === sequence) message(`Salvando consulta rápida: ${p}%`);
           });
         if (token !== sequence) {
           await repository.discardGuideAsset(receipt).catch(() => {});

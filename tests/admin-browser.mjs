@@ -91,11 +91,26 @@ async function page() {
         candidates: [
           {
             source: 'wikidata',
-            id: 'Q17271',
-            url: 'https://www.wikidata.org/wiki/Q17271',
-            fields: { title: 'Manual de teste', description: 'Descrição sintética revisada.', recommendedAge: 10 },
-            names: [{ value: 'Manual de teste', language: 'pt-br' }],
-            identifiers: { wikidata: 'Q17271' },
+            id: 'Q137295527',
+            url: 'https://www.wikidata.org/wiki/Q137295527',
+            // API simulada; fatos conferidos na página oficial Z-Man. Resumo próprio para o teste.
+            fields: {
+              title: 'The Lord of the Rings: Fate of the Fellowship',
+              description: 'Trabalhe com a Sociedade para proteger Frodo e enfrentar as ameaças da Terra-média.',
+              minPlayers: 1,
+              maxPlayers: 5,
+              minDurationMinutes: 60,
+              maxDurationMinutes: 150,
+              recommendedAge: 14,
+              tags: ['Aventura', 'Estratégia'],
+              mechanics: ['Cooperação'],
+              gameType: 'Cooperativo',
+            },
+            names: [
+              { value: 'O Senhor dos Anéis: Sina da Sociedade', language: 'pt-BR' },
+              { value: 'The Lord of the Rings: Fate of the Fellowship', language: 'en' },
+            ],
+            identifiers: { wikidata: 'Q137295527' },
             kind: 'unknown',
             edition: '',
             language: 'pt-br',
@@ -128,11 +143,13 @@ try {
   const guest = await page();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 1);
   driveFailure = true;
+  await guest.locator('.library-options summary').click();
   await guest.locator('#refresh-library').click();
   await guest.waitForFunction(() => document.getElementById('notice-text').textContent.includes('Falha transitória'));
   assert.equal(await guest.locator('.game-card').count(), 1);
   driveFailure = false;
   driveAvailable = false;
+  await guest.locator('.library-options summary').click();
   await guest.locator('#refresh-library').click();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 0);
   assert.equal(await guest.locator('#unavailable-games').isVisible(), false);
@@ -177,6 +194,7 @@ try {
   await owner.waitForFunction(() => !document.getElementById('read-manual').disabled);
   assert.match(await owner.locator('#detail-manual').textContent(), /páginas/);
   await owner.locator('[data-close=detail-dialog]').click();
+  await guest.locator('.library-options summary').click();
   await guest.locator('#refresh-library').click();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 1);
   assert.equal(await owner.locator('#unavailable-games').isVisible(), false);
@@ -191,7 +209,7 @@ try {
       .textContent()
       .then((t) => t.includes('Sina da Sociedade')),
   );
-  await owner.locator('#game-title').fill('Manual de teste revisto');
+  await owner.locator('#game-title').fill('O Senhor dos Anéis: Sina da Sociedade');
   await owner.locator('#game-next').click();
   assert.equal(await owner.locator('[name=minDurationMinutes]').inputValue(), '45');
   assert.equal(await owner.locator('[name=maxDurationMinutes]').inputValue(), '45');
@@ -201,21 +219,44 @@ try {
   await owner.locator('[data-research-search]').click();
   await owner.locator('.research-card button').click();
   assert.equal(await owner.locator('[data-research-field=title]').isChecked(), false);
+  assert.equal(await owner.locator('[data-research-field=maxDurationMinutes]').isChecked(), false);
+  await owner.locator('[data-research-field=maxDurationMinutes]').check();
   await owner.locator('[data-research-review] input[type=checkbox]').last().check();
   await owner.locator('[data-research-review] button').click();
+  assert.equal(await owner.locator('[data-game-step="2"]').isVisible(), true);
+  for (const [field, value] of Object.entries({
+    description: 'Trabalhe com a Sociedade para proteger Frodo e enfrentar as ameaças da Terra-média.',
+    minPlayers: '1',
+    maxPlayers: '5',
+    minDurationMinutes: '60',
+    maxDurationMinutes: '150',
+    recommendedAge: '14',
+    tags: 'Aventura, Estratégia',
+    mechanics: 'Cooperação',
+    gameType: 'Cooperativo',
+  }))
+    assert.equal(await owner.locator(`#game-form [name=${field}]`).inputValue(), value);
+  await owner.locator('#game-back').click();
+  await owner.locator('#game-next').click();
+  assert.equal(await owner.locator('#game-form [name=description]').inputValue(), 'Trabalhe com a Sociedade para proteger Frodo e enfrentar as ameaças da Terra-média.');
   await owner.locator('[data-step-target="3"]').click();
   await owner.locator('#game-form [name=confirmed]').check();
   await owner.locator('#save-game').click();
   await owner.locator('#upload-dialog').waitFor({ state: 'hidden' });
   const saved = (await getDoc(doc(env.unauthenticatedContext().firestore(), 'games', gameId))).data();
-  assert.equal(saved.title, 'Manual de teste revisto');
+  assert.equal(saved.title, 'O Senhor dos Anéis: Sina da Sociedade');
   assert.equal(saved.minDurationMinutes, 60);
-  assert.equal(saved.maxDurationMinutes, 120);
+  assert.equal(saved.maxDurationMinutes, 150);
   assert.equal(saved.durationMinutes, null);
-  assert.equal(saved.description, 'Descrição sintética revisada.');
-  assert.equal(saved.recommendedAge, 10);
+  assert.equal(saved.description, 'Trabalhe com a Sociedade para proteger Frodo e enfrentar as ameaças da Terra-média.');
+  assert.equal(saved.minPlayers, 1);
+  assert.equal(saved.maxPlayers, 5);
+  assert.equal(saved.recommendedAge, 14);
+  assert.deepEqual(saved.tags, ['Aventura', 'Estratégia']);
+  assert.deepEqual(saved.mechanics, ['Cooperação']);
+  assert.equal(saved.gameType, 'Cooperativo');
   assert.equal(saved.sources.description.license, 'CC0');
-  assert.equal(saved.sources.catalog.matches[0].id, 'Q17271');
+  assert.equal(saved.sources.catalog.matches[0].id, 'Q137295527');
   assert.match(saved.sources.title.source, /ajustado por você/);
   await owner.locator('.card-main').click();
   await owner.locator('#edit-guide').click();

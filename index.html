@@ -114,10 +114,7 @@
               Explorar biblioteca
             </a>
           </div>
-          <p class="hero-caption" id="hero-caption">
-            <span class="status-dot"></span>
-            Uma biblioteca feita para a sua mesa.
-          </p>
+          <p class="hero-caption" id="hero-caption" hidden></p>
         </div>
         <div class="hero-art" id="hero-art" aria-hidden="true">
           <div class="orbit orbit-one"></div>
@@ -156,17 +153,14 @@
         </div>
       </section>
       <div class="library-container" id="biblioteca">
-        <div class="connection-bar">
+        <div class="connection-bar" hidden>
           <span id="connection-status">
             <span class="status-dot"></span>
             Conectando seu acervo…
           </span>
-          <button id="setup-button">
-            Sobre o acervo
-            <svg><use href="#i-info" /></svg>
-          </button>
         </div>
         <div id="library-error" class="inline-error" role="status" hidden></div>
+        <p id="connection-warning" class="inline-error" role="status" hidden></p>
         <section id="recent-section" class="recent-section" hidden>
           <div class="section-heading">
             <h2>
@@ -179,18 +173,26 @@
         </section>
         <div class="library-heading">
           <div>
-            <p class="eyebrow muted">ESCOLHA O PRÓXIMO JOGO</p>
             <h2>
               Sua biblioteca
               <span class="red-dot">.</span>
             </h2>
           </div>
-          <span class="count-badge" id="game-count">0 jogos</span>
+          <div class="library-secondary">
+            <span class="count-badge" id="game-count">0 jogos</span>
+            <details class="library-options">
+              <summary aria-label="Opções da biblioteca">Opções</summary>
+              <div class="library-options-menu">
+                <button class="text-button" id="refresh-library" hidden>Atualizar biblioteca</button>
+                <button class="text-button" id="setup-button">Sobre o acervo</button>
+              </div>
+            </details>
+          </div>
         </div>
         <div class="library-toolbar">
           <label class="search-field">
             <svg><use href="#i-search" /></svg>
-            <input id="search" type="search" placeholder="Qual jogo vai para a mesa?" aria-label="Buscar jogos por nome ou categoria" autocomplete="off" />
+            <input id="search" type="search" placeholder="Buscar jogo" aria-label="Buscar jogos por nome ou categoria" autocomplete="off" />
             <kbd>/</kbd>
           </label>
           <div class="select-filters">
@@ -216,7 +218,6 @@
             </label>
           </div>
         </div>
-        <button class="button secondary small" id="refresh-library" hidden>Atualizar biblioteca</button>
         <div class="filter-chips" role="group" aria-label="Filtrar jogos">
           <button class="chip active" data-filter="all" aria-pressed="true">Todos os jogos</button>
           <button class="chip" data-filter="favorites" aria-pressed="false">
@@ -266,28 +267,30 @@
           <p>Tente outro nome ou ajuste os filtros.</p>
           <button class="button secondary" id="clear-filters">Limpar filtros</button>
         </div>
-        <section class="bottom-note">
-          <div>
-            <svg><use href="#i-book" /></svg>
-            <p>
-              <strong>O manual certo. Na hora de jogar.</strong>
-              <span>Leia sem sair do Acervo, no celular, no tablet ou na sua tela favorita.</span>
-            </p>
-          </div>
-          <button id="footer-install">
-            Leve o Acervo com você
-            <svg><use href="#i-arrow" /></svg>
-          </button>
-        </section>
       </div>
     </main>
+    <div class="library-container footer-note-container">
+      <section class="bottom-note">
+        <div>
+          <svg><use href="#i-book" /></svg>
+          <p>
+            <strong>O manual certo. Na hora de jogar.</strong>
+            <span>Leia sem sair do Acervo, no celular, no tablet ou na sua tela favorita.</span>
+          </p>
+        </div>
+        <button id="footer-install">
+          Leve o Acervo com você
+          <svg><use href="#i-arrow" /></svg>
+        </button>
+      </section>
+    </div>
     <footer class="site-footer">
       <a class="brand footer-brand" href="./">
         acervo
         <span class="brand-dot">.</span>
       </a>
       <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
-      <span>v1.6.1</span>
+      <span>v1.7.0</span>
       <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
       <a id="ludopedia-attribution" href="https://ludopedia.com.br" target="_blank" rel="noopener noreferrer" hidden>Dados: Ludopedia</a>
     </footer>
@@ -372,39 +375,42 @@
                 <p id="title-warning" class="inline-error" role="alert" hidden></p>
                 <div id="title-suggestions" class="title-suggestions" aria-label="Alternativas de título"></div>
                 <section id="research-panel" class="research-panel" aria-label="Pesquisa de jogos em múltiplas fontes">
-                  <h3>Completar com fontes confiáveis</h3>
-
-                  <div data-research-availability class="research-availability"></div>
-                  <div class="form-row">
-                    <label>
-                      Idioma preferido das informações
-                      <select data-research-language>
-                        <option value="pt-BR">Português brasileiro</option>
-                        <option value="fr">Francês</option>
-                        <option value="en">Inglês</option>
-                      </select>
-                    </label>
-                    <label>
-                      Tipo do manual
-                      <select data-research-kind>
-                        <option value="unknown">Ainda não confirmado</option>
-                        <option value="base">Jogo base</option>
-                        <option value="expansion">Expansão</option>
-                      </select>
-                    </label>
-                  </div>
+                  <h3>Completar informações</h3>
+                  <details class="research-options">
+                    <summary>Opções da pesquisa</summary>
+                    <div class="form-row">
+                      <label>
+                        Idioma preferido das informações
+                        <select data-research-language>
+                          <option value="pt-BR">Português brasileiro</option>
+                          <option value="fr">Francês</option>
+                          <option value="en">Inglês</option>
+                        </select>
+                      </label>
+                      <label>
+                        Tipo do manual
+                        <select data-research-kind>
+                          <option value="unknown">Ainda não confirmado</option>
+                          <option value="base">Jogo base</option>
+                          <option value="expansion">Expansão</option>
+                        </select>
+                      </label>
+                    </div>
+                    <button type="button" class="text-button" data-research-ocr>Ler texto das primeiras páginas</button>
+                  </details>
                   <div class="research-actions">
                     <button type="button" class="button secondary small" data-research-search>Pesquisar fontes</button>
                     <button type="button" class="text-button" data-research-expand>Ampliar pesquisa</button>
                     <button type="button" class="text-button" data-research-cancel hidden>Cancelar pesquisa</button>
                   </div>
                   <p data-research-status role="status" aria-live="polite"></p>
-                  <button type="button" class="button secondary small" data-research-ocr>Reconhecer texto das primeiras páginas</button>
                   <p data-research-ocr-status role="status" aria-live="polite"></p>
                   <div data-research-results class="research-results"></div>
                   <div data-research-review class="research-review" hidden></div>
                   <details>
-                    <summary>Disponibilidade e referências manuais</summary>
+                    <summary>Detalhes da pesquisa</summary>
+                    <p data-research-diagnostics></p>
+                    <div data-research-availability class="research-availability"></div>
                     <p data-research-version></p>
                     <div data-research-sources></div>
                   </details>
@@ -431,7 +437,7 @@
                 </div>
                 <p id="research-applied" class="step-intro" role="status" hidden></p>
                 <label>
-                  Resumo do jogo
+                  Sobre o jogo
                   <textarea name="description" rows="4" maxlength="2000" placeholder="Objetivo, contexto e o que os jogadores fazem, com origem identificada."></textarea>
                 </label>
                 <fieldset class="field-group">
@@ -748,7 +754,7 @@
         </nav>
         <p id="admin-error" class="inline-error" role="alert" hidden></p>
         <section data-admin-section="requests">
-          <p class="muted-text">Solicitações ficam registradas e são atualizadas em tempo real.</p>
+          <p class="muted-text">Aprove ou recuse os novos cadastros.</p>
           <div id="pending-users" class="people-list"></div>
         </section>
         <section data-admin-section="people" hidden>
@@ -759,7 +765,7 @@
           <div id="all-users" class="people-list"></div>
         </section>
         <section data-admin-section="history" hidden>
-          <p class="muted-text">Últimas 50 alterações, com responsável e horário do servidor.</p>
+          <p class="muted-text">Últimas 50 alterações.</p>
           <div id="audit-list" class="people-list"></div>
         </section>
         <section data-admin-section="settings" hidden>
@@ -769,13 +775,13 @@
           </label>
           <p class="muted-text">A biblioteca começa pública. Ao desligar, visitantes ainda podem ler jogos publicados individualmente.</p>
           <button class="button primary" id="save-library-settings">Salvar configuração</button>
-          <div class="storage-status">
-            <strong>Armazenamento central</strong>
+          <details class="storage-status">
+            <summary>Conexão e diagnóstico</summary>
             <p id="admin-storage-status"></p>
             <a href="https://drive.google.com/drive/folders/1XUgXOYRigMaYuNMbFVcjDp6obEp4r7wR" target="_blank" rel="noopener noreferrer">Abrir pasta PDFs ↗</a>
             <p class="muted-text">A autorização do Drive é feita pelo proprietário no assistente local. Credenciais privadas não são cadastradas no site.</p>
             <a href="https://github.com/Thilanguis/Manual-de-Boardgame/blob/main/docs/GOOGLE-DRIVE-CLOUDFLARE.md" target="_blank" rel="noopener noreferrer">Configurar conexão segura ↗</a>
-          </div>
+          </details>
         </section>
       </div>
     </dialog>
@@ -825,29 +831,34 @@
           <svg><use href="#i-book" /></svg>
           <div>
             <strong>Do PDF para a sua estante</strong>
-            <p>Extraímos texto, possíveis títulos e a primeira página como capa. Você confere tudo antes de salvar. PDFs escaneados podem usar reconhecimento local de texto, sempre com revisão.</p>
+            <p>Adicione um manual e revise as informações antes de publicar.</p>
           </div>
         </div>
         <div class="setup-feature">
           <svg><use href="#i-device" /></svg>
           <div>
             <strong>Feito para acompanhar a partida</strong>
-            <p>Instale no Android pelo menu “Instalar aplicativo”. No iPhone/iPad, use Safari → Compartilhar → Adicionar à Tela de Início. O aplicativo mantém os recursos essenciais offline; PDFs na nuvem são carregados ao abrir.</p>
+            <p>Instale o Acervo para abrir pelo celular ou tablet. A leitura dos manuais compartilhados precisa de internet.</p>
           </div>
         </div>
         <div class="setup-feature">
           <svg><use href="#i-info" /></svg>
           <div>
             <strong>Dados com origem, sem adivinhação</strong>
-            <p>O PDF é a fonte principal. A pesquisa informa quais APIs estão disponíveis; BGG e Ludopedia precisam de autorização. Você confirma o jogo, a edição e os campos antes de aplicar sugestões.</p>
+            <p>Confira a fonte e a edição. Use apenas informações e arquivos que você tem direito de compartilhar.</p>
           </div>
         </div>
         <div class="setup-links">
-          <a href="https://console.firebase.google.com/project/manual-de-boardgame/overview" target="_blank" rel="noopener noreferrer">Abrir Console do Firebase ↗</a>
           <button class="text-button" id="switch-mode">Usar biblioteca deste dispositivo</button>
           <button class="text-button" id="setup-install">Como instalar</button>
         </div>
         <p class="muted-text">Favoritos e posição de leitura ficam neste navegador. A biblioteca local é independente da nuvem e não é migrada automaticamente.</p>
+        <details>
+          <summary>Informações técnicas</summary>
+          <p id="setup-technical"></p>
+          <p id="setup-connection"></p>
+          <a href="https://console.firebase.google.com/project/manual-de-boardgame/overview" target="_blank" rel="noopener noreferrer">Console do Firebase ↗</a>
+        </details>
       </div>
     </dialog>
     <section id="reader" class="reader" aria-label="Leitor de manual" hidden>
