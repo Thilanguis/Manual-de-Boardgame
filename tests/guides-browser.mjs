@@ -37,6 +37,7 @@ try {
   await page.locator('#game-form').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#bgg-search').isDisabled(), true);
   assert.equal(await page.locator('#bgg-search').isVisible(), false);
+  await page.locator('.manual-reference summary').click();
   assert.equal(await page.locator('#bgg-web-search').isVisible(), true);
   assert.equal(await page.locator('#bgg-web-search').evaluate((e) => getComputedStyle(e).cursor), 'pointer');
   assert.match(await page.locator('#bgg-status').textContent(), /outra aba/);
@@ -50,6 +51,7 @@ try {
   await popup.close();
   assert.equal(await page.locator('[name=title]').inputValue(), 'Ilha de Teste');
   assert.equal(await page.locator('[name=recommendedAge]').inputValue(), '10');
+  await page.locator('[data-step-target="3"]').click();
   await page.locator('[name=confirmed]').check();
   await page.locator('#save-game').click();
   await page.waitForFunction(() => !document.getElementById('upload-dialog').open && document.querySelectorAll('.game-card').length === 1);
@@ -130,6 +132,7 @@ try {
   replacement.addPage([595, 842]).drawText('Manual substituído', { x: 50, y: 740, font: replacementFont, size: 24 });
   await page.locator('#replace-pdf-file').setInputFiles({ name: 'novo.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await replacement.save()) });
   await page.waitForFunction(() => document.getElementById('file-info').textContent.includes('1 páginas'));
+  await page.locator('[data-step-target="3"]').click();
   await page.locator('[name=confirmed]').check();
   await page.locator('#save-game').click();
   await page.waitForFunction(() => !document.getElementById('upload-dialog').open);

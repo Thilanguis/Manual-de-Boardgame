@@ -101,9 +101,18 @@ service cloud.firestore {
         && validEvent(getAfter(/databases/$(database)/documents/auditEvents/$(request.resource.data.lastEventId)).data,request.resource.data.lastEventId);
     }
     function optionalNumber(value, max) { return value == null || (value is int && value >= 1 && value <= max); }
+    function validDuration(g) {
+      return (!('minDurationMinutes' in g) && !('maxDurationMinutes' in g))
+        || (('minDurationMinutes' in g) && ('maxDurationMinutes' in g)
+          && optionalNumber(g.minDurationMinutes,1440) && optionalNumber(g.maxDurationMinutes,1440)
+          && ((g.minDurationMinutes == null && g.maxDurationMinutes == null && g.durationMinutes == null)
+            || (g.minDurationMinutes != null && g.maxDurationMinutes != null && g.minDurationMinutes <= g.maxDurationMinutes
+              && ((g.minDurationMinutes == g.maxDurationMinutes && g.durationMinutes == g.minDurationMinutes)
+                || (g.minDurationMinutes != g.maxDurationMinutes && g.durationMinutes == null)))));
+    }
     function validGame(id) {
       let g = request.resource.data;
-      return g.keys().hasOnly(['id','title','description','minPlayers','maxPlayers','durationMinutes','tags','language','manual','cover','sources','bgg','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting','deleteRequestedBy','recommendedAge','gameType','mechanics','edition'])
+      return g.keys().hasOnly(['id','title','description','minPlayers','maxPlayers','durationMinutes','minDurationMinutes','maxDurationMinutes','tags','language','manual','cover','sources','bgg','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting','deleteRequestedBy','recommendedAge','gameType','mechanics','edition'])
         && g.keys().hasAll(['id','title','description','minPlayers','maxPlayers','durationMinutes','tags','language','manual','cover','sources','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting'])
         && g.id == id && g.schemaVersion == 1 && g.isPublic is bool && g.deleting is bool
         && g.title is string && g.title.size() > 0 && g.title.size() <= 160
@@ -111,6 +120,7 @@ service cloud.firestore {
         && optionalNumber(g.minPlayers,100) && optionalNumber(g.maxPlayers,100)
         && ((g.minPlayers == null && g.maxPlayers == null) || (g.minPlayers != null && g.maxPlayers != null && g.minPlayers <= g.maxPlayers))
         && optionalNumber(g.durationMinutes,1440)
+        && validDuration(g)
         && g.tags is list && g.tags.size() <= 8 && g.language is string && g.language.size() <= 20
         && (!('recommendedAge' in g) || optionalNumber(g.recommendedAge,100))
         && (!('gameType' in g) || (g.gameType is string && g.gameType.size() <= 80))

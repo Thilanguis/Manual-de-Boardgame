@@ -17,9 +17,27 @@ export function safeImageUrl(value) {
   }
 }
 
+export function isTechnicalTitle(value = '') {
+  return /\.(?:indd|idml|ai|psd|docx?)(?:\b|$)|^(?:microsoft (?:word|powerpoint)|adobe (?:indesign|illustrator))\b|^[A-Z]{2,}[A-Z0-9]*\d{3,}[_\s-]+(?:rulebook|rules|v\d)/i.test(String(value).trim());
+}
+
+export function durationRange(game = {}) {
+  const explicit = Object.hasOwn(game, 'minDurationMinutes') || Object.hasOwn(game, 'maxDurationMinutes');
+  const value = (v) => (v === '' || v == null ? null : Number(v));
+  return explicit ? { minDurationMinutes: value(game.minDurationMinutes), maxDurationMinutes: value(game.maxDurationMinutes) } : { minDurationMinutes: value(game.durationMinutes), maxDurationMinutes: value(game.durationMinutes) };
+}
+
+export function durationLabel(game, unit = 'min') {
+  const { minDurationMinutes: min, maxDurationMinutes: max } = durationRange(game);
+  return min > 0 && max >= min ? `${min}${max === min ? '' : '–' + max} ${unit}` : 'Não informada';
+}
+
+export const displayTitle = (game) => (isTechnicalTitle(game.title) ? 'Título a revisar' : game.title || 'Jogo sem título');
+
 export function validateGame(input) {
   const title = String(input.title || '').trim();
   if (!title || title.length > 160) throw new Error('Informe um título com até 160 caracteres.');
+  if (isTechnicalTitle(title)) throw new Error('Este parece ser um título técnico de editoração. Confirme o nome real do jogo antes de salvar.');
   const description = String(input.description || '').trim();
   if (description.length > 2000) throw new Error('A descrição deve ter até 2.000 caracteres.');
   const number = (value, name, max) => {
@@ -30,7 +48,12 @@ export function validateGame(input) {
   };
   const minPlayers = number(input.minPlayers, 'Mínimo de jogadores', 100);
   const maxPlayers = number(input.maxPlayers, 'Máximo de jogadores', 100);
-  const durationMinutes = number(input.durationMinutes, 'Duração em minutos', 1440);
+  const range = durationRange(input),
+    minDurationMinutes = number(range.minDurationMinutes, 'Duração mínima', 1440),
+    maxDurationMinutes = number(range.maxDurationMinutes, 'Duração máxima', 1440);
+  if ((minDurationMinutes === null) !== (maxDurationMinutes === null)) throw new Error('Preencha a duração mínima e máxima, ou deixe as duas em branco.');
+  if (minDurationMinutes > maxDurationMinutes) throw new Error('A duração mínima não pode superar a máxima.');
+  const durationMinutes = minDurationMinutes === maxDurationMinutes ? minDurationMinutes : null;
   if ((minPlayers === null) !== (maxPlayers === null)) throw new Error('Preencha o mínimo e o máximo de jogadores, ou deixe os dois em branco.');
   if (minPlayers > maxPlayers) throw new Error('O mínimo de jogadores não pode superar o máximo.');
   const tags = [
@@ -54,7 +77,22 @@ export function validateGame(input) {
       ),
     ].slice(0, 8);
   if (gameType.length > 80 || edition.length > 100 || mechanics.some((s) => s.length > 40)) throw new Error('Revise o tipo, a edição e as mecânicas: os textos excedem o limite.');
-  return { title, description, minPlayers, maxPlayers, durationMinutes, recommendedAge, gameType, edition, mechanics, tags, language: String(input.language || 'other').slice(0, 20), isPublic: input.isPublic === true || input.isPublic === 'on' };
+  return {
+    title,
+    description,
+    minPlayers,
+    maxPlayers,
+    durationMinutes,
+    minDurationMinutes,
+    maxDurationMinutes,
+    recommendedAge,
+    gameType,
+    edition,
+    mechanics,
+    tags,
+    language: String(input.language || 'other').slice(0, 20),
+    isPublic: input.isPublic === true || input.isPublic === 'on',
+  };
 }
 
 export function playersLabel(game) {
@@ -69,9 +107,15 @@ export function filterGames(games, { query = '', filter = 'all', players = '', s
     if (filter === 'favorites' && !favorites.includes(game.id)) return false;
     if (filter === 'solo' && game.minPlayers !== 1) return false;
     if (filter === 'two' && !(game.minPlayers <= 2 && game.maxPlayers >= 2)) return false;
-    if (filter === 'quick' && !(game.durationMinutes > 0 && game.durationMinutes <= 30)) return false;
+    if (filter === 'quick' && !(durationRange(game).maxDurationMinutes > 0 && durationRange(game).maxDurationMinutes <= 30)) return false;
     return true;
   });
-  result.sort(sort === 'az' ? (a, b) => a.title.localeCompare(b.title, 'pt-BR') : sort === 'duration' ? (a, b) => (a.durationMinutes || Infinity) - (b.durationMinutes || Infinity) : (a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  result.sort(
+    sort === 'az'
+      ? (a, b) => displayTitle(a).localeCompare(displayTitle(b), 'pt-BR')
+      : sort === 'duration'
+        ? (a, b) => (durationRange(a).minDurationMinutes || Infinity) - (durationRange(b).minDurationMinutes || Infinity) || (durationRange(a).maxDurationMinutes || Infinity) - (durationRange(b).maxDurationMinutes || Infinity)
+        : (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
+  );
   return result;
 }

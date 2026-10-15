@@ -53,7 +53,7 @@ export async function createFirebaseRepository(config) {
     subscribeGames(callback, onError) {
       gameListeners.add(callback);
       if (onError) errorListeners.add(onError);
-      if (this.games) callback(this.games);
+      if (this.games) callback(this.games, { loading: !this.gamesReady });
       return () => {
         gameListeners.delete(callback);
         errorListeners.delete(onError);
@@ -264,7 +264,7 @@ export async function createFirebaseRepository(config) {
   };
   function publishGames() {
     repository.games = annotateAvailability(rawGames, availability);
-    for (const callback of gameListeners) callback(repository.games);
+    for (const callback of gameListeners) callback(repository.games, { loading: !repository.gamesReady });
   }
   async function refreshAvailability() {
     if (closed || !config.fileStorage?.apiBase || !rawGames.length) return;
@@ -327,16 +327,22 @@ export async function createFirebaseRepository(config) {
     availability.clear();
     rawGames = [];
     repository.games = [];
-    for (const callback of gameListeners) callback([]);
+    repository.gamesReady = false;
+    for (const callback of gameListeners) callback([], { loading: true });
     const collection = dbSDK.collection(db, 'games');
     const query = rights.canReadAll ? collection : publicRead ? dbSDK.query(collection, dbSDK.where('deleting', '==', false)) : dbSDK.query(collection, dbSDK.where('isPublic', '==', true), dbSDK.where('deleting', '==', false));
     unsubscribe = dbSDK.onSnapshot(
       query,
+      { includeMetadataChanges: true },
       (snapshot) => {
         if (sequence !== querySequence) return;
+        const wasReady = repository.gamesReady,
+          changed = snapshot.docChanges().length > 0;
+        repository.gamesReady = !snapshot.metadata.fromCache || snapshot.size > 0;
+        if (wasReady === repository.gamesReady && !changed) return;
         rawGames = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id, createdAt: doc.data().createdAt?.toMillis?.() || 0, updatedAt: doc.data().updatedAt?.toMillis?.() || 0 }));
         publishGames();
-        refreshAvailability().catch(() => {});
+        if (changed) refreshAvailability().catch(() => {});
       },
       (error) => {
         if (sequence === querySequence) report(error);

@@ -1,4 +1,4 @@
-import { normalizeText } from './model.js';
+import { normalizeText, durationRange } from './model.js';
 import { RESEARCH_PROTOCOL } from './research-contract.js';
 
 export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', wikipedia: 'Wikipédia', pdf: 'PDF · OCR local', bgg: 'BoardGameGeek' };
@@ -111,7 +111,8 @@ export const fieldLabels = {
   description: 'Descrição',
   minPlayers: 'Mín. jogadores',
   maxPlayers: 'Máx. jogadores',
-  durationMinutes: 'Duração (min)',
+  minDurationMinutes: 'Duração mínima (min)',
+  maxDurationMinutes: 'Duração máxima (min)',
   recommendedAge: 'Idade',
   tags: 'Categorias',
   mechanics: 'Mecânicas',
@@ -119,7 +120,10 @@ export const fieldLabels = {
   edition: 'Edição',
 };
 export function selectedFields(candidate, current) {
-  return Object.entries(candidate.fields)
+  const range = durationRange(candidate.fields);
+  const fields = { ...candidate.fields, ...(range.minDurationMinutes != null && range.maxDurationMinutes != null ? range : {}) };
+  current = { ...current, ...durationRange(current) };
+  return Object.entries(fields)
     .filter(([key]) => fieldLabels[key])
     .map(([key, value]) => ({
       key,

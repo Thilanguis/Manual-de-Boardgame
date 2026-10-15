@@ -1,4 +1,4 @@
-import { normalizeText } from './model.js';
+import { normalizeText, isTechnicalTitle } from './model.js';
 import { reviewedIdentity } from './game-identities.js';
 
 const genericTitle =
@@ -15,11 +15,18 @@ export function titleCandidates({ metadataTitle = '', filename = '', lines = [] 
       .replace(/^[\s\-–:]+|[\s\-–:]+$/g, '')
       .trim();
   const valid = (value) =>
-    value.length >= 2 && value.length <= 100 && value.split(/\s+/).length <= 12 && /[a-zA-ZÀ-ÿ]/.test(value) && !genericTitle.test(value) && !/^\d+$/.test(value) && !/\b(?:jogadores|players|joueurs|minutos|minutes)\b/i.test(value);
+    value.length >= 2 &&
+    value.length <= 100 &&
+    !isTechnicalTitle(value) &&
+    value.split(/\s+/).length <= 12 &&
+    /[a-zA-ZÀ-ÿ]/.test(value) &&
+    !genericTitle.test(value) &&
+    !/^\d+$/.test(value) &&
+    !/\b(?:jogadores|players|joueurs|minutos|minutes)\b/i.test(value);
   const titleLines = lines.filter((line) => valid(line.text));
   const largest = Math.max(0, ...lines.map((line) => line.height));
   const identity = reviewedIdentity('', metadataTitle + ' ' + filename);
-  const technical = /\.(?:indd|docx?|ai)(?:\b|$)|rulebook[_-]|rules[_-][a-z]{2}|^[A-Z0-9]{5,}[_-]/i;
+  const technical = { test: isTechnicalTitle };
   const ranked = [
     ...(identity ? [{ text: identity.names[0].value, source: 'Código editorial do PDF · alias revisado', score: 110 }] : []),
     ...(valid(metadataTitle) && !technical.test(metadataTitle) ? [{ text: clean(metadataTitle), source: 'Metadados do PDF', score: 100 }] : []),
@@ -54,11 +61,23 @@ export function extractMetadata(text) {
   let minPlayers = playerMatch ? Number(playerMatch[1]) : null;
   let maxPlayers = playerMatch ? Number(playerMatch[2] || playerMatch[1]) : null;
   if (minPlayers < 1 || maxPlayers > 100 || minPlayers > maxPlayers) minPlayers = maxPlayers = null;
-  const timeMatch =
-    normalized.match(/(?:dura[cç][aã]o|tempo (?:de jogo|de partida)|playing time|playtime|game length|durée|temps de jeu)\s*[:：]?\s*(\d{1,3})(?:\s*(?:a|à|to|-|até)\s*(\d{1,3}))?\s*(minutos?|minutes?|min\b|horas?|hours?|heures?)/i) ||
-    normalized.match(/\b(\d{1,3})(?:\s*(?:a|à|to|-|até)\s*(\d{1,3}))?\s*(minutos?|minutes?)\s*(?:por partida|de jogo|per game)?/i);
-  // Quando o PDF informa uma faixa, preserva-a na evidência e deixa a duração média para revisão.
-  const durationMinutes = timeMatch && !timeMatch[2] ? Number(timeMatch[1]) * (/hora|hour|heure/i.test(timeMatch[3]) ? 60 : 1) : null;
+  const labeledTime =
+    /(?:dura[cç][aã]o(?: da partida| do jogo)?|tempo (?:de jogo|de partida)|playing time|playtime|game length|durée(?: du jeu)?|temps de jeu)\s*[:：]?\s*(?:de |from |entre )?(\d{1,3})(?:\s*(?:a|à|to|e|-|até)\s*(\d{1,3}))?\s*(minutos?|minutes?|min\b|horas?|hours?|heures?)/i;
+  const rawTime = /\b(\d{1,3})(?:\s*(?:a|à|to|e|-|até)\s*(\d{1,3}))?\s*(minutos?|minutes?|min\b|horas?|hours?|heures?)\b/i;
+  const timeMatches = matchesFor([labeledTime]);
+  if (!timeMatches.length) timeMatches.push(...matchesFor([rawTime]));
+  const times = new Map(
+    timeMatches.map((m) => {
+      const factor = /hora|hour|heure/i.test(m[3]) ? 60 : 1;
+      return [Number(m[1]) * factor + ':' + Number(m[2] || m[1]) * factor, m];
+    }),
+  );
+  const timeMatch = times.size === 1 ? [...times.values()][0] : null;
+  const factor = timeMatch && /hora|hour|heure/i.test(timeMatch[3]) ? 60 : 1;
+  let minDurationMinutes = timeMatch ? Number(timeMatch[1]) * factor : null,
+    maxDurationMinutes = timeMatch ? Number(timeMatch[2] || timeMatch[1]) * factor : null;
+  if (minDurationMinutes < 1 || maxDurationMinutes > 1440 || minDurationMinutes > maxDurationMinutes) minDurationMinutes = maxDurationMinutes = null;
+  const durationMinutes = minDurationMinutes === maxDurationMinutes ? minDurationMinutes : null;
   const paragraphs = normalized
     .split(/\n/)
     .map((t) => t.trim())
@@ -114,11 +133,20 @@ export function extractMetadata(text) {
         .slice(0, 500),
     };
   if (timeMatch) sources.duration = { source: 'PDF', excerpt: timeMatch[0] };
+  else if (times.size > 1)
+    sources.duration = {
+      source: 'PDF · durações diferentes; conferir edição/cenário',
+      excerpt: [...times.values()]
+        .map((m) => m[0])
+        .join(' / ')
+        .slice(0, 500),
+    };
   if (description) sources.description = { source: 'PDF · objetivo do jogo', excerpt: description };
   const age =
     normalized.match(/(?<![a-zà-ÿ])(?:idade(?: recomendada)?|ages?|age recommendation|âge|age conseillé)\s*[:：]?\s*(\d{1,2})\s*(?:\+|anos|years|ans)?/i) ||
-    normalized.match(/(?:a partir de|maiores de|idades? de)\s+(\d{1,2})\s*anos|\b(\d{1,2})\s*(?:anos?\s*(?:ou mais|em diante)|years and up|ans et plus)/i);
-  const recommendedAge = age && Number(age[1] || age[2]) >= 1 ? Number(age[1] || age[2]) : null;
+    normalized.match(/(?:a partir (?:de|dos)|maiores de|idades? de)\s+(\d{1,2})\s*anos|\b(\d{1,2})\s*(?:anos?\s*(?:ou mais|em diante)|years (?:and up|and older)|ans et plus)/i);
+  const ageEvidence = age || normalized.match(/(?:à partir de|dès)\s+(\d{1,2})\s*ans/i);
+  const recommendedAge = ageEvidence && Number(ageEvidence[1] || ageEvidence[2]) >= 1 ? Number(ageEvidence[1] || ageEvidence[2]) : null;
   const type = normalized.match(/(?:jogo|game|jeu)\s+(cooperativo|competitivo|por equipes|cooperative|competitive|team[- ]based|coopératif|compétitif)/i) || normalized.match(/(cooperative|competitive|team[- ]based)\s+game/i);
   const types = {
     coopératif: 'Cooperativo',
@@ -149,10 +177,10 @@ export function extractMetadata(text) {
   const mechanics = list(mechanicsMatch),
     tags = list(categoriesMatch);
   const terms = [
-    ['Rolagem de dados', /\b(?:rolagem|lan[cç]amento) de dados\b/i],
-    ['Construção de baralho', /\bconstru[cç][aã]o de (?:baralho|deck)\b/i],
-    ['Colocação de trabalhadores', /\b(?:coloca[cç][aã]o|aloca[cç][aã]o) de trabalhadores\b/i],
-    ['Controle de área', /\bcontrole de [aá]rea\b/i],
+    ['Rolagem de dados', /\b(?:(?:rolagem|lan[cç]amento) de dados|dice rolling|lancer de d[eé]s)\b/i],
+    ['Construção de baralho', /\b(?:constru[cç][aã]o de (?:baralho|deck)|deck[- ]building|construction de (?:paquet|deck))\b/i],
+    ['Colocação de trabalhadores', /\b(?:(?:coloca[cç][aã]o|aloca[cç][aã]o) de trabalhadores|worker placement|placement d.ouvriers)\b/i],
+    ['Controle de área', /\b(?:controle de [aá]rea|area control|contr[oô]le de territoire)\b/i],
   ];
   for (const [label, pattern] of terms) {
     const evidence = normalized.match(pattern);
@@ -178,7 +206,7 @@ export function extractMetadata(text) {
     .sort((a, b) => b[1] - a[1]);
   const language = scores[0][1] >= 5 && scores[0][1] >= scores[1][1] * 1.5 ? scores[0][0] : 'other';
   for (const [field, match] of [
-    ['recommendedAge', age],
+    ['recommendedAge', ageEvidence],
     ['gameType', type],
     ['edition', editionMatch],
     ['mechanics', mechanicsMatch],
@@ -186,7 +214,7 @@ export function extractMetadata(text) {
   ])
     if (match) sources[field] = { source: 'PDF · informação explícita', excerpt: match[0] };
   if (language !== 'other') sources.language = { source: 'PDF · idioma sugerido por vocabulário; confirmar', excerpt: language };
-  return { minPlayers, maxPlayers, durationMinutes, description, recommendedAge, gameType, edition, mechanics, tags, language, sources };
+  return { minPlayers, maxPlayers, durationMinutes, minDurationMinutes, maxDurationMinutes, description, recommendedAge, gameType, edition, mechanics, tags, language, sources };
 }
 
 export function linesFromItems(items) {

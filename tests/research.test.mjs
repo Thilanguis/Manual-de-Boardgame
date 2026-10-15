@@ -86,5 +86,5 @@ test('dados do PDF ficam desmarcados quando contradizem catálogo; ausências po
   const choices = selectedFields({ fields: { title: 'Catan', minPlayers: 3, durationMinutes: 75 }, conflicts: [] }, { title: 'Catan Brasil', minPlayers: 2, durationMinutes: null });
   assert.equal(choices.find((f) => f.key === 'minPlayers').checked, false);
   assert.equal(choices.find((f) => f.key === 'title').conflict, true);
-  assert.equal(choices.find((f) => f.key === 'durationMinutes').checked, true);
+  assert.equal(choices.find((f) => f.key === 'minDurationMinutes').checked, true);
 });

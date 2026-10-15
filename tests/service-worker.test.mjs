@@ -14,6 +14,7 @@ function worker({ networkFails = false, cachedConfig = null } = {}) {
   vm.runInNewContext(source, {
     URL,
     Response,
+    Request,
     AbortSignal,
     fetch: async (request, options) => {
       network.push({ request, options });
@@ -53,10 +54,14 @@ test('cache essencial não contém manuais; instalação valida todos os recurso
   let pending;
   context.handlers.install({ waitUntil: (promise) => (pending = promise) });
   await pending;
-  assert.ok(context.cached.includes('./index.html'));
-  assert.ok(context.cached.includes('./vendor/pdfjs/pdf.worker.mjs'));
+  assert.ok(context.cached.some((r) => new URL(r.url).pathname === '/index.html'));
+  assert.ok(context.cached.some((r) => new URL(r.url).pathname === '/vendor/pdfjs/pdf.worker.mjs'));
+  assert.ok(
+    context.cached.every((r) => r.cache === 'reload'),
+    'Nova versão busca os arquivos novamente, sem reutilizar HTML/JS antigos do cache HTTP',
+  );
   assert.equal(
-    context.cached.some((file) => /\.pdf$/i.test(file)),
+    context.cached.some((file) => /\.pdf$/i.test(file.url)),
     false,
   );
 });

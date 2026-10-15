@@ -43,8 +43,9 @@ try {
   assert.equal(await page.locator('[name=title]').inputValue(), 'Ilha de Teste');
   assert.equal(await page.locator('[name=minPlayers]').inputValue(), '2');
   assert.equal(await page.locator('[name=maxPlayers]').inputValue(), '4');
-  assert.equal(await page.locator('[name=durationMinutes]').inputValue(), '45');
+  assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '45');
   await page.screenshot({ path: 'test-output/desktop-import.png', fullPage: true });
+  await page.locator('[data-step-target="3"]').click();
   await page.locator('[name=confirmed]').check();
   await page.locator('#save-game').click();
   await page.waitForFunction(() => document.querySelectorAll('.game-card').length === 1 && !document.getElementById('upload-dialog').open);
@@ -80,6 +81,7 @@ try {
   await page.locator('#replace-pdf-file').setInputFiles({ name: 'nova-edicao.pdf', mimeType: 'application/pdf', buffer: Buffer.from(replacementBytes) });
   await page.waitForFunction(() => document.getElementById('review-notice-text').textContent.includes('novo PDF está preparado'));
   assert.equal(await page.locator('[name=title]').inputValue(), 'Ilha revisada');
+  await page.locator('[data-step-target="3"]').click();
   await page.locator('[name=confirmed]').check();
   await page.locator('#save-game').click();
   await page.waitForFunction(() => document.querySelector('.card-title')?.textContent === 'Ilha revisada' && !document.getElementById('upload-dialog').open);

@@ -13,6 +13,10 @@ Não há dependência de Firebase Hosting, Storage ou Functions, nem token priva
 
 O Drive central está configurado no Worker e em `config/app-config.js`. Consulte [a configuração e reconexão do Drive](docs/GOOGLE-DRIVE-CLOUDFLARE.md) para manutenção das credenciais privadas.
 
+## Contas e cadastro em etapas
+
+Login por e-mail/senha com cadastro e recuperação visíveis, Google opcional e perfil com nome, e-mail e acesso. O cadastro de jogos separa identificação, informações e publicação, preservando o rascunho. Duração aceita mínimo/máximo e continua lendo `durationMinutes` de jogos antigos. Títulos técnicos exigem revisão explícita. [Alterações, compatibilidade e testes da versão 1.6.0](docs/REFINAMENTO-1.6.md).
+
 ## Guias e consulta rápida
 
 Cada jogo oferece **Aprender a jogar**, **Consulta rápida** e **Manual completo**. Administradores com `editGames` podem analisar todas as páginas, organizar sugestões extraídas, editar seções com imagens e publicar após revisão. Rascunhos ficam privados; texto de índices completos é comprimido no Drive, com busca em Web Worker no navegador. A versão não usa IA nem OCR pago. [Uso, arquitetura, limites e testes](docs/BIBLIOTECA-INTELIGENTE.md).

@@ -1,14 +1,17 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.5.0-r2';
+const VERSION = 'acervo-v1.6.0';
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
 const ESSENTIAL = [
   './',
   './index.html',
   './styles/app.css',
+  './styles/interface.css',
   './config/app-config.js',
   './manifest.webmanifest',
   './js/app.js',
+  './js/account-panel.js',
+  './js/game-steps.js',
   './js/model.js',
   './js/recognition.js',
   './js/pdf.js',
@@ -43,7 +46,7 @@ const ESSENTIAL = [
 
 self.addEventListener('install', (event) => {
   // Uma instalação incompleta não substitui a versão funcional anterior.
-  event.waitUntil(caches.open(SHELL).then((cache) => cache.addAll(ESSENTIAL)));
+  event.waitUntil(caches.open(SHELL).then((cache) => cache.addAll(ESSENTIAL.map((path) => new Request(new URL(path, self.registration.scope), { cache: 'reload' })))));
 });
 self.addEventListener('activate', (event) => {
   event.waitUntil(

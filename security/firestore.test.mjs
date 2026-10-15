@@ -285,3 +285,28 @@ test('desligar leitura global exige auditagem e mantém jogos publicados dispon�
   await assertFails(getDoc(doc(db(), 'games', 'existing')));
   await assertSucceeds(getDoc(doc(db(), 'games', 'published')));
 });
+
+test('intervalos de duração são validados no servidor sem conceder escrita a leitores', async () => {
+  const change = { minDurationMinutes: 60, maxDurationMinutes: 120, durationMinutes: null, updatedAt: serverTimestamp() };
+  await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), change));
+  assert.equal((await getDoc(doc(db(), 'games', 'existing'))).data().maxDurationMinutes, 120);
+  for (const uid of ['member', 'pending', 'blocked']) await assertFails(updateDoc(doc(db(uid), 'games', 'existing'), { ...change, minDurationMinutes: 30 }));
+  for (const values of [
+    { minDurationMinutes: 60, maxDurationMinutes: null },
+    { minDurationMinutes: 120, maxDurationMinutes: 60 },
+    { minDurationMinutes: 0, maxDurationMinutes: 60 },
+    { minDurationMinutes: 60.5, maxDurationMinutes: 120 },
+    { minDurationMinutes: 60, maxDurationMinutes: 120, durationMinutes: 90 },
+  ])
+    await assertFails(updateDoc(doc(ownerDb, 'games', 'existing'), { ...change, ...values }));
+  await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), { minDurationMinutes: 45, maxDurationMinutes: 45, durationMinutes: 45, updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), { minDurationMinutes: null, maxDurationMinutes: null, durationMinutes: null, updatedAt: serverTimestamp() }));
+});
+
+test('jogo legado com durationMinutes continua editável sem migração forçada', async () => {
+  await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), { durationMinutes: 45, updatedAt: serverTimestamp() }));
+  const legacy = (await getDoc(doc(db(), 'games', 'existing'))).data();
+  assert.equal(legacy.durationMinutes, 45);
+  assert.equal(Object.hasOwn(legacy, 'minDurationMinutes'), false);
+  await assertFails(updateDoc(doc(ownerDb, 'games', 'existing'), { minDurationMinutes: 30, updatedAt: serverTimestamp() }));
+});

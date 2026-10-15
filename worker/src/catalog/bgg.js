@@ -19,6 +19,9 @@ export async function bgg(input, io) {
       let min = positive(item.minplayers?.['@_value'], 100),
         max = positive(item.maxplayers?.['@_value'], 100);
       if (!min || !max || min > max) min = max = null;
+      let minTime = positive(item.minplaytime?.['@_value']),
+        maxTime = positive(item.maxplaytime?.['@_value']);
+      if (!minTime || !maxTime || minTime > maxTime) minTime = maxTime = null;
       return facts(
         'bgg',
         id,
@@ -27,7 +30,9 @@ export async function bgg(input, io) {
           title,
           minPlayers: min,
           maxPlayers: max,
-          durationMinutes: positive(item.playingtime?.['@_value']),
+          durationMinutes: minTime ? (minTime === maxTime ? minTime : null) : positive(item.playingtime?.['@_value']),
+          minDurationMinutes: minTime,
+          maxDurationMinutes: maxTime,
           recommendedAge: positive(item.minage?.['@_value'], 100),
         },
         { names: names.slice(0, 40), kind: item['@_type'] === 'boardgameexpansion' ? 'expansion' : 'base', identifiers: { bgg: id }, language: 'unknown', license: 'BGG · API autorizada; fatos com atribuição', needsDetail: input.action !== 'detail' },

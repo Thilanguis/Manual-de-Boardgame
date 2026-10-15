@@ -40,11 +40,11 @@ await env.withSecurityRulesDisabled(async (context) => {
   await setDoc(doc(db, 'settings', 'library'), { publicRead: true, version: 1, updatedAt: stamp, lastEventId: '' });
   await setDoc(doc(db, 'games', gameId), {
     id: gameId,
-    title: 'Manual de teste',
+    title: 'ZMGPSM0101 v1.0.indd',
     description: '',
     minPlayers: null,
     maxPlayers: null,
-    durationMinutes: null,
+    durationMinutes: 45,
     tags: [],
     language: 'pt',
     manual: { path: `games/${gameId}/manual.pdf`, name: 'manual.pdf', type: 'application/pdf', size: 100, pages: 1, sha256: 'a'.repeat(64), storage: 'drive', driveFileId: 'manual123' },
@@ -68,7 +68,7 @@ async function page() {
   await context.route('**/config/app-config.js', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
-      body: `export const APP_CONFIG=${JSON.stringify({ firebase: { apiKey: 'demo-api-key', authDomain: 'demo-acervo.firebaseapp.com', projectId, appId: '1:000:web:test' }, fileStorage: { provider: 'drive', apiBase: 'https://api.example.test' }, emulators: { auth: 'http://127.0.0.1:9099', host: '127.0.0.1', port: 8080 }, enableBgg: false, maxPdfBytes: 52428800 })};`,
+      body: `export const APP_CONFIG=${JSON.stringify({ firebase: { apiKey: 'demo-api-key', authDomain: 'demo-acervo.firebaseapp.com', projectId, appId: '1:000:web:test' }, fileStorage: { provider: 'drive', apiBase: 'https://api.example.test' }, emulators: { auth: 'http://127.0.0.1:9099', host: '127.0.0.1', port: 8080 }, enableBgg: false, enableGoogleLogin: false, maxPdfBytes: 52428800 })};`,
     }),
   );
   await context.route('https://api.example.test/v1/catalog/status', (route) =>
@@ -121,7 +121,7 @@ async function signup(p, name, email) {
   await form.locator('[name=email]').fill(email);
   await form.locator('[name=password]').fill('Fixture-password-123');
   await form.locator('[name=confirmation]').fill('Fixture-password-123');
-  await p.locator('#register-submit').click();
+  await form.locator('[name=confirmation]').press('Enter');
   await p.waitForFunction(() => document.getElementById('notice-text').textContent === 'Conta criada! Aguarde a aprovação de um administrador.');
 }
 try {
@@ -139,9 +139,35 @@ try {
   const owner = await page();
   await owner.locator('#account-button').click();
   await owner.locator('#login-form [name=email]').fill('owner@example.test');
+  await owner.locator('#login-form [name=email]').press('Tab');
+  assert.equal(await owner.evaluate(() => document.activeElement.name), 'password');
   await owner.locator('#login-form [name=password]').fill('Fixture-password-123');
-  await owner.locator('#login-submit').click();
+  await owner.locator('#login-form [name=password]').press('Enter');
   await owner.locator('#manage-button').waitFor({ state: 'visible' });
+  await owner.locator('#account-button').click();
+  assert.equal(await owner.locator('#login-title').textContent(), 'Minha conta');
+  assert.equal(await owner.locator('#session-message').textContent(), 'Proprietário de teste');
+  assert.equal(await owner.locator('#profile-role').textContent(), 'Administrador principal');
+  assert.equal(await owner.locator('#profile-email').textContent(), 'owner@example.test');
+  assert.match(await owner.locator('#profile-providers').textContent(), /E-mail e senha/);
+  assert.equal(await owner.locator('#session-uid').isVisible(), false);
+  for (const [label, width, height] of [
+    ['desktop', 1440, 1000],
+    ['mobile', 390, 844],
+    ['tablet', 768, 1024],
+  ]) {
+    await owner.setViewportSize({ width, height });
+    assert.equal(await owner.evaluate(() => document.getElementById('login-dialog').scrollWidth <= document.getElementById('login-dialog').clientWidth + 1), true);
+    await owner.screenshot({ path: `test-output/profile-${label}.png`, fullPage: false });
+  }
+  await owner.setViewportSize({ width: 1440, height: 1000 });
+  await owner.locator('#profile-technical summary').click();
+  await owner.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value) => (window.copiedUid = value) } }));
+  await owner.locator('#copy-uid').click();
+  assert.equal(await owner.evaluate(() => window.copiedUid), '7TitBObtb8a0W8GisSstSM1RHiX2');
+  await owner.keyboard.press('Escape');
+  await owner.locator('#login-dialog').waitFor({ state: 'hidden' });
+  assert.equal(await owner.evaluate(() => document.activeElement.id), 'account-button');
   await owner.locator('#unavailable-games').waitFor({ state: 'visible' });
   await owner.getByRole('button', { name: 'Gerenciar cadastro' }).click();
   assert.equal(await owner.locator('#read-manual').isDisabled(), true);
@@ -154,19 +180,38 @@ try {
   await guest.locator('#refresh-library').click();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 1);
   assert.equal(await owner.locator('#unavailable-games').isVisible(), false);
+  await owner.waitForFunction(() => document.getElementById('hero-main').textContent.includes('Explorar biblioteca'));
   await owner.locator('.card-main').click();
   await owner.locator('#edit-game').click();
+  assert.equal(await owner.locator('#title-warning').isVisible(), true);
+  assert.equal(await owner.locator('#game-title').inputValue(), 'ZMGPSM0101 v1.0.indd');
+  assert(
+    await owner
+      .locator('#title-suggestions')
+      .textContent()
+      .then((t) => t.includes('Sina da Sociedade')),
+  );
   await owner.locator('#game-title').fill('Manual de teste revisto');
+  await owner.locator('#game-next').click();
+  assert.equal(await owner.locator('[name=minDurationMinutes]').inputValue(), '45');
+  assert.equal(await owner.locator('[name=maxDurationMinutes]').inputValue(), '45');
+  await owner.locator('[name=minDurationMinutes]').fill('60');
+  await owner.locator('[name=maxDurationMinutes]').fill('120');
+  await owner.locator('#game-back').click();
   await owner.locator('[data-research-search]').click();
   await owner.locator('.research-card button').click();
   assert.equal(await owner.locator('[data-research-field=title]').isChecked(), false);
   await owner.locator('[data-research-review] input[type=checkbox]').last().check();
   await owner.locator('[data-research-review] button').click();
+  await owner.locator('[data-step-target="3"]').click();
   await owner.locator('#game-form [name=confirmed]').check();
   await owner.locator('#save-game').click();
   await owner.locator('#upload-dialog').waitFor({ state: 'hidden' });
   const saved = (await getDoc(doc(env.unauthenticatedContext().firestore(), 'games', gameId))).data();
   assert.equal(saved.title, 'Manual de teste revisto');
+  assert.equal(saved.minDurationMinutes, 60);
+  assert.equal(saved.maxDurationMinutes, 120);
+  assert.equal(saved.durationMinutes, null);
   assert.equal(saved.description, 'Descrição sintética revisada.');
   assert.equal(saved.recommendedAge, 10);
   assert.equal(saved.sources.description.license, 'CC0');
@@ -195,14 +240,32 @@ try {
   await owner.locator('#manage-button').click();
   const applicant = await page();
   assert.equal(await applicant.locator('#manage-button').isVisible(), false);
+  await applicant.locator('#account-button').click();
+  for (const [label, width, height] of [
+    ['desktop', 1440, 1000],
+    ['mobile', 390, 844],
+    ['tablet', 768, 1024],
+  ]) {
+    await applicant.setViewportSize({ width, height });
+    for (const view of ['login', 'register', 'recovery']) {
+      if (view !== 'login') await applicant.locator(`[data-auth-view=${view}]`).click();
+      assert.equal(await applicant.evaluate(() => document.getElementById('login-dialog').scrollWidth <= document.getElementById('login-dialog').clientWidth + 1), true);
+      await applicant.screenshot({ path: `test-output/auth-${view}-${label}.png`, fullPage: false });
+      if (view !== 'login') await applicant.locator(`#${view}-form [data-auth-view=login]`).click();
+    }
+    assert.equal(await applicant.locator('#google-login').isVisible(), false);
+    assert((await applicant.locator('[data-auth-view=register]').boundingBox()).height >= 44);
+  }
+  await applicant.setViewportSize({ width: 1440, height: 1000 });
+  await applicant.locator('[data-close=login-dialog]').click();
   await signup(applicant, 'Pessoa teste', 'person@example.test');
   await owner.locator('#pending-users .person-row').filter({ hasText: 'person@example.test' }).waitFor();
   assert.equal(await owner.locator('#pending-count').textContent(), '1');
   assert.ok((await owner.locator('#notice-text').textContent()).includes('solicitação'));
   await applicant.locator('#account-button').click();
-  await applicant.waitForFunction(() => document.getElementById('session-status').textContent.includes('Aguardando aprovação'));
+  await applicant.waitForFunction(() => document.getElementById('profile-status').textContent.includes('Aguardando aprovação'));
   await owner.locator('#pending-users .person-row').filter({ hasText: 'person@example.test' }).getByRole('button', { name: 'Aprovar', exact: true }).click();
-  await applicant.waitForFunction(() => document.getElementById('session-status').textContent.startsWith('Aprovado'));
+  await applicant.waitForFunction(() => document.getElementById('profile-status').textContent.startsWith('Aprovado'));
   assert.equal(await applicant.locator('#manage-button').isVisible(), false);
   await applicant.locator('[data-close=login-dialog]').click();
   await owner.locator('[data-admin-tab=people]').click();
@@ -220,7 +283,7 @@ try {
   await applicant.locator('#manage-button').waitFor({ state: 'hidden' });
   assert.equal(await applicant.locator('#admin-dialog').isVisible(), false);
   await applicant.locator('#account-button').click();
-  await applicant.waitForFunction(() => document.getElementById('session-status').textContent.includes('Conta bloqueada'));
+  await applicant.waitForFunction(() => document.getElementById('profile-status').textContent.includes('Conta bloqueada'));
   await owner.locator('[data-admin-tab=history]').click();
   await owner.locator('#audit-list .person-row').first().waitFor();
   assert.ok((await owner.locator('#audit-list').textContent()).includes('Conta bloqueada'));
@@ -234,8 +297,40 @@ try {
     assert.equal(await owner.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await owner.screenshot({ path: `test-output/admin-${label}.png`, fullPage: false });
   }
+  await applicant.locator('#logout-button').click();
+  await applicant.waitForFunction(() => document.getElementById('account-label').textContent === 'Entrar');
+  await applicant.locator('#account-button').click();
+  await applicant.locator('[data-auth-view=recovery]').click();
+  await applicant.locator('#recovery-form [name=email]').fill('person@example.test');
+  await applicant.locator('#recovery-submit').click();
+  await applicant.waitForFunction(() => document.getElementById('recovery-message').textContent.includes('instruções para recuperar'));
+  const oobResponse = await fetch(`http://127.0.0.1:9099/emulator/v1/projects/${projectId}/oobCodes`);
+  const codes = (await oobResponse.json()).oobCodes;
+  const reset = codes.find((c) => c.email === 'person@example.test' && c.requestType === 'PASSWORD_RESET');
+  assert(reset, 'Firebase Auth emulado gerou uma recuperação real, sem envio de e-mail externo');
+  const changed = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:resetPassword?key=demo-api-key', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ oobCode: reset.oobCode, newPassword: 'Nova-fixture-password-123' }),
+  });
+  assert.equal(changed.status, 200);
+  await applicant.locator('#recovery-form [data-auth-view=login]').click();
+  await applicant.locator('#login-form [name=email]').fill('person@example.test');
+  await applicant.locator('#login-form [name=password]').fill('senha-errada-123');
+  await applicant.locator('#login-submit').click();
+  await applicant.locator('#login-error').waitFor({ state: 'visible' });
+  assert.match(await applicant.locator('#login-error').textContent(), /incorretos/);
+  await applicant.locator('#login-form [name=password]').fill('Nova-fixture-password-123');
+  await applicant.locator('#login-submit').click();
+  await applicant.locator('#login-dialog').waitFor({ state: 'hidden' });
+  await applicant.locator('#account-button').click();
+  await applicant.waitForFunction(() => document.getElementById('profile-status').textContent === 'Conta bloqueada');
+  assert.equal(await applicant.locator('#profile-role').textContent(), 'Subadministrador');
+  assert.equal(await applicant.locator('#profile-status').textContent(), 'Conta bloqueada');
   assert.deepEqual(errors, []);
-  console.log('QA administrativa em emuladores: cadastro pendente, aviso/contador em tempo real, aprovação, promoção, aprovação por subadmin, bloqueio imediato, histórico e responsividade passaram.');
+  console.log(
+    'QA de contas/dados em emuladores: recuperação de senha aplicada e novo login, perfil sem UID em destaque, duração 60–120 salva,  cadastro pendente, aviso/contador em tempo real, aprovação, promoção, aprovação por subadmin, bloqueio imediato, histórico e responsividade passaram.',
+  );
 } finally {
   await browser.close();
   await env.cleanup();

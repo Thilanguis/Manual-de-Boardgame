@@ -16,12 +16,12 @@ export function setupPwa({ onNotice, isBusy = () => false, onInstallReady }) {
     const register = async () => {
       try {
         const registration = await navigator.serviceWorker.register('./service-worker.js', { updateViaCache: 'none' });
-        const offerUpdate = (worker) =>
+        const offerUpdate = (worker, blocked = false) =>
           onNotice(
-            'Uma nova versão do Acervo está pronta.',
+            blocked ? 'Salve ou cancele a edição em andamento antes de atualizar. Seus dados preenchidos foram preservados.' : 'Uma nova versão do Acervo está pronta.',
             async () => {
               if (isBusy()) {
-                onNotice('Conclua a importação antes de atualizar.', null);
+                offerUpdate(worker, true);
                 return;
               }
               requested = true;

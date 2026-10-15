@@ -108,6 +108,7 @@ export function catalogIO(source, { signal, token = '', ttl = 300000, interval =
 export const text = (value, max = 160) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 export const positive = (value, max = 1440) => (Number.isInteger(Number(value)) && Number(value) > 0 && Number(value) <= max ? Number(value) : null);
 export function facts(source, id, url, fields, extra = {}) {
+  if (fields.durationMinutes && fields.minDurationMinutes == null && fields.maxDurationMinutes == null) fields = { ...fields, minDurationMinutes: fields.durationMinutes, maxDurationMinutes: fields.durationMinutes };
   const values = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== null && value !== '' && value !== undefined && (!Array.isArray(value) || value.length)));
   return { source, id: String(id), url, fields: values, names: [], kind: 'unknown', edition: '', conflicts: [], ...extra };
 }

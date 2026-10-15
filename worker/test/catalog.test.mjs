@@ -90,9 +90,12 @@ test('BGG autorizado disponibiliza fatos e aliases; descrição e imagens autora
   const result = await bgg(
     { action: 'detail', id: '13' },
     async () =>
-      '<items><item type="boardgame" id="13"><name type="primary" value="Catan"/><name type="alternate" value="Colonizadores de Catan"/><description>Texto autoral</description><image>https://image.test/catan.jpg</image><minplayers value="3"/><maxplayers value="4"/><minage value="10"/></item></items>',
+      '<items><item type="boardgame" id="13"><name type="primary" value="Catan"/><name type="alternate" value="Colonizadores de Catan"/><description>Texto autoral</description><image>https://image.test/catan.jpg</image><minplayers value="3"/><maxplayers value="4"/><minage value="10"/><minplaytime value="60"/><maxplaytime value="120"/><playingtime value="90"/></item></items>',
   );
   assert.equal(result[0].fields.minPlayers, 3);
+  assert.equal(result[0].fields.minDurationMinutes, 60);
+  assert.equal(result[0].fields.maxDurationMinutes, 120);
+  assert.equal(result[0].fields.durationMinutes, undefined);
   assert.equal(result[0].fields.description, undefined);
   assert.equal(result[0].image, undefined);
   assert.equal(result[0].names.length, 2);

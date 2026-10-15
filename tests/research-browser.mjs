@@ -76,7 +76,7 @@ try {
     };
     const getCurrent = () => {
       const v = Object.fromEntries(new FormData(document.getElementById('game-form')).entries());
-      for (const k of ['minPlayers', 'maxPlayers', 'durationMinutes']) v[k] = v[k] ? Number(v[k]) : null;
+      for (const k of ['minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes']) v[k] = v[k] ? Number(v[k]) : null;
       return v;
     };
     window.testPanel = createResearchPanel({
@@ -100,15 +100,15 @@ try {
   assert.match(await page.locator('[data-research-status]').textContent(), /Ludopedia: consultando/);
   await page.locator('.research-card button').first().click();
   assert.equal(await page.locator('[data-research-field=minPlayers]').isChecked(), false);
-  assert.equal(await page.locator('[data-research-field=durationMinutes]').isChecked(), false);
-  assert.equal(await page.locator('[name=durationMinutes]').inputValue(), '45');
+  assert.equal(await page.locator('[data-research-field=minDurationMinutes]').isChecked(), false);
+  assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '45');
   assert.match(await page.locator('[data-research-review]').textContent(), /edição.*Québec 2024/);
   await page.locator('[data-research-field=description]').check();
   await page.locator('[data-research-review] input[type=checkbox]').last().check();
   await page.locator('[data-research-review] button').click();
   assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'jogo de tabuleiro');
   assert.equal(await page.locator('[name=minPlayers]').inputValue(), '2');
-  assert.equal(await page.locator('[name=durationMinutes]').inputValue(), '45');
+  assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '45');
   await page.waitForFunction(() => document.querySelectorAll('.research-card').length === 2);
   await page.locator('[data-research-kind]').selectOption('base');
   await page.locator('[data-research-search]').click();

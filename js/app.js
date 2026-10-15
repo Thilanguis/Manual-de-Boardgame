@@ -1,17 +1,20 @@
+import { createGameSteps } from './game-steps.js';
+import { titleCandidates } from './recognition.js';
+import { createAccountPanel } from './account-panel.js';
 import { APP_CONFIG } from '../config/app-config.js';
-import { filterGames, playersLabel, validateGame, safeImageUrl } from './model.js';
+import { filterGames, playersLabel, validateGame, safeImageUrl, durationRange, durationLabel, isTechnicalTitle, displayTitle } from './model.js';
 import { inspectPdf, imageToJpeg } from './pdf.js';
 import { createReader } from './reader.js';
 import { setupPwa } from './pwa.js';
 import { createAdminPanel } from './admin-panel.js';
-import { roleLabel, statusLabel } from './permissions.js';
+import { statusLabel } from './permissions.js';
 import { readableGame, unavailableReason } from './catalog-availability.js';
 import { createGuidePanel } from './guide-panel.js';
 import { bggWebsiteSearch } from './bgg-client.js';
 import { createResearchPanel } from './research-panel.js';
 
 const $ = (id) => document.getElementById(id);
-const state = { games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
+const state = { gamesLoading: true, games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
 let repository,
   adminPanel,
   guidePanel,
@@ -24,6 +27,7 @@ let repository,
   importAbort = null,
   importSequence = 0,
   noticeTimer;
+const gameSteps = createGameSteps({ form: $('game-form'), dialog: $('upload-dialog'), getSession: () => state.session, isBusy: () => state.busy || state.importing });
 const localMode = new URLSearchParams(location.search).get('local') === '1' || !APP_CONFIG.firebase;
 function icon(name) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -41,19 +45,23 @@ function node(tag, className, text) {
 }
 function errorMessage(error) {
   const messages = {
+    'auth/user-disabled': 'Esta conta foi desativada. Entre em contato com o administrador.',
+    'auth/user-not-found': 'E-mail ou senha incorretos.',
+    'auth/wrong-password': 'E-mail ou senha incorretos.',
+    'auth/popup-closed-by-user': 'O login com Google foi cancelado. Você pode tentar novamente ou usar e-mail e senha.',
     'auth/invalid-credential': 'E-mail ou senha incorretos.',
     'auth/invalid-email': 'Informe um e-mail válido.',
     'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco e tente novamente.',
     'auth/network-request-failed': 'Não foi possível conectar. Confira sua internet.',
-    'auth/operation-not-allowed': 'Este método de login precisa ser habilitado no Firebase Authentication.',
-    'auth/configuration-not-found': 'Ative o Firebase Authentication no Console do projeto.',
+    'auth/operation-not-allowed': 'Este método de acesso não está disponível. Tente outra opção ou fale com o administrador.',
+    'auth/configuration-not-found': 'O serviço de acesso ainda não está pronto. Avise o administrador.',
     'auth/popup-blocked': 'O navegador bloqueou a janela de login. Permita popups para este site e tente novamente.',
-    'auth/account-exists-with-different-credential': 'Esta conta usa outro método de login. Entre com e-mail e senha e vincule o Google para preservar seu UID.',
+    'auth/account-exists-with-different-credential': 'Esta conta usa outro método de login. Entre com e-mail e senha e vincule o Google em Minha conta para manter seu acesso.',
     'auth/email-already-in-use': 'Já existe uma conta com este e-mail. Entre ou use a recuperação de senha.',
     'auth/weak-password': 'Use uma senha com pelo menos oito caracteres.',
-    'auth/unauthorized-domain': 'Adicione este domínio aos domínios autorizados do Firebase Authentication.',
+    'auth/unauthorized-domain': 'Este endereço não está autorizado para login. Use o endereço oficial do Acervo ou avise o administrador.',
     'resource-exhausted': 'A cota gratuita do Firebase foi atingida. Aguarde a renovação da cota e tente novamente.',
-    'permission-denied': 'Você não tem permissão para esta operação. Sua aprovação e suas permissões são verificadas no Firestore.',
+    'permission-denied': 'Você não tem permissão para esta operação. Confira sua situação em Minha conta ou fale com o administrador.',
   };
   if (error.name === 'PasswordException') return 'Este PDF é protegido por senha. Importe uma cópia sem senha.';
   if (error.name === 'InvalidPDFException') return 'O PDF não pôde ser lido. Verifique se o arquivo está íntegro.';
@@ -173,14 +181,26 @@ function renderGrid() {
   const games = filterGames(available, { ...state, favorites: readPreferences('favorites') });
   $('game-count').textContent = `${available.length} ${available.length === 1 ? 'jogo' : 'jogos'}`;
   $('games-grid').replaceChildren();
-  $('empty-state').hidden = available.length > 0;
-  $('no-results').hidden = !available.length || games.length > 0;
+  $('empty-state').hidden = state.gamesLoading || available.length > 0;
+  $('no-results').hidden = state.gamesLoading || !available.length || games.length > 0;
   renderUnavailable();
+  const repair = state.games.filter((g) => isTechnicalTitle(g.title));
+  $('title-repairs').hidden = !state.session.canEdit || !repair.length;
+  $('title-repairs').replaceChildren();
+  for (const game of state.session.canEdit ? repair : []) {
+    const row = node('div', 'unavailable-row');
+    row.append(node('p', null, 'Um jogo está com título técnico. Confirme o nome para melhorar a biblioteca.'));
+    const fix = node('button', 'button secondary small', 'Revisar título');
+    fix.type = 'button';
+    fix.onclick = () => showGame(game);
+    row.append(fix);
+    $('title-repairs').append(row);
+  }
   for (const game of games) {
     const card = node('article', 'game-card'),
       button = node('button', 'card-main');
     button.type = 'button';
-    button.setAttribute('aria-label', `Ver ${game.title}`);
+    button.setAttribute('aria-label', `Ver ${displayTitle(game)}`);
     const cover = node('div', 'card-cover'),
       image = node('img');
     image.alt = '';
@@ -198,18 +218,18 @@ function renderGrid() {
       players.prepend(icon('users'));
       meta.append(players);
     }
-    if (game.durationMinutes) {
-      const duration = node('span', null, `${game.durationMinutes} min`);
+    if (durationRange(game).minDurationMinutes) {
+      const duration = node('span', null, durationLabel(game));
       duration.prepend(icon('clock'));
       meta.append(duration);
     }
     if (!meta.children.length) meta.append(node('span', null, `${game.manual?.pages || '—'} páginas`));
-    button.append(cover, node('span', 'card-title', game.title), meta);
+    button.append(cover, node('span', 'card-title', displayTitle(game)), meta);
     button.onclick = () => showGame(game);
     const favorite = node('button', `card-favorite ${readPreferences('favorites').includes(game.id) ? 'is-favorite' : ''}`);
     favorite.type = 'button';
     favorite.append(icon('heart'));
-    favorite.setAttribute('aria-label', `Favoritar ${game.title}`);
+    favorite.setAttribute('aria-label', `Favoritar ${displayTitle(game)}`);
     favorite.setAttribute('aria-pressed', String(readPreferences('favorites').includes(game.id)));
     favorite.onclick = () => toggleFavorite(game.id);
     card.append(button, favorite);
@@ -254,7 +274,7 @@ $('refresh-library').onclick = async () => {
 let heroSequence = 0;
 async function renderHero() {
   const token = ++heroSequence;
-  const game = [...state.games].filter(readableGame).sort((a, b) => b.createdAt - a.createdAt)[0];
+  const game = [...state.games].filter((g) => readableGame(g) && !isTechnicalTitle(g.title)).sort((a, b) => b.createdAt - a.createdAt)[0];
   const hero = document.querySelector('.hero');
   hero.classList.toggle('has-game', !!game);
   $('hero-art').hidden = !!game;
@@ -266,6 +286,15 @@ async function renderHero() {
   $('hero-main')
     .querySelector('use')
     .setAttribute('href', `#i-${game ? 'book' : 'plus'}`);
+  if (!game && state.games.some(readableGame)) {
+    $('hero-title').textContent = 'Sua próxima partida está na estante.';
+    $('hero-description').textContent = 'Os manuais estão disponíveis logo abaixo. Escolha um jogo para consultar as regras e preparar a partida.';
+    $('hero-main').querySelector('span').textContent = 'Explorar biblioteca';
+    $('hero-main').querySelector('use').setAttribute('href', '#i-book');
+    $('hero-main').onclick = () => $('biblioteca').scrollIntoView({ behavior: 'smooth' });
+    $('hero-caption').replaceChildren(node('span', 'status-dot'), document.createTextNode('Algumas informações dos jogos estão em revisão.'));
+    return;
+  }
   if (!game) {
     const lineBreak = document.createElement('br'),
       emphasized = node('em', null, 'aqui.');
@@ -276,7 +305,7 @@ async function renderHero() {
     return;
   }
   $('hero-title').textContent = game.title;
-  $('hero-description').textContent = game.description || 'O manual da sua próxima partida está pronto para leitura.';
+  $('hero-description').textContent = game.description || 'Abra o manual para consultar as regras oficiais e preparar sua próxima partida.';
   const wikiDescription = (game.sources?.catalog?.matches || []).find((match) => match.source === 'wikipedia' && match.licenseUrl);
   if (wikiDescription) {
     const source = node('a', null, 'Autores da Wikipédia · trecho editável');
@@ -294,8 +323,8 @@ async function renderHero() {
     span.prepend(icon('users'));
     $('hero-meta').append(span);
   }
-  if (game.durationMinutes) {
-    const span = node('span', null, `${game.durationMinutes} min`);
+  if (durationRange(game).minDurationMinutes) {
+    const span = node('span', null, durationLabel(game));
     span.prepend(icon('clock'));
     $('hero-meta').append(span);
   }
@@ -321,7 +350,7 @@ function renderRecent() {
       image = node('img');
     image.alt = '';
     const info = node('div');
-    info.append(node('strong', null, game.title), node('span', null, `Página ${progress.page} de ${progress.total}`));
+    info.append(node('strong', null, displayTitle(game)), node('span', null, `Página ${progress.page} de ${progress.total}`));
     const bar = node('progress');
     bar.max = progress.total;
     bar.value = progress.page;
@@ -376,16 +405,38 @@ function renderFavorite() {
 }
 function showGame(game) {
   state.selected = game;
-  $('detail-title').textContent = game.title;
-  $('detail-description').textContent = game.description || 'Descrição não informada. Você pode completar as informações na área de administração.';
-  $('detail-cover').alt = `Capa de ${game.title}`;
+  $('detail-title').textContent = displayTitle(game);
+  $('detail-edition').textContent = game.edition ? 'Edição · ' + game.edition : '';
+  $('detail-edition').hidden = !game.edition;
+  $('detail-title-warning').hidden = !isTechnicalTitle(game.title);
+  $('detail-title-warning').textContent = state.session.canEdit
+    ? 'O título original deste cadastro é técnico e precisa de revisão. Use Editar informações para confirmar o nome real.'
+    : 'O nome deste jogo está em revisão. O manual continua disponível.';
+  const selectedId = game.id;
+  $('detail-guide-status').textContent = 'Verificando o guia interativo…';
+  repository
+    .getGuide(game)
+    .then((guide) => {
+      if (state.selected?.id === selectedId)
+        $('detail-guide-status').textContent = guide?.sections?.length
+          ? guide.sourceHash === game.manual.sha256
+            ? 'Guia interativo disponível. O PDF oficial continua acessível.'
+            : 'O guia foi criado para outro PDF e precisa de revisão; consulte o manual completo.'
+          : 'O guia interativo ainda não foi publicado. Você pode abrir o manual completo ou pesquisar o PDF em Consulta rápida.';
+    })
+    .catch(() => {
+      if (state.selected?.id === selectedId) $('detail-guide-status').textContent = 'Não foi possível conferir o guia agora. O manual completo continua disponível.';
+    });
+  $('detail-description').textContent = game.description || 'O resumo deste jogo ainda está em revisão. Consulte o manual oficial para conhecer as regras.';
+  $('detail-cover').alt = `Capa de ${displayTitle(game)}`;
   populateImage($('detail-cover'), game);
-  $('detail-tags').replaceChildren(...[...(game.tags || []), ...(game.mechanics || []), game.gameType, game.edition ? `Edição · ${game.edition}` : ''].filter(Boolean).map((tag) => node('span', null, tag)));
+  $('detail-tags').replaceChildren(...[...(game.tags || []), ...(game.mechanics || []), game.gameType].filter(Boolean).map((tag) => node('span', null, tag)));
   $('detail-stats').replaceChildren();
   for (const [symbol, label, value] of [
     ['users', 'JOGADORES', playersLabel(game)],
-    ['clock', 'DURAÇÃO', game.durationMinutes ? `${game.durationMinutes} minutos` : 'Não informada'],
+    ['clock', 'DURAÇÃO', durationLabel(game)],
     ['users', 'IDADE', game.recommendedAge ? `${game.recommendedAge}+ anos` : 'Não informada'],
+    ['book', 'IDIOMA', { 'pt-BR': 'Português', pt: 'Português', en: 'Inglês', fr: 'Francês', es: 'Espanhol' }[game.language] || 'Não informado'],
   ]) {
     const stat = node('div'),
       content = node('div');
@@ -450,6 +501,7 @@ function formatBytes(size = 0) {
 }
 function resetDraft() {
   researchPanel.reset();
+  gameSteps.reset();
   $('bgg-search').removeAttribute('aria-busy');
   importAbort?.abort();
   ++importSequence;
@@ -494,7 +546,9 @@ function previewCover() {
 }
 function fillForm() {
   const form = $('game-form');
-  for (const field of ['title', 'description', 'minPlayers', 'maxPlayers', 'durationMinutes', 'language', 'recommendedAge', 'gameType', 'edition']) form.elements.namedItem(field).value = draft[field] ?? (field === 'language' ? 'other' : '');
+  const data = { ...draft, ...durationRange(draft) };
+  for (const field of ['title', 'description', 'minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'language', 'recommendedAge', 'gameType', 'edition'])
+    form.elements.namedItem(field).value = data[field] ?? (field === 'language' ? 'other' : '');
   form.elements.namedItem('mechanics').value = (draft.mechanics || []).join(', ');
   form.elements.namedItem('tags').value = (draft.tags || []).join(', ');
   form.elements.namedItem('isPublic').checked = draft.isPublic === true;
@@ -502,6 +556,9 @@ function fillForm() {
   $('file-info').textContent = `${draft.manual.name} · ${formatBytes(draft.manual.size)} · ${draft.manual.pages} páginas`;
   $('upload-picker').hidden = true;
   form.hidden = false;
+  gameSteps.show();
+  $('title-warning').hidden = !isTechnicalTitle(draft.title);
+  $('title-warning').textContent = 'Este cadastro usa um nome técnico. Escolha uma alternativa ou digite o título real; o original só muda ao salvar.';
   previewCover();
   renderEvidence();
   $('use-pdf-cover').hidden = !originalPdfCover;
@@ -518,7 +575,7 @@ function renderEvidence() {
   const labels = { title: 'Nome', players: 'Jogadores', duration: 'Duração', description: 'Descrição', cover: 'Capa', recommendedAge: 'Idade', gameType: 'Tipo', edition: 'Edição', mechanics: 'Mecânicas', tags: 'Categorias', language: 'Idioma' };
   for (const [key, value] of Object.entries(draft.sources || {})) {
     const paragraph = node('p');
-    paragraph.append(node('strong', null, `${labels[key] || key}: ${value.source}`), document.createElement('br'), document.createTextNode(value.excerpt || 'Sem trecho disponível.'));
+    paragraph.append(node('strong', null, `${labels[key] || key}: ${value.source}${value.page ? ' · p. ' + value.page : ''}`), document.createElement('br'), document.createTextNode(value.excerpt || 'Sem trecho disponível.'));
     if (value.url && /^https:\/\//.test(value.url)) {
       const a = node('a', null, 'Consultar a origem ↗');
       a.href = value.url;
@@ -573,6 +630,7 @@ async function importFile(file) {
         $('game-title').value = candidate.text;
         draft.sources.title = { source: candidate.source, excerpt: candidate.text };
         draft.title = candidate.text;
+        $('title-warning').hidden = true;
         renderEvidence();
         researchPanel.invalidate();
         void researchPanel.run();
@@ -680,7 +738,7 @@ const researchPanel = createResearchPanel({
   getCurrent() {
     if (!draft) return null;
     const values = Object.fromEntries(new FormData($('game-form')).entries());
-    for (const key of ['minPlayers', 'maxPlayers', 'durationMinutes', 'recommendedAge']) values[key] = values[key] ? Number(values[key]) : null;
+    for (const key of ['minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'recommendedAge']) values[key] = values[key] ? Number(values[key]) : null;
     for (const key of ['tags', 'mechanics'])
       values[key] = String(values[key] || '')
         .split(',')
@@ -692,17 +750,21 @@ const researchPanel = createResearchPanel({
   writePreference: (language) => writePreferences('recognition', { language }),
   apply(values, candidate) {
     const current = Object.fromEntries(new FormData($('game-form')).entries());
-    const normalized = validateGame(current),
+    const normalized = validateGame({ ...current, ...values }),
       sources = { ...draft.sources };
-    for (const field of ['title', 'description', 'minPlayers', 'maxPlayers', 'durationMinutes', 'recommendedAge', 'gameType', 'edition', 'language', 'tags', 'mechanics']) {
-      if (JSON.stringify(draft[field] ?? '') !== JSON.stringify(normalized[field] ?? '')) {
-        const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : field === 'durationMinutes' ? 'duration' : field;
-        sources[key] = { source: 'Conferido e ajustado por você', excerpt: key === 'players' ? playersLabel(normalized) : Array.isArray(normalized[field]) ? normalized[field].join(', ') : String(normalized[field] ?? '') };
+    const before = { ...draft, ...durationRange(draft) };
+    for (const field of ['title', 'description', 'minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'recommendedAge', 'gameType', 'edition', 'language', 'tags', 'mechanics']) {
+      if (JSON.stringify(before[field] ?? '') !== JSON.stringify(normalized[field] ?? '')) {
+        const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(field) ? 'duration' : field;
+        sources[key] = {
+          source: 'Conferido e ajustado por você',
+          excerpt: key === 'players' ? playersLabel(normalized) : key === 'duration' ? durationLabel(normalized) : Array.isArray(normalized[field]) ? normalized[field].join(', ') : String(normalized[field] ?? ''),
+        };
       }
     }
     draft = { ...draft, ...normalized, ...values, sources };
     for (const [field, value] of Object.entries(values)) {
-      const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : field === 'durationMinutes' ? 'duration' : field;
+      const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(field) ? 'duration' : field;
       draft.sources[key] = {
         ...(candidate.evidence?.[key] || {}),
         source:
@@ -715,7 +777,7 @@ const researchPanel = createResearchPanel({
                 : candidate.source === 'bgg'
                   ? 'BoardGameGeek · API · confirmado'
                   : 'Wikidata · confirmado',
-        excerpt: key === 'players' ? playersLabel(draft) : Array.isArray(value) ? value.join(', ') : String(value),
+        excerpt: key === 'players' ? playersLabel(draft) : key === 'duration' ? durationLabel(draft) : Array.isArray(value) ? value.join(', ') : String(value),
         url: candidate.url,
         license: candidate.license,
         ...(candidate.licenseUrl ? { licenseUrl: candidate.licenseUrl, authorsUrl: candidate.authorsUrl, modified: true } : {}),
@@ -748,6 +810,7 @@ const researchPanel = createResearchPanel({
 });
 $('game-title').addEventListener('input', () => {
   $('bgg-web-search').href = bggWebsiteSearch($('game-title').value);
+  $('title-warning').hidden = !isTechnicalTitle($('game-title').value);
   researchPanel.invalidate();
 });
 $('bgg-web-search').addEventListener('click', () => {
@@ -762,24 +825,31 @@ $('game-form')
 $('game-form').onsubmit = async (event) => {
   event.preventDefault();
   if (!draft || state.busy || state.importing) return;
+  if (gameSteps.current < 3) {
+    gameSteps.next();
+    return;
+  }
   $('save-error').hidden = true;
   try {
     if (!$('game-form').elements.namedItem('confirmed').checked) throw new Error('Confira os dados e marque a confirmação antes de salvar.');
     const values = Object.fromEntries(new FormData($('game-form')).entries());
     const normalized = validateGame(values);
     const sources = { ...draft.sources };
+    const before = { ...draft, ...durationRange(draft) };
     for (const [field, sourceField] of [
       ['title', 'title'],
       ['description', 'description'],
       ['minPlayers', 'players'],
       ['maxPlayers', 'players'],
-      ['durationMinutes', 'duration'],
+      ['minDurationMinutes', 'duration'],
+      ['maxDurationMinutes', 'duration'],
       ['recommendedAge', 'recommendedAge'],
       ['gameType', 'gameType'],
       ['edition', 'edition'],
       ['language', 'language'],
     ])
-      if ((draft[field] ?? '') !== (normalized[field] ?? '')) sources[sourceField] = { source: 'Conferido e ajustado por você', excerpt: sourceField === 'players' ? playersLabel(normalized) : String(normalized[field] ?? '') };
+      if ((before[field] ?? '') !== (normalized[field] ?? ''))
+        sources[sourceField] = { source: 'Conferido e ajustado por você', excerpt: sourceField === 'players' ? playersLabel(normalized) : sourceField === 'duration' ? durationLabel(normalized) : String(normalized[field] ?? '') };
     for (const field of ['tags', 'mechanics']) if (JSON.stringify(draft[field] || []) !== JSON.stringify(normalized[field])) sources[field] = { source: 'Conferido e ajustado por você', excerpt: normalized[field].join(', ') };
     researchPanel.cancel();
     state.busy = true;
@@ -826,6 +896,18 @@ $('edit-game').onclick = () => {
   $('save-game').querySelector('span').textContent = 'Salvar alterações';
   $('review-notice-text').textContent = 'Edite as informações ou substitua o PDF. Uma substituição só é publicada depois de você confirmar e salvar.';
   fillForm();
+  if (isTechnicalTitle(game.title))
+    for (const candidate of titleCandidates({ metadataTitle: game.title, filename: game.manual.name })) {
+      const button = node('button', null, candidate.text);
+      button.type = 'button';
+      button.title = candidate.source;
+      button.onclick = () => {
+        $('game-title').value = candidate.text;
+        $('title-warning').hidden = true;
+        researchPanel.invalidate();
+      };
+      $('title-suggestions').append(button);
+    }
   repository
     .getCoverURL(game)
     .then((url) => {
@@ -859,137 +941,24 @@ $('confirm-delete').onclick = async () => {
     $('confirm-delete').disabled = false;
   }
 };
-function authView(view = 'login') {
-  const signedIn = !!state.session.user;
-  for (const name of ['login', 'register', 'recovery']) $(`${name}-form`).hidden = signedIn || name !== view;
-  $('google-login').hidden = signedIn || view === 'recovery';
-  $('pages-login-note').hidden = true;
-  $('session-info').hidden = !signedIn;
-}
-function renderAccount() {
-  const { user, profile } = state.session;
-  if (!user) return;
-  $('session-message').textContent = `${profile?.name || user.displayName || user.email} · ${roleLabel(profile?.role)}`;
-  $('session-uid').value = user.uid;
-  $('session-status').textContent =
-    statusLabel(profile?.status) +
-    '. ' +
-    ({
-      pending: 'Sua solicitação será analisada. Você já pode ler os manuais públicos.',
-      approved: 'Seu acesso está atualizado.',
-      rejected: 'Sua solicitação foi recusada. A leitura pública continua disponível.',
-      blocked: 'Seu acesso administrativo foi revogado. A leitura pública continua disponível.',
-    }[profile?.status] || 'Sua solicitação ainda precisa ser registrada.');
-  $('retry-profile-button').hidden = !!profile || user.uid === '7TitBObtb8a0W8GisSstSM1RHiX2';
-  $('link-google-button').hidden = user.providerData?.some((provider) => provider.providerId === 'google.com');
-}
+const accountPanel = createAccountPanel({
+  root: $('login-dialog'),
+  getRepository: () => repository,
+  getSession: () => state.session,
+  openDialog: showDialog,
+  closeDialog,
+  onNotice: showNotice,
+  onError: errorMessage,
+  googleEnabled: APP_CONFIG.enableGoogleLogin !== false,
+});
 function showLogin() {
   if (localMode || !repository) {
     showDialog('setup-dialog');
     return;
   }
-  authView();
-  renderAccount();
-  $('google-login-error').hidden = true;
-  $('login-error').hidden = true;
-  showDialog('login-dialog');
+  accountPanel.open();
 }
-document.querySelectorAll('[data-auth-view]').forEach((button) => (button.onclick = () => authView(button.dataset.authView)));
-$('register-form').onsubmit = async (event) => {
-  event.preventDefault();
-  $('register-submit').disabled = true;
-  $('register-error').hidden = true;
-  try {
-    const fields = new FormData(event.target);
-    if (fields.get('password') !== fields.get('confirmation')) throw new Error('As senhas não coincidem.');
-    await repository.register(fields.get('name'), fields.get('email'), fields.get('password'));
-    event.target.reset();
-    closeDialog('login-dialog');
-    showNotice('Conta criada! Aguarde a aprovação de um administrador.');
-  } catch (error) {
-    $('register-error').textContent = errorMessage(error);
-    $('register-error').hidden = false;
-  } finally {
-    $('register-submit').disabled = false;
-  }
-};
-$('recovery-form').onsubmit = async (event) => {
-  event.preventDefault();
-  $('recovery-submit').disabled = true;
-  $('recovery-message').hidden = true;
-  try {
-    await repository.resetPassword(new FormData(event.target).get('email'));
-    $('recovery-message').textContent = 'Se houver uma conta com este e-mail, você receberá as instruções para recuperar a senha.';
-  } catch (error) {
-    $('recovery-message').textContent = errorMessage(error);
-  } finally {
-    $('recovery-message').hidden = false;
-    $('recovery-submit').disabled = false;
-  }
-};
-$('retry-profile-button').onclick = async () => {
-  $('retry-profile-button').disabled = true;
-  try {
-    await repository.retryProfile();
-    showNotice('Solicitação registrada. Aguarde a aprovação de um administrador.');
-  } catch (error) {
-    showNotice(errorMessage(error));
-  } finally {
-    $('retry-profile-button').disabled = false;
-  }
-};
 $('account-button').onclick = showLogin;
-$('google-login-button').onclick = async () => {
-  $('google-login-button').disabled = true;
-  $('google-login-error').hidden = true;
-  try {
-    await repository.loginGoogle();
-    closeDialog('login-dialog');
-    showNotice('Conta conectada. Verificando as permissões…');
-  } catch (error) {
-    $('google-login-error').textContent = errorMessage(error);
-    $('google-login-error').hidden = false;
-  } finally {
-    $('google-login-button').disabled = false;
-  }
-};
-$('link-google-button').onclick = async () => {
-  $('link-google-button').disabled = true;
-  try {
-    await repository.linkGoogle();
-    showNotice('Conta Google vinculada. Seu UID e suas permissões foram preservados.');
-  } catch (error) {
-    showNotice(errorMessage(error));
-  } finally {
-    $('link-google-button').disabled = false;
-  }
-};
-$('login-form').onsubmit = async (event) => {
-  event.preventDefault();
-  $('login-submit').disabled = true;
-  $('login-error').hidden = true;
-  try {
-    const values = new FormData(event.target);
-    await repository.login(values.get('email'), values.get('password'));
-    event.target.reset();
-    closeDialog('login-dialog');
-    showNotice('Conta conectada. Verificando a autorização…');
-  } catch (error) {
-    $('login-error').textContent = errorMessage(error);
-    $('login-error').hidden = false;
-  } finally {
-    $('login-submit').disabled = false;
-  }
-};
-$('logout-button').onclick = async () => {
-  try {
-    await repository.logout();
-    closeDialog('login-dialog');
-    showNotice('Você saiu da conta.');
-  } catch (error) {
-    showNotice(errorMessage(error));
-  }
-};
 function setupContent() {
   $('setup-mode').textContent = localMode
     ? 'Você está usando a biblioteca deste dispositivo. PDFs e dados ficam neste navegador, sem sincronização. Apagar os dados do site remove essa biblioteca.'
@@ -1006,7 +975,11 @@ $('switch-mode').onclick = () => {
   else url.searchParams.set('local', '1');
   location.href = url.href;
 };
-const install = setupPwa({ onNotice: showNotice, isBusy: () => state.busy || state.importing || !!draft || adminPanel?.isBusy() || guidePanel?.isBusy(), onInstallReady: (ready) => $('install-button').classList.toggle('ready', ready) });
+const install = setupPwa({
+  onNotice: showNotice,
+  isBusy: () => state.busy || state.importing || !!draft || accountPanel.isBusy() || adminPanel?.isBusy() || guidePanel?.isBusy(),
+  onInstallReady: (ready) => $('install-button').classList.toggle('ready', ready),
+});
 async function installApp() {
   if (!(await install())) {
     setupContent();
@@ -1029,11 +1002,10 @@ function updateSession(session) {
   if (previous.user?.uid === session.user?.uid && previous.profile && session.profile && previous.profile.status !== session.profile.status) showNotice(`${statusLabel(session.profile.status)}. Abra Minha conta para ver seu acesso atualizado.`);
   adminPanel?.updateSession(session);
   if ($('login-dialog').open) {
-    authView();
-    renderAccount();
+    accountPanel.render();
   }
   if (!session.canWrite && $('upload-dialog').open) closeDialog('upload-dialog');
-  $('account-label').textContent = session.mode === 'local' ? 'Local' : session.user ? (session.canWrite ? 'Administrador' : 'Minha conta') : 'Entrar';
+  $('account-label').textContent = session.mode === 'local' ? 'Local' : session.user ? 'Minha conta' : 'Entrar';
   $('refresh-library').hidden = session.mode !== 'firebase';
   $('account-button').querySelector('.avatar').textContent = session.mode === 'local' ? 'L' : (session.user?.email?.[0] || 'A').toUpperCase();
   $('connection-status').replaceChildren(
@@ -1057,7 +1029,7 @@ function updateSession(session) {
     : session.canRead
       ? 'Ainda não há manuais publicados nesta biblioteca. Os jogos aparecerão aqui quando o administrador liberar a leitura.'
       : session.user
-        ? 'Esta conta ainda precisa ser autorizada. Abra “Minha conta” para consultar o UID e siga o guia do Firebase.'
+        ? 'Sua conta aguarda aprovação. Você pode acompanhar a situação em Minha conta.'
         : 'Sua coleção fica protegida no Firebase. Entre com a conta autorizada para acessar seus jogos e manuais.';
   $('empty-action').querySelector('span').textContent = session.canAdd ? 'Escolher um manual' : session.user ? 'Ver autorização da conta' : 'Entrar na biblioteca';
   $('empty-note').textContent = session.mode === 'local' ? 'PDF de até 50 MB · Armazenado somente neste navegador' : 'Firebase · Acesso controlado pelo administrador';
@@ -1086,8 +1058,10 @@ async function start() {
     repository.subscribeSession(updateSession);
     guidePanel = createGuidePanel({ repository, openManual: (game, options) => reader.open(game, options), onNotice: showNotice, scope: APP_CONFIG.firebase?.projectId || 'local' });
     repository.subscribeGames(
-      (games) => {
+      (games, metadata = {}) => {
         state.games = games;
+        state.gamesLoading = metadata.loading === true;
+        $('library-loading').hidden = !state.gamesLoading;
         $('library-error').hidden = true;
         renderGrid();
         renderHero();
@@ -1108,11 +1082,14 @@ async function start() {
         }
       },
       (error) => {
+        state.gamesLoading = false;
+        $('library-loading').hidden = true;
         $('library-error').textContent = errorMessage(error);
         $('library-error').hidden = false;
       },
     );
   } catch (error) {
+    $('library-loading').hidden = true;
     $('connection-status').textContent = 'A conexão não ficou pronta';
     $('library-error').textContent = `${errorMessage(error)} Você pode abrir “Sobre o acervo” e escolher a biblioteca deste dispositivo.`;
     $('library-error').hidden = false;

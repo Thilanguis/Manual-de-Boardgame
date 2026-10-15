@@ -12,6 +12,7 @@
     <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
     <link rel="stylesheet" href="styles/app.css" />
+    <link rel="stylesheet" href="styles/interface.css" />
     <script type="module" src="js/app.js"></script>
   </head>
   <body>
@@ -224,11 +225,13 @@
           </button>
           <button class="chip" data-filter="two" aria-pressed="false">Para dois</button>
           <button class="chip" data-filter="solo" aria-pressed="false">Jogo solo</button>
-          <button class="chip" data-filter="quick" aria-pressed="false">
+          <button class="chip" data-filter="quick" aria-pressed="false" title="Mostra jogos cuja duração máxima confirmada é de até 30 minutos">
             <svg><use href="#i-clock" /></svg>
             Até 30 min
           </button>
         </div>
+        <p id="library-loading" class="library-loading" role="status">Carregando sua biblioteca…</p>
+        <div id="title-repairs" class="library-maintenance" hidden></div>
         <div class="games-grid" id="games-grid" aria-live="polite"></div>
         <section id="unavailable-games" class="library-maintenance" aria-labelledby="unavailable-title" hidden>
           <h3 id="unavailable-title">Cadastros que precisam de atenção</h3>
@@ -284,7 +287,7 @@
         <span class="brand-dot">.</span>
       </a>
       <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
-      <span>v1.5.0</span>
+      <span>v1.6.0</span>
       <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
       <a id="ludopedia-attribution" href="https://ludopedia.com.br" target="_blank" rel="noopener noreferrer" hidden>Dados: Ludopedia</a>
     </footer>
@@ -301,7 +304,29 @@
           <svg><use href="#i-close" /></svg>
         </button>
       </div>
-      <div class="dialog-body">
+      <nav id="game-step-nav" class="step-nav" aria-label="Etapas do cadastro" hidden>
+        <ol>
+          <li>
+            <button type="button" data-step-target="1" aria-current="step">
+              <span>1</span>
+              Identificar jogo
+            </button>
+          </li>
+          <li>
+            <button type="button" data-step-target="2">
+              <span>2</span>
+              Conferir dados
+            </button>
+          </li>
+          <li>
+            <button type="button" data-step-target="3">
+              <span>3</span>
+              Publicar
+            </button>
+          </li>
+        </ol>
+      </nav>
+      <div class="dialog-body upload-body">
         <div id="upload-picker">
           <label class="dropzone" id="dropzone">
             <input id="pdf-file" type="file" accept="application/pdf,.pdf" />
@@ -316,7 +341,7 @@
         </div>
         <p id="upload-status" class="status-message" role="status" aria-live="polite"></p>
         <progress id="upload-progress" max="100" hidden></progress>
-        <form id="game-form" hidden>
+        <form id="game-form" novalidate hidden>
           <div class="review-grid">
             <aside class="review-aside">
               <div class="review-cover"><img id="draft-cover" alt="Prévia da capa" /></div>
@@ -325,7 +350,7 @@
                 Trocar capa
                 <input id="cover-file" type="file" accept="image/jpeg,image/png,image/webp" />
               </label>
-              <button class="text-button" id="use-pdf-cover" type="button">Usar a primeira página do PDF</button>
+              <button class="text-button" id="use-pdf-cover" type="button">Usar capa do PDF</button>
               <span id="file-info" class="file-info"></span>
               <label id="replace-pdf-label" class="button secondary cover-upload" hidden>
                 <svg><use href="#i-upload" /></svg>
@@ -334,133 +359,174 @@
               </label>
             </aside>
             <div class="review-fields">
-              <div class="review-notice">
-                <svg><use href="#i-info" /></svg>
-                <p id="review-notice-text">Encontramos algumas informações. Confira antes de adicionar.</p>
-              </div>
-              <label>
-                Nome do jogo
-                <input name="title" id="game-title" required maxlength="160" placeholder="Nome do jogo" />
-              </label>
-              <div id="title-suggestions" class="title-suggestions"></div>
-              <section id="research-panel" class="research-panel" aria-label="Pesquisa de jogos em múltiplas fontes">
-                <h3>Completar com fontes confiáveis</h3>
-                <p data-research-version></p>
-                <div data-research-availability class="research-availability"></div>
-                <div class="form-row">
-                  <label>
-                    Idioma preferido das informações
-                    <select data-research-language>
-                      <option value="pt-BR">Português brasileiro</option>
-                      <option value="fr">Francês</option>
-                      <option value="en">Inglês</option>
-                    </select>
-                  </label>
-                  <label>
-                    Tipo do manual
-                    <select data-research-kind>
-                      <option value="unknown">Ainda não confirmado</option>
-                      <option value="base">Jogo base</option>
-                      <option value="expansion">Expansão</option>
-                    </select>
-                  </label>
+              <section class="game-step" data-game-step="1" aria-labelledby="identify-heading">
+                <h3 id="identify-heading" tabindex="-1">Qual jogo vai para a estante?</h3>
+                <div class="review-notice">
+                  <svg><use href="#i-info" /></svg>
+                  <p id="review-notice-text">Confira o título e a capa. Sugestões só serão aplicadas com sua confirmação.</p>
                 </div>
-                <div class="research-actions">
-                  <button type="button" class="button secondary small" data-research-search>Pesquisar fontes</button>
-                  <button type="button" class="text-button" data-research-expand>Ampliar pesquisa</button>
-                  <button type="button" class="text-button" data-research-cancel hidden>Cancelar pesquisa</button>
-                </div>
-                <p data-research-status role="status" aria-live="polite"></p>
-                <button type="button" class="button secondary small" data-research-ocr>Ler primeiras páginas por OCR local</button>
-                <p data-research-ocr-status role="status" aria-live="polite"></p>
-                <div data-research-results class="research-results"></div>
-                <div data-research-review class="research-review" hidden></div>
-                <details>
-                  <summary>Disponibilidade e referências manuais</summary>
-                  <div data-research-sources></div>
+                <label>
+                  Nome do jogo
+                  <input name="title" id="game-title" required maxlength="160" placeholder="Nome que aparece na caixa ou no manual" />
+                </label>
+                <p id="title-warning" class="inline-error" role="alert" hidden></p>
+                <div id="title-suggestions" class="title-suggestions" aria-label="Alternativas de título"></div>
+                <section id="research-panel" class="research-panel" aria-label="Pesquisa de jogos em múltiplas fontes">
+                  <h3>Completar com fontes confiáveis</h3>
+
+                  <div data-research-availability class="research-availability"></div>
+                  <div class="form-row">
+                    <label>
+                      Idioma preferido das informações
+                      <select data-research-language>
+                        <option value="pt-BR">Português brasileiro</option>
+                        <option value="fr">Francês</option>
+                        <option value="en">Inglês</option>
+                      </select>
+                    </label>
+                    <label>
+                      Tipo do manual
+                      <select data-research-kind>
+                        <option value="unknown">Ainda não confirmado</option>
+                        <option value="base">Jogo base</option>
+                        <option value="expansion">Expansão</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="research-actions">
+                    <button type="button" class="button secondary small" data-research-search>Pesquisar fontes</button>
+                    <button type="button" class="text-button" data-research-expand>Ampliar pesquisa</button>
+                    <button type="button" class="text-button" data-research-cancel hidden>Cancelar pesquisa</button>
+                  </div>
+                  <p data-research-status role="status" aria-live="polite"></p>
+                  <button type="button" class="button secondary small" data-research-ocr>Reconhecer texto das primeiras páginas</button>
+                  <p data-research-ocr-status role="status" aria-live="polite"></p>
+                  <div data-research-results class="research-results"></div>
+                  <div data-research-review class="research-review" hidden></div>
+                  <details>
+                    <summary>Disponibilidade e referências manuais</summary>
+                    <p data-research-version></p>
+                    <div data-research-sources></div>
+                  </details>
+                </section>
+                <details class="manual-reference">
+                  <summary>Consultar BoardGameGeek manualmente</summary>
+                  <div class="bgg-search">
+                    <button class="button secondary small" type="button" id="bgg-search" aria-describedby="bgg-status">
+                      <svg><use href="#i-search" /></svg>
+                      Identificar no BoardGameGeek
+                    </button>
+                    <a class="button secondary small" id="bgg-web-search" target="_blank" rel="noopener noreferrer" href="https://boardgamegeek.com/geeksearch.php?action=search&amp;objecttype=boardgame" hidden>Pesquisar no site do BGG ↗</a>
+                    <span id="bgg-status" role="status"></span>
+                  </div>
+                  <div id="bgg-results" class="bgg-results"></div>
                 </details>
               </section>
-              <div class="bgg-search">
-                <button class="button secondary small" type="button" id="bgg-search" aria-describedby="bgg-status">
-                  <svg><use href="#i-search" /></svg>
-                  Identificar no BoardGameGeek
-                </button>
-                <a class="button secondary small" id="bgg-web-search" target="_blank" rel="noopener noreferrer" href="https://boardgamegeek.com/geeksearch.php?action=search&amp;objecttype=boardgame" hidden>Pesquisar no site do BGG ↗</a>
-                <span id="bgg-status" role="status"></span>
-              </div>
-              <div id="bgg-results" class="bgg-results"></div>
-              <label>
-                Sobre o jogo
-                <textarea name="description" rows="4" maxlength="2000" placeholder="Uma descrição curta, com fonte identificada e conteúdo revisado."></textarea>
-              </label>
-              <div class="fields-row">
+              <section class="game-step" data-game-step="2" aria-labelledby="information-heading" hidden>
+                <h3 id="information-heading" tabindex="-1">Confira as informações</h3>
+                <p class="step-intro">Preencha somente o que você puder confirmar. Campos desconhecidos podem ficar em branco.</p>
                 <label>
-                  Mín. jogadores
-                  <input name="minPlayers" type="number" min="1" max="100" placeholder="—" />
+                  Resumo do jogo
+                  <textarea name="description" rows="4" maxlength="2000" placeholder="Objetivo, contexto e o que os jogadores fazem, com origem identificada."></textarea>
+                </label>
+                <fieldset class="field-group">
+                  <legend>Participantes</legend>
+                  <div class="fields-row">
+                    <label>
+                      Mínimo de jogadores
+                      <input name="minPlayers" type="number" min="1" max="100" placeholder="Não informado" />
+                    </label>
+                    <label>
+                      Máximo de jogadores
+                      <input name="maxPlayers" type="number" min="1" max="100" placeholder="Não informado" />
+                    </label>
+                  </div>
+                </fieldset>
+                <fieldset class="field-group">
+                  <legend>Duração da partida</legend>
+                  <div class="fields-row">
+                    <label>
+                      Mínima em minutos
+                      <input name="minDurationMinutes" type="number" min="1" max="1440" placeholder="Ex.: 60" />
+                    </label>
+                    <label>
+                      Máxima em minutos
+                      <input name="maxDurationMinutes" type="number" min="1" max="1440" placeholder="Ex.: 120" />
+                    </label>
+                  </div>
+                  <p class="label-hint">Para uma duração fixa, repita o valor. Sem informação confirmada, deixe os dois campos vazios.</p>
+                </fieldset>
+                <div class="form-row">
+                  <label>
+                    Idade recomendada
+                    <input name="recommendedAge" type="number" min="1" max="100" placeholder="Não informada" />
+                  </label>
+                  <label>
+                    Tipo de jogo
+                    <input name="gameType" maxlength="80" placeholder="Cooperativo, competitivo…" />
+                  </label>
+                </div>
+                <label>
+                  Categorias
+                  <input name="tags" maxlength="320" placeholder="Ex.: estratégia, cooperativo, família" />
+                  <small class="label-hint">Separe por vírgulas.</small>
                 </label>
                 <label>
-                  Máx. jogadores
-                  <input name="maxPlayers" type="number" min="1" max="100" placeholder="—" />
+                  Mecânicas
+                  <input name="mechanics" maxlength="320" placeholder="Somente mecânicas identificadas" />
+                  <small class="label-hint">Separe por vírgulas.</small>
                 </label>
-                <label>
-                  Duração (min)
-                  <input name="durationMinutes" type="number" min="1" max="1440" placeholder="—" />
+                <div class="form-row">
+                  <label>
+                    Idioma do manual
+                    <select name="language">
+                      <option value="pt-BR">Português</option>
+                      <option value="en">Inglês</option>
+                      <option value="fr">Francês</option>
+                      <option value="es">Espanhol</option>
+                      <option value="other">Outro / não identificado</option>
+                    </select>
+                  </label>
+                  <label>
+                    Edição / versão
+                    <input name="edition" maxlength="100" placeholder="Não identificada" />
+                  </label>
+                </div>
+              </section>
+              <section class="game-step" data-game-step="3" aria-labelledby="publish-heading" hidden>
+                <h3 id="publish-heading" tabindex="-1">Tudo pronto para publicar?</h3>
+                <p class="step-intro">Confira o resumo. Você pode voltar para corrigir qualquer informação.</p>
+                <dl id="game-summary" class="game-summary"></dl>
+                <fieldset class="field-group">
+                  <legend>Quem pode ler este manual?</legend>
+                  <label class="confirm-check">
+                    <input name="isPublic" type="checkbox" />
+                    <span>Publicar para visitantes, mesmo sem conta.</span>
+                  </label>
+                  <p class="label-hint" id="visibility-help"></p>
+                </fieldset>
+                <details class="evidence">
+                  <summary>Ver a origem das informações</summary>
+                  <div id="source-evidence"></div>
+                </details>
+                <label class="confirm-check">
+                  <input name="confirmed" type="checkbox" />
+                  <span>Conferi o jogo, a edição e as informações. Os campos vazios permanecerão como não informados.</span>
                 </label>
-              </div>
-              <label>
-                Categorias
-                <span class="label-hint">separadas por vírgula</span>
-                <input name="tags" maxlength="320" placeholder="Ex.: estratégia, cooperativo, família" />
-              </label>
-              <label>
-                Idioma do manual
-                <select name="language">
-                  <option value="pt-BR">Português</option>
-                  <option value="en">Inglês</option>
-                  <option value="fr">Francês</option>
-                  <option value="es">Espanhol</option>
-                  <option value="other">Outro</option>
-                </select>
-              </label>
-              <div class="form-row">
-                <label>
-                  Idade recomendada
-                  <input type="number" name="recommendedAge" min="1" max="100" placeholder="Não informada" />
-                </label>
-                <label>
-                  Tipo de jogo
-                  <input name="gameType" maxlength="80" placeholder="Cooperativo, competitivo…" />
-                </label>
-              </div>
-              <label>
-                Mecânicas
-                <span class="label-hint">separadas por vírgula, quando identificadas</span>
-                <input name="mechanics" maxlength="320" />
-              </label>
-              <label>
-                Edição / versão
-                <input name="edition" maxlength="100" placeholder="Não identificada" />
-              </label>
-              <label class="confirm-check">
-                <input name="isPublic" type="checkbox" />
-                <span>Manual público: permitir que visitantes leiam este jogo sem entrar.</span>
-              </label>
-              <details class="evidence">
-                <summary>De onde vieram as informações?</summary>
-                <div id="source-evidence"></div>
-              </details>
-              <label class="confirm-check">
-                <input name="confirmed" type="checkbox" required />
-                <span>Conferi a identificação do jogo e as informações. Campos em branco ficam como “não informado”.</span>
-              </label>
-              <div class="form-actions">
-                <button class="button secondary" type="button" data-close="upload-dialog">Cancelar</button>
-                <button class="button primary" id="save-game" type="submit">
-                  <svg><use href="#i-plus" /></svg>
-                  <span>Adicionar à biblioteca</span>
-                </button>
-              </div>
-              <p id="save-error" class="inline-error" role="alert" hidden></p>
+              </section>
+            </div>
+          </div>
+          <div class="wizard-footer">
+            <p id="save-error" class="inline-error" role="alert" hidden></p>
+            <div class="wizard-actions">
+              <button class="text-button" type="button" data-close="upload-dialog">Cancelar</button>
+              <span id="step-caption" class="step-caption" role="status"></span>
+              <button class="button secondary" id="game-back" type="button" hidden>Voltar</button>
+              <button class="button primary" id="game-next" type="button">Conferir informações →</button>
+              <button class="button primary" id="save-game" type="submit" hidden>
+                <svg><use href="#i-plus" /></svg>
+                <span>Adicionar à biblioteca</span>
+              </button>
             </div>
           </div>
         </form>
@@ -475,6 +541,8 @@
         <div class="detail-content">
           <p class="eyebrow">NA SUA BIBLIOTECA</p>
           <h2 id="detail-title"></h2>
+          <p id="detail-edition" class="detail-edition" hidden></p>
+          <p id="detail-title-warning" class="feedback-message" hidden></p>
           <div class="detail-tags" id="detail-tags"></div>
           <p id="detail-description"></p>
           <div class="detail-stats" id="detail-stats"></div>
@@ -492,6 +560,7 @@
             <button class="button secondary" id="learn-game">Aprender a jogar</button>
             <button class="button secondary" id="quick-rules">Consulta rápida</button>
           </div>
+          <p id="detail-guide-status" class="guide-availability" role="status"></p>
           <div id="detail-catalog-sources" class="catalog-attributions"></div>
           <a class="text-button" id="detail-source" target="_blank" rel="noopener noreferrer" hidden>Dados do BoardGameGeek ↗</a>
           <div class="admin-actions" id="detail-admin" hidden>
@@ -545,83 +614,111 @@
         <p id="delete-error" class="inline-error" role="alert" hidden></p>
       </div>
     </dialog>
-    <dialog id="login-dialog" class="small-dialog" aria-labelledby="login-title">
+    <dialog id="login-dialog" class="small-dialog account-dialog" aria-labelledby="login-title">
       <div class="dialog-header">
         <div>
-          <p class="eyebrow muted">SEU ACERVO NO FIREBASE</p>
-          <h2 id="login-title">
-            Entre na sua biblioteca
-            <span class="red-dot">.</span>
-          </h2>
+          <p class="eyebrow muted" id="login-eyebrow">SUA PRÓXIMA PARTIDA COMEÇA AQUI</p>
+          <h2 id="login-title">Entre no Acervo</h2>
         </div>
-        <button class="icon-button" data-close="login-dialog" aria-label="Fechar login">
+        <button class="icon-button" data-close="login-dialog" aria-label="Fechar conta">
           <svg><use href="#i-close" /></svg>
         </button>
       </div>
-      <div id="google-login" class="dialog-body">
-        <button class="button secondary full" id="google-login-button">Entrar com Google</button>
-        <p id="google-login-error" class="inline-error" role="alert" hidden></p>
-        <p id="pages-login-note" class="muted-text" hidden>Use sua conta Google vinculada ao Firebase. Se sua conta usa senha, vincule o Google primeiro pelo localhost ou pelo endereço temporário do Firebase.</p>
-      </div>
-      <form id="login-form" class="dialog-body" method="dialog">
-        <div class="auth-tabs">
-          <button type="button" class="text-button" data-auth-view="register">Criar conta</button>
-          <button type="button" class="text-button" data-auth-view="recovery">Esqueci a senha</button>
-        </div>
-        <p>Entre para acompanhar sua solicitação. A leitura dos manuais públicos não exige conta.</p>
+      <form id="login-form" class="dialog-body auth-form" method="dialog">
+        <p>Seus jogos e seu acesso em um só lugar. A biblioteca pública pode ser lida sem conta.</p>
         <label>
           E-mail
-          <input name="email" type="email" autocomplete="username" required />
+          <input name="email" type="email" autocomplete="username" required placeholder="voce@exemplo.com" />
         </label>
         <label>
           Senha
           <input name="password" type="password" autocomplete="current-password" required />
         </label>
-        <button class="button primary full" id="login-submit">Entrar</button>
+        <button type="button" class="text-button recovery-link" data-auth-view="recovery">Esqueceu a senha?</button>
+        <button class="button primary full" id="login-submit">Entrar com e-mail</button>
         <p id="login-error" class="inline-error" role="alert" hidden></p>
+        <div class="signup-callout">
+          <span>Ainda não tem uma conta?</span>
+          <button type="button" class="button secondary full" data-auth-view="register">Criar conta grátis</button>
+        </div>
       </form>
-      <form id="register-form" class="dialog-body" method="dialog" hidden>
-        <p>Novas contas aguardam aprovação. O cadastro não concede acesso administrativo.</p>
+      <div id="google-login" class="dialog-body google-alternative">
+        <div class="auth-divider"><span>ou, se preferir</span></div>
+        <button class="button secondary full" id="google-login-button">Entrar com Google</button>
+        <p>Opcional. Você também pode usar somente e-mail e senha.</p>
+        <p id="google-login-error" class="inline-error" role="alert" hidden></p>
+      </div>
+      <form id="register-form" class="dialog-body auth-form" method="dialog" hidden>
+        <p>Use seu e-mail e escolha uma senha. Sua conta aguardará aprovação; os manuais públicos já estão disponíveis.</p>
         <label>
-          Nome
+          Seu nome
           <input name="name" autocomplete="name" maxlength="100" required />
         </label>
         <label>
           E-mail
-          <input name="email" type="email" autocomplete="username" required />
+          <input name="email" type="email" autocomplete="username" required placeholder="voce@exemplo.com" />
         </label>
         <label>
           Senha
-          <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+          <input name="password" type="password" autocomplete="new-password" minlength="8" required aria-describedby="password-hint" />
+          <small id="password-hint">Use pelo menos 8 caracteres.</small>
         </label>
         <label>
           Confirme a senha
           <input name="confirmation" type="password" autocomplete="new-password" minlength="8" required />
         </label>
-        <button class="button primary full" id="register-submit">Criar conta</button>
+        <button class="button primary full" id="register-submit">Criar conta grátis</button>
         <p id="register-error" class="inline-error" role="alert" hidden></p>
-        <button type="button" class="text-button" data-auth-view="login">Já tenho uma conta</button>
+        <button type="button" class="text-button" data-auth-view="login">Já tenho uma conta · Entrar</button>
       </form>
-      <form id="recovery-form" class="dialog-body" method="dialog" hidden>
-        <p>Enviaremos as instruções de recuperação para o e-mail informado.</p>
+      <form id="recovery-form" class="dialog-body auth-form" method="dialog" hidden>
+        <p>Informe o e-mail da sua conta para receber as instruções de recuperação de senha.</p>
         <label>
           E-mail
           <input name="email" type="email" autocomplete="username" required />
         </label>
-        <button class="button primary full" id="recovery-submit">Recuperar senha</button>
-        <p id="recovery-message" role="status" hidden></p>
+        <button class="button primary full" id="recovery-submit">Enviar instruções</button>
+        <p id="recovery-message" class="feedback-message" role="status" aria-live="polite" hidden></p>
         <button type="button" class="text-button" data-auth-view="login">Voltar para entrar</button>
       </form>
-      <div class="dialog-body" id="session-info" hidden>
-        <p id="session-message"></p>
-        <label>
-          UID da conta
-          <input id="session-uid" readonly />
-        </label>
-        <p class="muted-text" id="session-status" role="status"></p>
-        <button class="button secondary" id="retry-profile-button" hidden>Concluir solicitação de cadastro</button>
-        <button class="button secondary" id="link-google-button">Vincular Google a esta conta</button>
-        <button class="button secondary" id="logout-button">Sair da conta</button>
+      <div class="dialog-body profile-body" id="session-info" hidden>
+        <div class="profile-heading">
+          <span id="profile-avatar" class="profile-avatar" aria-hidden="true"></span>
+          <div>
+            <h3 id="session-message"></h3>
+            <p id="profile-email"></p>
+          </div>
+        </div>
+        <dl class="profile-facts">
+          <div>
+            <dt>Tipo de acesso</dt>
+            <dd id="profile-role"></dd>
+          </div>
+          <div>
+            <dt>Situação da conta</dt>
+            <dd id="profile-status" role="status"></dd>
+          </div>
+          <div>
+            <dt>Como você entra</dt>
+            <dd id="profile-providers"></dd>
+          </div>
+        </dl>
+        <p id="session-status" class="feedback-message" role="status"></p>
+        <button class="button secondary full" id="retry-profile-button" hidden>Concluir solicitação de cadastro</button>
+        <details id="google-link-section" class="account-advanced">
+          <summary>Adicionar Google como opção de login</summary>
+          <p>Entre também com Google mantendo esta mesma conta e suas permissões. O vínculo é opcional.</p>
+          <button class="button secondary full" id="link-google-button">Vincular Google a esta conta</button>
+        </details>
+        <details class="account-advanced" id="profile-technical">
+          <summary>Informações técnicas para suporte</summary>
+          <label>
+            Identificador da conta
+            <input id="session-uid" readonly />
+          </label>
+          <button id="copy-uid" class="button secondary small" type="button">Copiar identificador</button>
+        </details>
+        <button class="button secondary full logout-button" id="logout-button">Sair da conta</button>
       </div>
     </dialog>
     <dialog id="admin-dialog" class="wide-dialog admin-dialog" aria-labelledby="admin-title">
@@ -723,7 +820,7 @@
           <svg><use href="#i-book" /></svg>
           <div>
             <strong>Do PDF para a sua estante</strong>
-            <p>Extraímos texto, possíveis títulos e a primeira página como capa. Você confere tudo antes de salvar. PDFs escaneados precisam de preenchimento manual.</p>
+            <p>Extraímos texto, possíveis títulos e a primeira página como capa. Você confere tudo antes de salvar. PDFs escaneados podem usar reconhecimento local de texto, sempre com revisão.</p>
           </div>
         </div>
         <div class="setup-feature">

@@ -271,14 +271,14 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       checkbox.dataset.researchField = field.key;
       label.className = 'research-choice';
       label.append(checkbox, node('span', `${fieldLabels[field.key]}: ${display(field.value)}${field.conflict ? ` · diverge do PDF/cadastro: ${display(field.current)}` : ''}`));
-      const evidence = selected.evidence?.[field.key === 'minPlayers' || field.key === 'maxPlayers' ? 'players' : field.key === 'durationMinutes' ? 'duration' : field.key];
+      const evidence = selected.evidence?.[field.key === 'minPlayers' || field.key === 'maxPlayers' ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(field.key) ? 'duration' : field.key];
       if (evidence) label.append(node('small', `${evidence.page ? 'p. ' + evidence.page + ' · ' : ''}${evidence.excerpt}`));
       review.append(label);
       choices.push([field, checkbox]);
     }
-    const pair = choices.filter(([f]) => ['minPlayers', 'maxPlayers'].includes(f.key));
-    for (const [field, reason] of Object.entries(selected.fieldReasons || {})) if (reason && !selected.fields[field]) review.append(node('p', `${fieldLabels[field] || field}: ${reason}`));
-    for (const [, checkbox] of pair) checkbox.onchange = () => pair.forEach(([, other]) => (other.checked = checkbox.checked));
+    const pairs = [choices.filter(([f]) => ['minPlayers', 'maxPlayers'].includes(f.key)), choices.filter(([f]) => ['minDurationMinutes', 'maxDurationMinutes'].includes(f.key))];
+    for (const [field, reason] of Object.entries(selected.fieldReasons || {})) if (reason && !selected.fields[field]) review.append(node('p', `${fieldLabels[field] || (field === 'durationMinutes' ? 'Duração' : field)}: ${reason}`));
+    for (const pair of pairs) for (const [, checkbox] of pair) checkbox.onchange = () => pair.forEach(([, other]) => (other.checked = checkbox.checked));
     const label = node('label'),
       confirm = document.createElement('input');
     confirm.type = 'checkbox';
