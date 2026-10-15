@@ -60,5 +60,16 @@ test('cidades não viram idade e faixas de expansões não são fundidas com jog
   assert.equal(extractMetadata('Idade: 10 anos').recommendedAge, 10);
   assert.equal(extractMetadata('Âge : 8 ans').recommendedAge, 8);
   assert.equal(titleCandidates({ lines: [{ text: 'Bem-vindo ao mundo de Catan!', height: 36 }] })[0].text, 'Catan!');
-  assert.deepEqual(titleCandidates({ metadataTitle: '7DUME_Rules_BR.indd', filename: 'Manual.pdf', lines: [{ text: 'Símbolos de apoio para Daltônicos', height: 36 }] }), []);
+  assert.deepEqual(
+    titleCandidates({
+      metadataTitle: '7DUME_Rules_BR.indd',
+      filename: 'Manual.pdf',
+      lines: [
+        { text: 'Símbolos de apoio para Daltônicos', height: 14 },
+        { text: 'VISÃO GERAL E OBJETIVO', height: 17 },
+        { text: 'Este jogo usa', height: 10 },
+      ],
+    }),
+    [],
+  );
 });

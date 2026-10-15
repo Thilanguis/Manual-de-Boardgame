@@ -17,14 +17,14 @@ export function titleCandidates({ metadataTitle = '', filename = '', lines = [] 
   const valid = (value) =>
     value.length >= 2 && value.length <= 100 && value.split(/\s+/).length <= 12 && /[a-zA-ZÀ-ÿ]/.test(value) && !genericTitle.test(value) && !/^\d+$/.test(value) && !/\b(?:jogadores|players|joueurs|minutos|minutes)\b/i.test(value);
   const titleLines = lines.filter((line) => valid(line.text));
-  const largest = Math.max(0, ...titleLines.map((line) => line.height));
+  const largest = Math.max(0, ...lines.map((line) => line.height));
   const identity = reviewedIdentity('', metadataTitle + ' ' + filename);
   const technical = /\.(?:indd|docx?|ai)(?:\b|$)|rulebook[_-]|rules[_-][a-z]{2}|^[A-Z0-9]{5,}[_-]/i;
   const ranked = [
     ...(identity ? [{ text: identity.names[0].value, source: 'Código editorial do PDF · alias revisado', score: 110 }] : []),
     ...(valid(metadataTitle) && !technical.test(metadataTitle) ? [{ text: clean(metadataTitle), source: 'Metadados do PDF', score: 100 }] : []),
     ...titleLines
-      .filter((line) => line.height >= largest * 0.65)
+      .filter((line) => line.height >= largest * 0.8)
       .sort((a, b) => b.height - a.height)
       .slice(0, 6)
       .map((line, i) => ({ text: clean(line.text), source: 'Título na primeira página', score: 90 - i })),
