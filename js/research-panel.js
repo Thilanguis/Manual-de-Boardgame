@@ -21,7 +21,7 @@ const disclosure = (title) => {
   details.append(node('summary', title));
   return details;
 };
-export function createResearchPanel({ root, getRepository, getCurrent, getPdf, apply, canUse, readPreference, writePreference, onApplied = () => {}, onSuggestions = () => {} }) {
+export function createResearchPanel({ root, getRepository, getCurrent, getPdf, apply, canUse, readPreference, writePreference, onApplied = () => document.querySelector('[data-step-target="2"]')?.click(), onSuggestions = () => {} }) {
   let controller,
     detailController,
     sequence = 0,
@@ -355,8 +355,17 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     updateSelection();
     review.append(selectionStatus, errorMessage, button);
     button.onclick = () => {
-      if (!canUse() || !confirm.checked) return;
-      if (kind.value !== 'unknown' && selected.kind !== 'unknown' && kind.value !== selected.kind) return;
+      if (!canUse()) {
+        errorMessage.textContent = 'Não foi possível aplicar agora. Aguarde a operação em andamento e tente novamente.';
+        errorMessage.hidden = false;
+        return;
+      }
+      if (!confirm.checked) return;
+      if (kind.value !== 'unknown' && selected.kind !== 'unknown' && kind.value !== selected.kind) {
+        errorMessage.textContent = 'Jogo base e expansão não correspondem. Revise o resultado escolhido.';
+        errorMessage.hidden = false;
+        return;
+      }
       const values = Object.fromEntries(choices.filter(([, box]) => box.checked).map(([field]) => [field.key, field.value]));
       if (!Object.keys(values).length) return;
       const latest = getCurrent();
@@ -365,16 +374,19 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
         const warning = node('p', 'Você alterou os dados enquanto revisava. Confira a seleção novamente.');
         warning.setAttribute('role', 'alert');
         review.prepend(warning);
+        warning.scrollIntoView({ block: 'center' });
         return;
       }
       // Nenhum campo muda enquanto o administrador não confirmar explicitamente.
       try {
         apply(values, selected);
+        onApplied(values);
+        const destination = root.closest('form')?.querySelector('[data-game-step="2"]');
+        if (destination?.hidden) throw new Error('Os campos foram preenchidos, mas a etapa 2 não abriu. Use “Conferir dados” no topo para continuar.');
         appliedCandidates.add(candidateKey(selected));
         notifySuggestions();
         review.hidden = true;
         status.textContent = 'Campos preenchidos. Confira antes de salvar.';
-        onApplied(values);
       } catch (error) {
         errorMessage.textContent = error.message;
         errorMessage.hidden = false;

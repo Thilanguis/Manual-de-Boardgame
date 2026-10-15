@@ -131,6 +131,9 @@ try {
     if (width === 1440 && actualPdf) assert.equal(saved.manual.pages, 24, 'Fluxo executado com o PDF brasileiro real de 24 páginas');
     await page.reload();
     await page.locator('.game-card').waitFor();
+    assert.equal(await page.locator('.hero').isVisible(), false, 'Salvar não escolhe um destaque automaticamente');
+    await page.locator('.card-main').click();
+    await page.locator('[data-close=detail-dialog]').click();
     assert.match(await page.locator('#hero-description').textContent(), /Sociedade/);
     assert(!(await page.locator('main').innerText()).match(/Firebase|Cloudflare|Spark|Drive central/));
     assert.equal(await page.locator('.connection-bar').isVisible(), false);

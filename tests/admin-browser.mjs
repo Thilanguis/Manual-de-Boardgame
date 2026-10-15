@@ -198,7 +198,7 @@ try {
   await guest.locator('#refresh-library').click();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 1);
   assert.equal(await owner.locator('#unavailable-games').isVisible(), false);
-  await owner.waitForFunction(() => document.getElementById('hero-main').textContent.includes('Explorar biblioteca'));
+  assert.equal(await owner.locator('.hero').isVisible(), false, 'Não há destaque antes de clicar em um jogo');
   await owner.locator('.card-main').click();
   await owner.locator('#edit-game').click();
   assert.equal(await owner.locator('#title-warning').isVisible(), true);

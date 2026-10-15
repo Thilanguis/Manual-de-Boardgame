@@ -108,6 +108,17 @@ export function validateGame(input) {
   };
 }
 
+// Rascunho para conferência: campos incompletos são editáveis, nunca publicados sem validateGame.
+export function normalizeGameDraft(input) {
+  const game = {};
+  for (const key of ['title', 'description', 'gameType', 'edition', 'language']) game[key] = String(input[key] ?? '').trim();
+  for (const key of ['minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'recommendedAge']) game[key] = input[key] === '' || input[key] == null ? null : Number(input[key]);
+  for (const key of ['tags', 'mechanics']) game[key] = (Array.isArray(input[key]) ? input[key] : String(input[key] || '').split(',')).map((value) => String(value).trim()).filter(Boolean);
+  game.durationMinutes = game.minDurationMinutes === game.maxDurationMinutes ? game.minDurationMinutes : null;
+  game.isPublic = input.isPublic === true || input.isPublic === 'on';
+  return game;
+}
+
 export function playersLabel(game) {
   return game.minPlayers ? `${game.minPlayers}${game.maxPlayers !== game.minPlayers ? `–${game.maxPlayers}` : ''} ${game.maxPlayers === 1 ? 'jogador' : 'jogadores'}` : 'Jogadores não informados';
 }

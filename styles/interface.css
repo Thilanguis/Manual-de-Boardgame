@@ -131,52 +131,7 @@
 .has-library .hero h1 {
   margin-bottom: 16px;
 }
-@media (min-width: 1100px) {
-  main.few-games {
-    display: grid;
-    grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.4fr);
-    max-width: 1800px;
-    margin: 0 auto;
-    gap: 24px;
-    padding: 26px clamp(20px, 4vw, 64px);
-    align-items: start;
-  }
-  .few-games .hero {
-    margin: 0;
-    border-radius: 14px;
-    width: 100%;
-  }
-  .few-games .hero-content {
-    padding: 30px;
-    max-width: none;
-  }
-  .few-games .hero h1 {
-    font-size: clamp(30px, 2.6vw, 44px);
-  }
-  .few-games .hero-actions > a {
-    display: none;
-  }
-  .few-games .library-container {
-    padding: 0;
-    margin: 0;
-    width: 100%;
-  }
-  .few-games .library-toolbar {
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-  .few-games .search-field {
-    flex-basis: 100%;
-    max-width: none;
-  }
-  .few-games .games-grid {
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 20px;
-  }
-  .few-games .game-card {
-    max-width: 260px;
-  }
-}
+
 .button {
   font-size: 14px;
   min-height: 44px;

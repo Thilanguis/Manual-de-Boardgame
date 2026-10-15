@@ -2,7 +2,7 @@ import { createGameSteps } from './game-steps.js';
 import { titleCandidates } from './recognition.js';
 import { createAccountPanel } from './account-panel.js';
 import { APP_CONFIG } from '../config/app-config.js';
-import { filterGames, playersLabel, validateGame, safeImageUrl, durationRange, durationLabel, isTechnicalTitle, displayTitle, displayDescription } from './model.js';
+import { filterGames, playersLabel, validateGame, normalizeGameDraft, safeImageUrl, durationRange, durationLabel, isTechnicalTitle, displayTitle, displayDescription } from './model.js';
 import { inspectPdf, imageToJpeg } from './pdf.js';
 import { createReader } from './reader.js';
 import { setupPwa } from './pwa.js';
@@ -95,7 +95,7 @@ function writePreferences(type, value) {
   try {
     localStorage.setItem(storageKey(type), JSON.stringify(value));
   } catch {
-    showNotice('O navegador não permitiu salvar favoritos ou a posição da leitura.');
+    showNotice('Não foi possível guardar suas preferências neste navegador.');
   }
 }
 function getProgress(id) {
@@ -274,13 +274,20 @@ $('refresh-library').onclick = async () => {
   }
 };
 let heroSequence = 0;
+const lastViewedGames = new Map();
+function rememberGame(game) {
+  if (!readableGame(game)) return;
+  lastViewedGames.set(storageKey('last-viewed'), game.id);
+  writePreferences('last-viewed', { gameId: game.id });
+  void renderHero();
+}
 async function renderHero() {
   const token = ++heroSequence;
-  const game = [...state.games].filter((g) => readableGame(g) && !isTechnicalTitle(g.title)).sort((a, b) => b.createdAt - a.createdAt)[0];
+  const lastId = lastViewedGames.get(storageKey('last-viewed')) || readPreferences('last-viewed').gameId;
+  const game = state.games.find((game) => game.id === lastId && readableGame(game));
   const hero = document.querySelector('.hero');
   document.querySelector('main').classList.toggle('has-library', state.games.some(readableGame));
-  const total = state.games.filter(readableGame).length;
-  document.querySelector('main').classList.toggle('few-games', total > 0 && total <= 3);
+  hero.hidden = !game;
   hero.classList.toggle('has-game', !!game);
   $('hero-art').hidden = !!game;
   $('hero-meta').hidden = !game;
@@ -291,23 +298,13 @@ async function renderHero() {
   $('hero-main')
     .querySelector('use')
     .setAttribute('href', `#i-${game ? 'book' : 'plus'}`);
-  if (!game && state.games.some(readableGame)) {
-    $('hero-title').textContent = 'Sua próxima partida está na estante.';
-    $('hero-description').textContent = '';
-    $('hero-main').querySelector('span').textContent = 'Explorar biblioteca';
-    $('hero-main').querySelector('use').setAttribute('href', '#i-book');
-    $('hero-main').onclick = () => $('biblioteca').scrollIntoView({ behavior: 'smooth' });
-    return;
-  }
   if (!game) {
-    const lineBreak = document.createElement('br'),
-      emphasized = node('em', null, 'aqui.');
-    $('hero-title').replaceChildren(document.createTextNode('A próxima partida'), lineBreak, document.createTextNode('começa '), emphasized);
-    $('hero-description').textContent = 'Escolha um jogo. Encontre as regras.';
-    $('hero-main').onclick = addGame;
+    $('hero-title').textContent = '';
+    $('hero-description').textContent = '';
+    $('hero-main').onclick = null;
     return;
   }
-  $('hero-title').textContent = game.title;
+  $('hero-title').textContent = displayTitle(game);
   $('hero-description').textContent = displayDescription(game);
   const wikiDescription = displayDescription(game) && (game.sources?.catalog?.matches || []).find((match) => match.source === 'wikipedia' && match.licenseUrl);
   if (wikiDescription) {
@@ -359,7 +356,10 @@ function renderRecent() {
     bar.setAttribute('aria-label', `Leitura de ${game.title}`);
     info.append(bar);
     card.append(image, info);
-    card.onclick = () => reader.open(game);
+    card.onclick = () => {
+      rememberGame(game);
+      return reader.open(game);
+    };
     $('recent-row').append(card);
     populateImage(image, game);
   }
@@ -406,6 +406,7 @@ function renderFavorite() {
   $('detail-favorite').setAttribute('aria-label', favorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos');
 }
 function showGame(game) {
+  rememberGame(game);
   state.selected = game;
   $('detail-title').textContent = displayTitle(game);
   $('detail-edition').textContent = game.edition ? 'Edição · ' + game.edition : '';
@@ -758,11 +759,11 @@ const researchPanel = createResearchPanel({
     $('research-applied').textContent =
       `Preenchido: ${[...new Set(Object.keys(values).map((key) => ({ description: 'resumo', minDurationMinutes: 'duração', maxDurationMinutes: 'duração', minPlayers: 'jogadores', maxPlayers: 'jogadores', recommendedAge: 'idade', tags: 'categorias', mechanics: 'mecânicas', gameType: 'tipo', title: 'nome', edition: 'edição' })[key] || key))].join(', ')}.`;
     $('research-applied').hidden = false;
-    gameSteps.go(2);
+    return gameSteps.go(2, false);
   },
   apply(values, candidate) {
     const current = Object.fromEntries(new FormData($('game-form')).entries());
-    const normalized = validateGame({ ...current, ...values }),
+    const normalized = normalizeGameDraft({ ...current, ...values }),
       sources = { ...draft.sources };
     const before = { ...draft, ...durationRange(draft) };
     for (const field of ['title', 'description', 'minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'recommendedAge', 'gameType', 'edition', 'language', 'tags', 'mechanics']) {

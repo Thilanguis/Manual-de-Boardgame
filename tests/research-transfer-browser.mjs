@@ -82,6 +82,23 @@ try {
     assert.equal(await page.locator('[name=tags]').inputValue(), 'Estratégia');
     assert.equal(await page.locator('#research-pending').isVisible(), false);
     assert.match(await page.locator('#research-applied').textContent(), /resumo.*duração/);
+    // Regressão: outro campo ainda incompleto não pode impedir abrir a etapa de conferência.
+    await page.locator('[name=maxDurationMinutes]').fill('');
+    await page.evaluate(() => {
+      window.candidateFixture.fields = { description: 'Outro resumo confirmado.' };
+    });
+    await page.locator('#game-back').click();
+    await page.locator('[data-research-search]').click();
+    await page.locator('.research-card button').click();
+    for (const box of await page.locator('[data-research-review] input[type=checkbox]').all()) await box.check();
+    await page.locator('[data-research-review] button').click();
+    assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true, 'Aplicar sugestões deve abrir a etapa 2 mesmo com duração ainda incompleta');
+    assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'Outro resumo confirmado.');
+    assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '');
+    await page.locator('#game-next').click();
+    assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true, 'Duração incompleta continua impedindo publicação');
+    await page.locator('[name=maxDurationMinutes]').fill('75');
+    await page.locator('#game-form [name=description]').fill('Resumo sintético confirmado para testar o cadastro.');
     if (width === 390) await page.screenshot({ path: 'test-output/research-transfer-mobile.png', fullPage: true });
     // Nova pesquisa com faixa conflitante preserva o valor confirmado até escolha explícita.
     await page.evaluate(() => {
