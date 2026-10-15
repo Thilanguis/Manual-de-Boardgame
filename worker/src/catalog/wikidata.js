@@ -1,4 +1,6 @@
 import { facts, positive, text } from './io.js';
+import { queryVariants, reviewedIdentity } from '../../../js/game-identities.js';
+import { normalizeText } from '../../../js/model.js';
 
 const api = (input, interactive = false) => {
   const url = new URL('https://www.wikidata.org/w/api.php');
@@ -12,8 +14,8 @@ const itemIDs = (entity, property) =>
   claims(entity, property)
     .map((c) => c.mainsnak.datavalue?.value?.id)
     .filter(Boolean);
-const preferred = (map, language) => [language === 'pt-BR' ? 'pt-br' : language, 'pt', 'fr', 'en'].map((code) => map?.[code]).find((v) => v?.value);
-export function wikidataCandidate(entity, language = 'pt-BR') {
+const preferred = (map, language, pdfLanguage) => [language === 'pt-BR' ? 'pt-br' : language, 'pt', pdfLanguage === 'fr' ? 'fr' : 'en', 'fr', 'en'].map((code) => map?.[code]).find((v) => v?.value);
+export function wikidataCandidate(entity, language = 'pt-BR', classesData = {}, pdfLanguage = '') {
   const bgg = claims(entity, 'P2339')
     .map((c) => c.mainsnak.datavalue?.value)
     .find((v) => /^[1-9]\d{0,8}$/.test(String(v)));
@@ -21,8 +23,8 @@ export function wikidataCandidate(entity, language = 'pt-BR') {
   const classes = itemIDs(entity, 'P31');
   if (!classes.includes('Q131436') && !bgg) return null;
   if (classes.some((id) => ['Q7889', 'Q5398426', 'Q21192438'].includes(id))) return null;
-  const title = preferred(entity.labels, language),
-    description = preferred(entity.descriptions, language);
+  const title = preferred(entity.labels, language, pdfLanguage),
+    description = preferred(entity.descriptions, language, pdfLanguage);
   if (!title) return null;
   const conflicts = [];
   const quantity = (property, field, max, units) => {
@@ -52,12 +54,21 @@ export function wikidataCandidate(entity, language = 'pt-BR') {
   const names = [];
   for (const [code, value] of Object.entries(entity.labels || {})) names.push({ value: text(value.value), language: code });
   for (const [code, values] of Object.entries(entity.aliases || {})) for (const value of values) names.push({ value: text(value.value), language: code });
+  const genres = itemIDs(entity, 'P136')
+    .filter((id) => !['Q142714', 'Q131436', 'Q3244175'].includes(id))
+    .map((id) => ({ id, label: preferred(classesData[id]?.labels, language, pdfLanguage) }))
+    .filter((v) => v.label);
+  const cooperative = classes.includes('Q1783817');
+  const categories = genres.map((v) => text(v.label.value, 40));
+  if (cooperative) categories.unshift(language === 'fr' ? 'Coopératif' : language === 'en' ? 'Cooperative' : 'Cooperativo');
   const result = facts(
     'wikidata',
     entity.id,
     `https://www.wikidata.org/wiki/${entity.id}`,
     {
       title: text(title.value),
+      gameType: cooperative ? (language === 'fr' ? 'Coopératif' : language === 'en' ? 'Cooperative' : 'Cooperativo') : '',
+      tags: [...new Set(categories)].slice(0, 8),
       description: text(description?.value, 600),
       minPlayers: min,
       maxPlayers: max,
@@ -67,31 +78,78 @@ export function wikidataCandidate(entity, language = 'pt-BR') {
     { names: names.filter((n) => n.value).slice(0, 40), identifiers: { wikidata: entity.id, ...(bgg ? { bgg: String(bgg) } : {}) }, language: title.language, descriptionLanguage: description?.language || '', license: 'CC0', conflicts },
   );
   // P18 é um nome de arquivo no Commons, não uma licença de reprodução da imagem.
+  result.fieldReasons = {
+    recommendedAge: result.fields.recommendedAge ? '' : 'Wikidata não informou idade inequívoca (P2899).',
+    durationMinutes: result.fields.durationMinutes ? '' : 'Duração ausente ou divergente; não calculamos uma média.',
+    mechanics: 'Não há mecânicas explícitas disponíveis neste conector; gênero não é convertido em mecânica.',
+    tags: categories.length ? '' : 'Não há gênero/categoria explícitos utilizáveis nesta entidade.',
+    gameType: cooperative ? '' : 'A entidade não declara um tipo de partida específico utilizável.',
+  };
+  result.fieldEvidence = { gameType: cooperative ? 'P31 → Q1783817 (cooperative board game)' : '', tags: genres.map((v) => v.id + ' → ' + v.label.value).join('; ') };
+  result.fieldLanguages = { title: title.language, description: description?.language || '', gameType: language, tags: [...new Set(genres.map((v) => v.label.language))].join(', ') || language };
   return result;
 }
+export async function wikidataEntities(ids, input, io) {
+  if (!ids.length) return [];
+  const data = await io(api({ action: 'wbgetentities', ids: ids.slice(0, 12).join('|'), props: 'labels|descriptions|aliases|claims|sitelinks', languages: 'pt-br|pt|fr|en' }, input.interactive));
+  const entities = Object.values(data.entities || {});
+  const classIDs = [...new Set(entities.flatMap((e) => [...itemIDs(e, 'P31'), ...itemIDs(e, 'P136')]))].slice(0, 16);
+  let classes = {};
+  if (classIDs.length) {
+    try {
+      classes = (await io(api({ action: 'wbgetentities', ids: classIDs.join('|'), props: 'labels', languages: 'pt-br|pt|fr|en' }, input.interactive))).entities || {};
+    } catch (error) {
+      input.diagnostics?.failures?.push({ stage: 'classificações', error: error.message });
+    }
+  }
+  return entities
+    .map((entity) => {
+      const candidate = wikidataCandidate(entity, input.preferredLanguage, classes, input.pdfLanguage);
+      return candidate ? { ...candidate, sitelinks: entity.sitelinks || {} } : null;
+    })
+    .filter(Boolean);
+}
 export async function wikidata(input, io) {
-  let ids;
+  const diagnostics = (input.diagnostics = { complete: true, queries: [], failures: [], returned: 0 });
+  let ids = [];
+  const identity = reviewedIdentity(input.query);
   if (input.action === 'detail') ids = [input.id];
   else {
-    const languages = [
-      ...new Set(
-        input.expanded
-          ? [input.pdfLanguage, input.preferredLanguage, 'fr', 'en'].map((l) => (l.startsWith('pt') ? 'pt' : l)).filter((l) => ['pt', 'fr', 'en'].includes(l))
-          : [input.pdfLanguage === 'fr' ? 'fr' : input.pdfLanguage === 'en' ? 'en' : 'pt'],
-      ),
-    ];
-    const results = await Promise.all(languages.map((language) => io(api({ action: 'wbsearchentities', search: input.query, language, type: 'item', limit: input.expanded ? '15' : '10' }, input.interactive))));
-    const hits = results.flatMap((r) => r.search || []).filter((s) => !/video\s*game|videogame|jogo eletr[oô]nico|jeu vid[eé]o|\bfilm\b|film series|media franchise|univers fictif|fictional universe|telegram channel/i.test(s.description || ''));
+    const plans = queryVariants(input);
+    const results = await Promise.allSettled(
+      plans.map(async (plan) => {
+        const result = await io(api({ action: 'wbsearchentities', search: plan.query, language: plan.language, type: 'item', limit: input.expanded ? '15' : '10' }, input.interactive));
+        diagnostics.queries.push({ ...plan, status: 'ok', rawCount: result.search?.length || 0 });
+        return result.search || [];
+      }),
+    );
+    for (let i = 0; i < results.length; i++) if (results[i].status === 'rejected') diagnostics.failures.push({ ...plans[i], error: results[i].reason.message });
+    const hits = results
+      .filter((r) => r.status === 'fulfilled')
+      .flatMap((r) => r.value)
+      .filter((s) => !/video\s*game|videogame|jogo eletr[oô]nico|jeu vid[eé]o|\bfilm\b|media franchise|fictional universe|telegram channel/i.test(s.description || ''));
     const board = (s) => /board game|tabletop game|card game|jogo de tabuleiro|jogo de cartas|jeu de soci[eé]t[eé]|jeu de plateau/i.test(s.description || '');
-    // Descrição serve somente para reduzir tráfego. A identidade ainda depende
-    // de P31/P2339 na entidade; não usamos essa triagem como informação do jogo.
     hits.sort((a, b) => Number(board(b)) - Number(board(a)));
-    ids = [...new Set(hits.map((s) => s.id).filter((id) => /^Q[1-9]\d{0,10}$/.test(id)))].slice(0, input.expanded ? 12 : 8);
+    ids = [...new Set([...(identity?.wikidata ? [identity.wikidata] : []), ...hits.map((s) => s.id).filter((id) => /^Q[1-9]\d{0,10}$/.test(id))])].slice(0, input.expanded ? 12 : 8);
+    if (!ids.length) {
+      try {
+        const fallback = await io(api({ action: 'query', list: 'search', srnamespace: '0', srsearch: '"' + input.query.replace(/"/g, '') + '"', srlimit: '8', formatversion: '2' }, input.interactive));
+        ids = (fallback.query?.search || []).map((v) => v.title).filter((id) => /^Q[1-9]\d{0,10}$/.test(id));
+        diagnostics.queries.push({ query: input.query, language: 'multilingual', reason: 'índice de texto completo', status: 'ok', rawCount: ids.length });
+      } catch (error) {
+        diagnostics.failures.push({ stage: 'índice de texto completo', error: error.message });
+      }
+    }
+    if (identity) diagnostics.identityResolution = { method: 'alias editorial revisado', references: identity.references, editionConfirmed: false };
   }
-  if (!ids.length) return [];
-  const data = await io(api({ action: 'wbgetentities', ids: ids.join('|'), props: 'labels|descriptions|aliases|claims', languages: 'pt-br|pt|fr|en' }, input.interactive));
-  return Object.values(data.entities || {})
-    .map((entity) => wikidataCandidate(entity, input.preferredLanguage))
-    .filter(Boolean)
-    .slice(0, 10);
+  const candidates = await wikidataEntities(ids, input, io);
+  for (const candidate of candidates)
+    if (identity?.wikidata === candidate.id && candidate.identifiers.bgg === identity.bgg) {
+      candidate.names.push(...identity.names.map((n) => ({ ...n, origin: 'alias editorial revisado' })));
+      candidate.identityNote = identity.editionNote;
+      candidate.identityReferences = identity.references;
+    }
+  diagnostics.complete = diagnostics.failures.length === 0;
+  diagnostics.returned = candidates.length;
+  return candidates.slice(0, 10);
 }

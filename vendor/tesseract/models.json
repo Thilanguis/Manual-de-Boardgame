@@ -1,0 +1,30 @@
+[
+  {
+    "name": "por",
+    "path": "vendor/tesseract/lang/por.traineddata.gz",
+    "size": 1982756,
+    "sha256": "c4932b937207a9514b7514d518b931a99938c02a28a5a5a553f8599ed58b7deb",
+    "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/por.traineddata"
+  },
+  {
+    "name": "eng",
+    "path": "vendor/tesseract/lang/eng.traineddata.gz",
+    "size": 4113088,
+    "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+    "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/eng.traineddata"
+  },
+  {
+    "name": "fra",
+    "path": "vendor/tesseract/lang/fra.traineddata.gz",
+    "size": 1130365,
+    "sha256": "ced037562e8c80c13122dece28dd477d399af80911a28791a66a63ac1e3445ca",
+    "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/fra.traineddata"
+  },
+  {
+    "name": "LICENSE",
+    "path": "vendor/tesseract/LICENSE-models.txt",
+    "size": 11358,
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/LICENSE"
+  }
+]

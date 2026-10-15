@@ -171,11 +171,11 @@ test('pesquisa exige JWT e perfil atual; disponibilidade revela somente flags pÃ
     const data = await response.json();
     assert.equal(data.sources.find((s) => s.id === 'wikidata').enabled, true);
     assert.equal(data.sources.find((s) => s.id === 'ludopedia').enabled, false);
-    const denied = await handleRequest(request('/v1/research/wikidata', { method: 'POST', auth: false, json: { action: 'search', query: 'Catan' } }), env);
+    const denied = await handleRequest(request('/v1/research/wikidata', { method: 'POST', auth: false, json: { action: 'search', query: 'Catan', protocol: 2 } }), env);
     assert.equal(denied.status, 401);
   });
   await isolated({ enabled: false }, async ({ calls }) => {
-    const response = await handleRequest(request('/v1/research/wikidata', { method: 'POST', json: { action: 'search', query: 'Catan' } }), env);
+    const response = await handleRequest(request('/v1/research/wikidata', { method: 'POST', json: { action: 'search', query: 'Catan', protocol: 2 } }), env);
     assert.equal(response.status, 403);
     assert(!calls.some((c) => c.url.includes('wikidata.org')));
   });

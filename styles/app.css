@@ -10,6 +10,33 @@
   margin: 0 0 14px;
   font-size: 16px;
 }
+.research-availability {
+  border: 1px solid #3b3b44;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+.research-availability p {
+  margin: 4px 0;
+}
+.hero-source {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.hero-source a {
+  color: #d6d0d1;
+}
+.hero-source:empty {
+  display: none;
+}
+.research-choice {
+  flex-wrap: wrap;
+}
+.research-choice small {
+  flex-basis: 100%;
+  padding-left: 28px;
+  color: #bcbcc8;
+}
 .research-actions {
   display: flex;
   gap: 10px;

@@ -79,7 +79,7 @@ async function page() {
     }),
   );
   await context.route('https://api.example.test/v1/research/sources', (route) =>
-    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ sources: [{ id: 'wikidata', name: 'Wikidata', enabled: true, url: 'https://www.wikidata.org', reason: 'fixture CC0' }] }) }),
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ protocol: 2, apiVersion: '1.5.0', sources: [{ id: 'wikidata', name: 'Wikidata', enabled: true, url: 'https://www.wikidata.org', reason: 'fixture CC0' }] }) }),
   );
   await context.route('https://api.example.test/v1/research/wikidata', (route) => {
     assert(route.request().headers().authorization.startsWith('Bearer '));

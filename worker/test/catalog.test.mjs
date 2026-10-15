@@ -163,13 +163,14 @@ test('perfil autorizado recebe a consulta completa; bloqueio atual é verificado
   };
   const first = await queryCatalog('wikidata', { action: 'search', query: 'Catan' }, env, identity, null, fetcher);
   assert.equal(first.candidates[0].fields.title, 'Colonizadores de Catan');
-  assert.equal(providerCalls, 2);
+  const initialCalls = providerCalls;
+  assert.equal(initialCalls, 5);
   await queryCatalog('wikidata', { action: 'search', query: 'Catan' }, env, identity, null, fetcher);
-  assert.equal(providerCalls, 2);
+  assert.equal(providerCalls, initialCalls);
   enabled = false;
   await assert.rejects(queryCatalog('wikidata', { action: 'search', query: 'Catan' }, env, identity, null, fetcher), (e) => e.status === 403);
   assert.equal(profileCalls, 3);
-  assert.equal(providerCalls, 2);
+  assert.equal(providerCalls, initialCalls);
 });
 
 test('consulta compartilhada não prolonga o prazo curto de outra requisição', async () => {

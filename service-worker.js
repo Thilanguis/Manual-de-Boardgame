@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.4.0';
+const VERSION = 'acervo-v1.5.0';
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
 const ESSENTIAL = [
@@ -22,6 +22,9 @@ const ESSENTIAL = [
   './js/bgg-client.js',
   './js/research-client.js',
   './js/research-panel.js',
+  './js/research-contract.js',
+  './js/game-identities.js',
+  './js/pdf-ocr.js',
   './js/guide-model.js',
   './js/guide-repository.js',
   './js/guide-panel.js',
@@ -81,7 +84,8 @@ self.addEventListener('fetch', (event) => {
   const relative = './' + url.pathname.slice(new URL('./', self.registration.scope).pathname.length);
   const isShell = ESSENTIAL.includes(relative) || request.mode === 'navigate';
   const isPdfResource = /\/vendor\/pdfjs\/(cmaps|standard_fonts|wasm)\//.test(url.pathname);
-  if (!isShell && !isPdfResource) return;
+  const isOcrResource = /\/vendor\/tesseract\//.test(url.pathname) && /(?:\.js|\.traineddata\.gz)$/.test(url.pathname);
+  if (!isShell && !isPdfResource && !isOcrResource) return;
   event.respondWith(
     (async () => {
       const cache = await caches.open(SHELL);

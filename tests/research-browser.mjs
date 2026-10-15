@@ -58,7 +58,7 @@ try {
     const repository = {
       mode: 'firebase',
       async research(source, input, { signal } = {}) {
-        if (source === 'sources') return { sources };
+        if (source === 'sources') return { sources, protocol: 2, apiVersion: '1.5.0' };
         window.researchCalls.push({ source, ...input });
         await new Promise((resolve, reject) => {
           const timer = setTimeout(resolve, source === 'ludopedia' ? window.delayLudo : 50);
@@ -97,7 +97,7 @@ try {
   await page.locator('.research-card').first().waitFor();
   assert.equal(await page.locator('.research-card').count(), 1);
   assert.equal(await page.locator('#save-game').isEnabled(), true);
-  assert.match(await page.locator('[data-research-status]').textContent(), /Ludopedia: pesquisando/);
+  assert.match(await page.locator('[data-research-status]').textContent(), /Ludopedia: consultando/);
   await page.locator('.research-card button').first().click();
   assert.equal(await page.locator('[data-research-field=minPlayers]').isChecked(), false);
   assert.equal(await page.locator('[data-research-field=durationMinutes]').isChecked(), false);

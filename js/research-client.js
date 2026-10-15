@@ -1,6 +1,20 @@
 import { normalizeText } from './model.js';
+import { RESEARCH_PROTOCOL } from './research-contract.js';
 
-export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', bgg: 'BoardGameGeek' };
+export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', wikipedia: 'Wikipédia', pdf: 'PDF · OCR local', bgg: 'BoardGameGeek' };
+export function researchSummary(sources, statuses) {
+  const active = sources.filter((s) => s.enabled),
+    disabled = sources.filter((s) => !s.enabled),
+    messages = [];
+  messages.push(`${active.length} de ${sources.length} conectores externos habilitados. ${disabled.length ? 'Pesquisa parcial: ' + disabled.map((s) => sourceNames[s.id] || s.name).join(', ') + ' sem autorização/configuração.' : ''}`);
+  for (const source of active) {
+    const result = statuses.get(source.id);
+    messages.push(
+      `${sourceNames[source.id] || source.name}: ${!result ? 'ainda não consultada' : result.status === 'loading' ? 'consultando' : result.status === 'error' ? 'falhou — ' + result.error : result.diagnostics?.complete === false ? 'resposta parcial — ' + (result.candidates?.length || 0) + ' resultado(s); houve consultas que falharam' : result.candidates?.length ? result.candidates.length + ' correspondência(s)' : 'respondeu, sem correspondência nas consultas realizadas'}.`,
+    );
+  }
+  return messages.join(' ');
+}
 export const manualSources = [
   ['Devir Brasil', 'https://devir.com.br/', 'pt-BR'],
   ['MeepleBR', 'https://meeplebr.com/', 'pt-BR'],
@@ -37,11 +51,15 @@ export async function researchRequest(base, getToken, source, input, { signal, t
     const response = await fetcher(`${base.replace(/\/$/, '')}/v1/research/${source}`, {
       method: source === 'sources' ? 'GET' : 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      ...(source !== 'sources' ? { body: JSON.stringify(input) } : {}),
+      ...(source !== 'sources' ? { body: JSON.stringify({ ...input, protocol: RESEARCH_PROTOCOL }) } : {}),
       signal: combined,
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Esta fonte não respondeu.');
+    if (!response.ok) {
+      const error = new Error(data.error || 'Esta fonte não respondeu.');
+      error.status = response.status;
+      throw error;
+    }
     return data;
   } catch (error) {
     if (timeout.aborted) throw new Error('Esta fonte demorou. Os outros resultados continuam disponíveis.');

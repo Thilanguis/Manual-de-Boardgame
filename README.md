@@ -19,7 +19,7 @@ Cada jogo oferece **Aprender a jogar**, **Consulta rápida** e **Manual completo
 
 ## Reconhecimento com múltiplas fontes
 
-O PDF continua como fonte principal. A pesquisa automática usa conectores independentes, resultados progressivos e prazos curtos, com idioma preferido PT-BR, cancelamento e opção **Ampliar pesquisa**. Cada campo externo exige revisão antes de aplicar; identidades, aliases, conflitos e atribuições são preservados. Wikidata está ativo sem chave. Ludopedia tem prioridade brasileira e conector preparado, aguardando token da aplicação autorizada. BGG aguarda aplicação aprovada, token e logo oficial. Editoras/lojas brasileiras, francesas e canadenses permanecem referências manuais enquanto não houver integração autorizada. [Investigação, fontes, condições e ativação segura](docs/FONTES-RECONHECIMENTO.md).
+O PDF continua como fonte principal. A pesquisa automática usa conectores independentes, resultados progressivos e prazos curtos, com idioma preferido PT-BR, cancelamento e opção **Ampliar pesquisa**. Cada campo externo exige revisão antes de aplicar; identidades, aliases, conflitos e atribuições são preservados. Wikidata e Wikipédia estão ativos sem chave; descrições Wikipédia preservam atribuição e licença CC BY-SA. PDFs sem texto podem ser lidos por OCR no dispositivo, com confirmação dos campos. Ludopedia tem prioridade brasileira e conector preparado, aguardando token da aplicação autorizada. BGG aguarda aplicação aprovada, token e logo oficial. Editoras/lojas brasileiras, francesas e canadenses permanecem referências manuais enquanto não houver integração autorizada. [Investigação, fontes, condições e ativação segura](docs/FONTES-RECONHECIMENTO.md). [Resultados reais com três PDFs e limites da versão 1.5.0](docs/RELATORIO-RECONHECIMENTO-1.5.md).
 
 ## Pessoas e permissões
 
@@ -63,7 +63,7 @@ Para o catálogo brasileiro, siga o [cadastro oficial da API Ludopedia e configu
 
 O [guia Firebase](docs/FIREBASE.md) explica bootstrap seguro do UID proprietário, regras, estados, painel e cotas. O [guia Google Drive/Cloudflare](docs/GOOGLE-DRIVE-CLOUDFLARE.md) contém Console Google Cloud, OAuth Web, escopo mínimo, Picker local autorizado, secrets e teste de envio real à pasta existente. Nenhuma nova pasta é criada automaticamente.
 
-BGG é opcional, via Worker com token secreto aprovado; vem desativado. PDFs escaneados não passam por OCR; campos sem evidência ficam desconhecidos para revisão. Favoritos e progresso continuam locais. Manuais interativos e consulta rápida já estão disponíveis.
+BGG é opcional, via Worker com token secreto aprovado; vem desativado. PDFs escaneados recebem OCR local opcional/automático na importação sem texto, limitado às três primeiras páginas e com revisão; campos sem evidência continuam desconhecidos. Favoritos e progresso continuam locais. Manuais interativos e consulta rápida já estão disponíveis.
 
 ## Organização
 

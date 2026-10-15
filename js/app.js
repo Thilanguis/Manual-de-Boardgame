@@ -261,6 +261,7 @@ async function renderHero() {
   $('hero-meta').hidden = !game;
   $('hero-backdrop').style.backgroundImage = '';
   $('hero-meta').replaceChildren();
+  $('hero-source').replaceChildren();
   $('hero-main').querySelector('span').textContent = game ? 'Ler manual' : state.session.canAdd ? 'Adicionar meu primeiro jogo' : 'Entrar na biblioteca';
   $('hero-main')
     .querySelector('use')
@@ -276,6 +277,18 @@ async function renderHero() {
   }
   $('hero-title').textContent = game.title;
   $('hero-description').textContent = game.description || 'O manual da sua próxima partida está pronto para leitura.';
+  const wikiDescription = (game.sources?.catalog?.matches || []).find((match) => match.source === 'wikipedia' && match.licenseUrl);
+  if (wikiDescription) {
+    const source = node('a', null, 'Autores da Wikipédia · trecho editável');
+    source.href = wikiDescription.url;
+    source.target = '_blank';
+    source.rel = 'noopener noreferrer';
+    const license = node('a', null, 'CC BY-SA 4.0');
+    license.href = wikiDescription.licenseUrl;
+    license.target = '_blank';
+    license.rel = 'noopener noreferrer';
+    $('hero-source').append(source, document.createTextNode(' · '), license);
+  }
   if (game.minPlayers) {
     const span = node('span', null, playersLabel(game));
     span.prepend(icon('users'));
@@ -393,7 +406,8 @@ function showGame(game) {
   catalogLinks.replaceChildren();
   const attributions = new Map();
   for (const item of Object.values(game.sources || {})) if (item.url && /^https:\/\//.test(item.url)) attributions.set(item.url, item.source);
-  for (const match of game.sources?.catalog?.matches || []) attributions.set(match.url, match.source === 'ludopedia' ? 'Ludopedia' : match.source === 'bgg' ? 'Powered by BoardGameGeek' : 'Wikidata');
+  for (const match of game.sources?.catalog?.matches || [])
+    attributions.set(match.url, match.source === 'ludopedia' ? 'Ludopedia' : match.source === 'bgg' ? 'Powered by BoardGameGeek' : match.source === 'wikipedia' ? 'Autores da Wikipédia' : 'Wikidata');
   for (const [url, label] of attributions) {
     const a = node('a', 'text-button', label + ' ↗');
     a.href = url;
@@ -401,6 +415,21 @@ function showGame(game) {
     a.rel = 'noopener noreferrer';
     catalogLinks.append(a);
   }
+  for (const match of game.sources?.catalog?.matches || [])
+    if (match.licenseUrl) {
+      const a = node('a', 'text-button', match.license + ' · trecho/ajustes sob a mesma licença');
+      a.href = match.licenseUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      catalogLinks.append(a);
+      if (match.authorsUrl) {
+        const authors = node('a', 'text-button', 'Autores e histórico ↗');
+        authors.href = match.authorsUrl;
+        authors.target = '_blank';
+        authors.rel = 'noopener noreferrer';
+        catalogLinks.append(authors);
+      }
+    }
   $('detail-source').hidden = !game.bgg?.id;
   if (game.bgg?.id) $('detail-source').href = `https://boardgamegeek.com/boardgame/${Number(game.bgg.id)}`;
   renderFavorite();
@@ -502,6 +531,7 @@ function renderEvidence() {
   if (!$('source-evidence').children.length) $('source-evidence').append(node('p', null, 'Não foi possível extrair informações. Preencha apenas os dados que você conhece.'));
 }
 async function importFile(file) {
+  let needsOcr = false;
   if (!file || state.busy || state.importing) return;
   if (!state.session.canAdd) {
     showLogin();
@@ -526,6 +556,7 @@ async function importFile(file) {
     const duplicate = state.games.find((game) => game.manual?.sha256 === inspected.manual.sha256);
     if (duplicate) throw new Error(`Este manual já está na biblioteca como “${duplicate.title}”. Edite o jogo existente para alterar suas informações.`);
     const { coverBlob, candidates, textFound, ...record } = inspected;
+    needsOcr = !textFound;
     draft = { ...record };
     manualBlob = file;
     draftCoverBlob = originalPdfCover = coverBlob;
@@ -554,7 +585,10 @@ async function importFile(file) {
   } finally {
     if (token === importSequence) {
       state.importing = false;
-      if (draft && $('upload-dialog').open) void researchPanel.run();
+      if (draft && $('upload-dialog').open) {
+        void researchPanel.run();
+        if (needsOcr) void researchPanel.runOcr();
+      }
     }
     $('pdf-file').disabled = false;
     $('pdf-file').value = '';
@@ -641,6 +675,7 @@ $('replace-pdf-file').onchange = async (event) => {
 const researchPanel = createResearchPanel({
   root: $('research-panel'),
   getRepository: () => repository,
+  getPdf: () => manualBlob || repository.getManual(draft),
   canUse: () => !!draft && !state.busy && !state.importing && $('upload-dialog').open && state.session.canWrite,
   getCurrent() {
     if (!draft) return null;
@@ -669,29 +704,45 @@ const researchPanel = createResearchPanel({
     for (const [field, value] of Object.entries(values)) {
       const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : field === 'durationMinutes' ? 'duration' : field;
       draft.sources[key] = {
-        source: candidate.source === 'ludopedia' ? 'Ludopedia · API · confirmado' : candidate.source === 'bgg' ? 'BoardGameGeek · API · confirmado' : 'Wikidata · confirmado',
+        ...(candidate.evidence?.[key] || {}),
+        source:
+          candidate.source === 'pdf'
+            ? 'PDF · OCR local · confirmado por você'
+            : candidate.source === 'wikipedia'
+              ? 'Wikipédia · trecho confirmado'
+              : candidate.source === 'ludopedia'
+                ? 'Ludopedia · API · confirmado'
+                : candidate.source === 'bgg'
+                  ? 'BoardGameGeek · API · confirmado'
+                  : 'Wikidata · confirmado',
         excerpt: key === 'players' ? playersLabel(draft) : Array.isArray(value) ? value.join(', ') : String(value),
         url: candidate.url,
         license: candidate.license,
-        language: field === 'description' ? candidate.descriptionLanguage || 'unknown' : candidate.language,
+        ...(candidate.licenseUrl ? { licenseUrl: candidate.licenseUrl, authorsUrl: candidate.authorsUrl, modified: true } : {}),
+        language: candidate.fieldLanguages?.[field] || (field === 'description' ? candidate.descriptionLanguage || 'unknown' : candidate.language),
         confirmedAt: Date.now(),
         editionConfirmedBy: state.session.user?.uid || 'device',
       };
     }
-    const previous = draft.sources.catalog?.matches || [];
-    const match = {
-      source: candidate.source,
-      id: candidate.id,
-      url: candidate.url,
-      identifiers: candidate.identifiers || {},
-      names: candidate.names.slice(0, 20),
-      edition: draft.edition,
-      originalFields: candidate.fields,
-      license: candidate.license,
-      attributionLogo: candidate.attributionLogo || '',
-      confirmedAt: Date.now(),
-    };
-    draft.sources.catalog = { source: 'Correspondências confirmadas · edição revisada manualmente', excerpt: candidate.url, matches: [...previous.filter((m) => !(m.source === match.source && m.id === match.id)), match].slice(-6) };
+    if (candidate.source !== 'pdf') {
+      const previous = draft.sources.catalog?.matches || [];
+      const match = {
+        source: candidate.source,
+        id: candidate.id,
+        url: candidate.url,
+        identifiers: candidate.identifiers || {},
+        names: candidate.names.slice(0, 20),
+        edition: draft.edition,
+        originalFields: candidate.fields,
+        license: candidate.license,
+        licenseUrl: candidate.licenseUrl || '',
+        authorsUrl: candidate.authorsUrl || '',
+        modified: true,
+        attributionLogo: candidate.attributionLogo || '',
+        confirmedAt: Date.now(),
+      };
+      draft.sources.catalog = { source: 'Correspondências confirmadas · edição revisada manualmente', excerpt: candidate.url, matches: [...previous.filter((m) => !(m.source === match.source && m.id === match.id)), match].slice(-6) };
+    }
     fillForm();
   },
 });

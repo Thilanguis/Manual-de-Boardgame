@@ -3,7 +3,8 @@ import { getDocument, requirePermission, driveToken, driveMetadata, requireProje
 import { XMLParser } from 'fast-xml-parser';
 import { parseSearch, parseThing } from '../../backend/bgg-parser.js';
 import { cleanupGuides } from './guide-assets.js';
-import { sourceStatus, queryCatalog } from './catalog/index.js';
+import { queryCatalog, researchCapabilities } from './catalog/index.js';
+import { RESEARCH_VERSION, RESEARCH_PROTOCOL } from '../../js/research-contract.js';
 
 const CHUNK_LIMIT = 8 * 1024 * 1024,
   JSON_LIMIT = 16384;
@@ -314,7 +315,8 @@ export async function handleRequest(request, env) {
   let response;
   try {
     const url = new URL(request.url);
-    if (url.pathname === '/health' && request.method === 'GET') response = json({ ok: true, firebaseProject: env.FIREBASE_PROJECT_ID, driveConnected: !!(env.GOOGLE_REFRESH_TOKEN && env.DRIVE_FOLDER_ID && env.TICKET_KEY) });
+    if (url.pathname === '/health' && request.method === 'GET')
+      response = json({ ok: true, apiVersion: RESEARCH_VERSION, researchProtocol: RESEARCH_PROTOCOL, firebaseProject: env.FIREBASE_PROJECT_ID, driveConnected: !!(env.GOOGLE_REFRESH_TOKEN && env.DRIVE_FOLDER_ID && env.TICKET_KEY) });
     else {
       const token = bearer(request);
       let identity = null;
@@ -322,10 +324,14 @@ export async function handleRequest(request, env) {
         const claims = await verifyFirebaseToken(token, env.FIREBASE_PROJECT_ID);
         identity = { uid: claims.sub, token };
       }
-      const research = /^\/v1\/research\/(wikidata|ludopedia|bgg)$/.exec(url.pathname);
-      if (url.pathname === '/v1/research/sources' && request.method === 'GET') response = json({ sources: sourceStatus(env) });
-      else if (research && request.method === 'POST') response = json(await queryCatalog(research[1], await readJSON(request), env, identity, request.signal));
-      else if (url.pathname === '/v1/catalog/status' && request.method === 'POST') response = await catalogStatus(request, env, identity);
+      const research = /^\/v1\/research\/(wikidata|wikipedia|ludopedia|bgg)$/.exec(url.pathname);
+      if (url.pathname === '/v1/research/sources' && request.method === 'GET') response = json(researchCapabilities(env));
+      else if (research && request.method === 'POST') {
+        const input = await readJSON(request);
+        if (!identity) throw new ApiError(401, 'Entre com uma conta autorizada para pesquisar.');
+        if (input.protocol !== RESEARCH_PROTOCOL) throw new ApiError(426, `Atualize o site para ${RESEARCH_VERSION}; o Worker usa um protocolo de pesquisa mais recente.`);
+        response = json(await queryCatalog(research[1], input, env, identity, request.signal));
+      } else if (url.pathname === '/v1/catalog/status' && request.method === 'POST') response = await catalogStatus(request, env, identity);
       else if (url.pathname === '/v1/uploads' && request.method === 'POST') response = await uploadStart(request, env, identity);
       else if (url.pathname === '/v1/uploads/chunk' && request.method === 'PUT') response = await uploadChunk(request, env, identity);
       else if (url.pathname === '/v1/uploads/status' && request.method === 'POST') response = await uploadChunk(request, env, identity, true);

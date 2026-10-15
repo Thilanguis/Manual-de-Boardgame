@@ -101,6 +101,7 @@
             <br />
             Menos tempo procurando. Mais tempo jogando.
           </p>
+          <p id="hero-source" class="hero-source"></p>
           <div class="hero-meta" id="hero-meta" hidden></div>
           <div class="hero-actions">
             <button class="button primary" id="hero-main">
@@ -283,7 +284,7 @@
         <span class="brand-dot">.</span>
       </a>
       <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
-      <span>v1.4.0</span>
+      <span>v1.5.0</span>
       <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
       <a id="ludopedia-attribution" href="https://ludopedia.com.br" target="_blank" rel="noopener noreferrer" hidden>Dados: Ludopedia</a>
     </footer>
@@ -344,6 +345,8 @@
               <div id="title-suggestions" class="title-suggestions"></div>
               <section id="research-panel" class="research-panel" aria-label="Pesquisa de jogos em múltiplas fontes">
                 <h3>Completar com fontes confiáveis</h3>
+                <p data-research-version></p>
+                <div data-research-availability class="research-availability"></div>
                 <div class="form-row">
                   <label>
                     Idioma preferido das informações
@@ -368,6 +371,8 @@
                   <button type="button" class="text-button" data-research-cancel hidden>Cancelar pesquisa</button>
                 </div>
                 <p data-research-status role="status" aria-live="polite"></p>
+                <button type="button" class="button secondary small" data-research-ocr>Ler primeiras páginas por OCR local</button>
+                <p data-research-ocr-status role="status" aria-live="polite"></p>
                 <div data-research-results class="research-results"></div>
                 <div data-research-review class="research-review" hidden></div>
                 <details>
@@ -732,7 +737,7 @@
           <svg><use href="#i-info" /></svg>
           <div>
             <strong>Dados com origem, sem adivinhação</strong>
-            <p>O BGG é opcional e usa a API segura do Acervo. Você confirma a correspondência e a origem dos dados. Faixas de duração do PDF ficam disponíveis para revisão.</p>
+            <p>O PDF é a fonte principal. A pesquisa informa quais APIs estão disponíveis; BGG e Ludopedia precisam de autorização. Você confirma o jogo, a edição e os campos antes de aplicar sugestões.</p>
           </div>
         </div>
         <div class="setup-links">

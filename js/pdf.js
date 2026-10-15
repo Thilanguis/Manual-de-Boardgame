@@ -95,8 +95,17 @@ export async function inspectPdf(file, { maxBytes, onProgress = () => {}, signal
     const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
     const candidates = titleCandidates({ metadataTitle: metadata.info?.Title, filename: file.name, lines: firstLines });
     const fields = extractMetadata(text);
+    if (fields.language === 'other' && /(?:^|[_\s\[])pt[-_ ]?br(?:\b|_)/i.test(metadata.info?.Title + ' ' + file.name)) {
+      fields.language = 'pt-BR';
+      fields.sources.language = { source: 'PDF · idioma explícito no nome/metadados; confirmar', excerpt: file.name };
+    }
     for (const value of Object.values(fields.sources)) {
-      const found = pageTexts.findIndex((page) => page.replace(/[‐‑–—]/g, '-').includes(value.excerpt));
+      const found = pageTexts.findIndex((page) =>
+        page
+          .replace(/[‐‑–—]/g, '-')
+          .replace(/\s+/g, ' ')
+          .includes(value.excerpt.replace(/\s+/g, ' ')),
+      );
       if (found >= 0) value.page = found + 1;
     }
     if (fields.sources.originalTitle && !candidates.some((c) => c.text === fields.sources.originalTitle.excerpt)) candidates.push({ text: fields.sources.originalTitle.excerpt, source: 'PDF · título original explícito' });
