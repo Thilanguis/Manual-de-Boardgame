@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { readFile, mkdir } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, setDoc, Timestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, Timestamp } from 'firebase/firestore';
 import { OWNER_UID } from '../js/permissions.js';
 if (!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_AUTH_EMULATOR_HOST) throw new Error('Este teste exige os dois emuladores locais.');
 const require = createRequire(resolve(process.env.ACERVO_TEST_MODULES, 'package.json'));
@@ -78,6 +78,35 @@ async function page() {
       body: JSON.stringify(driveFailure ? { error: 'Falha transitória de teste' } : { games: [{ id: gameId, available: driveAvailable, reason: driveAvailable ? 'available' : 'trashed' }] }),
     }),
   );
+  await context.route('https://api.example.test/v1/research/sources', (route) =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ sources: [{ id: 'wikidata', name: 'Wikidata', enabled: true, url: 'https://www.wikidata.org', reason: 'fixture CC0' }] }) }),
+  );
+  await context.route('https://api.example.test/v1/research/wikidata', (route) => {
+    assert(route.request().headers().authorization.startsWith('Bearer '));
+    assert.equal(route.request().postDataJSON().preferredLanguage, 'pt-BR');
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        source: 'wikidata',
+        candidates: [
+          {
+            source: 'wikidata',
+            id: 'Q17271',
+            url: 'https://www.wikidata.org/wiki/Q17271',
+            fields: { title: 'Manual de teste', description: 'Descrição sintética revisada.', recommendedAge: 10 },
+            names: [{ value: 'Manual de teste', language: 'pt-br' }],
+            identifiers: { wikidata: 'Q17271' },
+            kind: 'unknown',
+            edition: '',
+            language: 'pt-br',
+            descriptionLanguage: 'pt-br',
+            license: 'CC0',
+            conflicts: [],
+          },
+        ],
+      }),
+    });
+  });
   const p = await context.newPage();
   p.on('pageerror', (error) => errors.push(error.message));
   await p.goto(base);
@@ -125,6 +154,24 @@ try {
   await guest.locator('#refresh-library').click();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 1);
   assert.equal(await owner.locator('#unavailable-games').isVisible(), false);
+  await owner.locator('.card-main').click();
+  await owner.locator('#edit-game').click();
+  await owner.locator('#game-title').fill('Manual de teste revisto');
+  await owner.locator('[data-research-search]').click();
+  await owner.locator('.research-card button').click();
+  assert.equal(await owner.locator('[data-research-field=title]').isChecked(), false);
+  await owner.locator('[data-research-review] input[type=checkbox]').last().check();
+  await owner.locator('[data-research-review] button').click();
+  await owner.locator('#game-form [name=confirmed]').check();
+  await owner.locator('#save-game').click();
+  await owner.locator('#upload-dialog').waitFor({ state: 'hidden' });
+  const saved = (await getDoc(doc(env.unauthenticatedContext().firestore(), 'games', gameId))).data();
+  assert.equal(saved.title, 'Manual de teste revisto');
+  assert.equal(saved.description, 'Descrição sintética revisada.');
+  assert.equal(saved.recommendedAge, 10);
+  assert.equal(saved.sources.description.license, 'CC0');
+  assert.equal(saved.sources.catalog.matches[0].id, 'Q17271');
+  assert.match(saved.sources.title.source, /ajustado por você/);
   await owner.locator('.card-main').click();
   await owner.locator('#edit-guide').click();
   await owner.getByRole('button', { name: 'Nova seção', exact: true }).click();

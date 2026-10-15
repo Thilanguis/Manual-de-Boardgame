@@ -70,6 +70,21 @@ beforeEach(async () => {
 });
 after(async () => env?.cleanup());
 
+test('proveniência de catálogo e aliases são salvos apenas por editor aprovado, com leitura pública herdada', async () => {
+  const sources = {
+    description: { source: 'Wikidata · confirmado', excerpt: 'jogo de tabuleiro', url: 'https://www.wikidata.org/wiki/Q17271', license: 'CC0', language: 'pt', confirmedAt: 1 },
+    catalog: {
+      source: 'Correspondências confirmadas',
+      excerpt: 'Catan',
+      matches: [{ source: 'wikidata', id: 'Q17271', identifiers: { bgg: '13' }, names: [{ value: 'Colonizadores de Catan', language: 'pt-br' }], originalFields: { minPlayers: 3 } }],
+    },
+  };
+  await assertSucceeds(updateDoc(doc(db('sub'), 'games', 'existing'), { sources, updatedAt: serverTimestamp() }));
+  const publicRecord = await assertSucceeds(getDoc(doc(db(), 'games', 'existing')));
+  assert.equal(publicRecord.data().sources.catalog.matches[0].id, 'Q17271');
+  for (const uid of ['pending', 'member', 'blocked']) await assertFails(updateDoc(doc(db(uid), 'games', 'existing'), { sources, updatedAt: serverTimestamp() }));
+});
+
 const guideRecord = (id, revision = 1, overrides = {}) => ({
   gameId: id,
   schemaVersion: 1,

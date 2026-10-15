@@ -8,6 +8,7 @@ import { roleLabel, statusLabel } from './permissions.js';
 import { readableGame, unavailableReason } from './catalog-availability.js';
 import { createGuidePanel } from './guide-panel.js';
 import { bggWebsiteSearch } from './bgg-client.js';
+import { createResearchPanel } from './research-panel.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
@@ -117,6 +118,7 @@ function closeDialog(id) {
     showNotice('Aguarde a operação terminar para fechar.');
     return;
   }
+  if (id === 'upload-dialog') researchPanel.cancel();
   $(id).close();
 }
 document.querySelectorAll('[data-close]').forEach((button) => (button.onclick = () => closeDialog(button.dataset.close)));
@@ -156,6 +158,17 @@ async function populateImage(image, game) {
   }
 }
 function renderGrid() {
+  const matches = state.games.flatMap((game) => game.sources?.catalog?.matches || []),
+    bggMatch = matches.find((match) => match.source === 'bgg' && safeImageUrl(match.attributionLogo));
+  $('ludopedia-attribution').hidden = !matches.some((match) => match.source === 'ludopedia');
+  $('bgg-attribution').hidden = !bggMatch;
+  if (bggMatch) {
+    const img = document.createElement('img');
+    img.src = bggMatch.attributionLogo;
+    img.alt = 'Powered by BGG';
+    img.width = 150;
+    $('bgg-attribution').replaceChildren(img);
+  }
   const available = state.games.filter(readableGame);
   const games = filterGames(available, { ...state, favorites: readPreferences('favorites') });
   $('game-count').textContent = `${available.length} ${available.length === 1 ? 'jogo' : 'jogos'}`;
@@ -376,6 +389,18 @@ function showGame(game) {
   $('edit-game').disabled = game.deleting === true;
   $('read-manual').disabled = !readableGame(game);
   $('delete-game').textContent = game.deleting ? 'Concluir exclusão pendente' : 'Excluir jogo';
+  const catalogLinks = $('detail-catalog-sources');
+  catalogLinks.replaceChildren();
+  const attributions = new Map();
+  for (const item of Object.values(game.sources || {})) if (item.url && /^https:\/\//.test(item.url)) attributions.set(item.url, item.source);
+  for (const match of game.sources?.catalog?.matches || []) attributions.set(match.url, match.source === 'ludopedia' ? 'Ludopedia' : match.source === 'bgg' ? 'Powered by BoardGameGeek' : 'Wikidata');
+  for (const [url, label] of attributions) {
+    const a = node('a', 'text-button', label + ' ↗');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    catalogLinks.append(a);
+  }
   $('detail-source').hidden = !game.bgg?.id;
   if (game.bgg?.id) $('detail-source').href = `https://boardgamegeek.com/boardgame/${Number(game.bgg.id)}`;
   renderFavorite();
@@ -395,7 +420,7 @@ function formatBytes(size = 0) {
   return size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(size / 1024)} KB`;
 }
 function resetDraft() {
-  ++bggSequence;
+  researchPanel.reset();
   $('bgg-search').removeAttribute('aria-busy');
   importAbort?.abort();
   ++importSequence;
@@ -452,13 +477,12 @@ function fillForm() {
   renderEvidence();
   $('use-pdf-cover').hidden = !originalPdfCover;
   $('replace-pdf-label').hidden = !draft.id || !state.session.canEdit;
-  $('bgg-search').disabled = !APP_CONFIG.enableBgg || repository.mode !== 'firebase';
-  $('bgg-search').hidden = $('bgg-search').disabled;
+  $('bgg-search').disabled = true;
+  $('bgg-search').hidden = true;
   $('bgg-web-search').hidden = !$('bgg-search').disabled;
   $('bgg-web-search').href = bggWebsiteSearch($('game-title').value);
   $('bgg-search').title = $('bgg-search').disabled ? 'A consulta ao BoardGameGeek ainda não está ativa neste acervo.' : 'Buscar informações complementares no BoardGameGeek';
-  $('bgg-status').textContent =
-    APP_CONFIG.enableBgg && repository.mode === 'firebase' ? '' : 'Abre a busca em outra aba; não preenche os dados automaticamente. A identificação automática pelo BGG ainda não está ativada. Você pode salvar os dados do PDF.';
+  $('bgg-status').textContent = 'Consulta manual em outra aba. A pesquisa automática usa as fontes disponíveis acima.';
 }
 function renderEvidence() {
   $('source-evidence').replaceChildren();
@@ -466,6 +490,13 @@ function renderEvidence() {
   for (const [key, value] of Object.entries(draft.sources || {})) {
     const paragraph = node('p');
     paragraph.append(node('strong', null, `${labels[key] || key}: ${value.source}`), document.createElement('br'), document.createTextNode(value.excerpt || 'Sem trecho disponível.'));
+    if (value.url && /^https:\/\//.test(value.url)) {
+      const a = node('a', null, 'Consultar a origem ↗');
+      a.href = value.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      paragraph.append(document.createElement('br'), a);
+    }
     $('source-evidence').append(paragraph);
   }
   if (!$('source-evidence').children.length) $('source-evidence').append(node('p', null, 'Não foi possível extrair informações. Preencha apenas os dados que você conhece.'));
@@ -512,6 +543,8 @@ async function importFile(file) {
         draft.sources.title = { source: candidate.source, excerpt: candidate.text };
         draft.title = candidate.text;
         renderEvidence();
+        researchPanel.invalidate();
+        void researchPanel.run();
       };
       $('title-suggestions').append(button);
     }
@@ -519,7 +552,10 @@ async function importFile(file) {
   } catch (error) {
     if (error.name !== 'AbortError' && token === importSequence) $('upload-status').textContent = errorMessage(error);
   } finally {
-    if (token === importSequence) state.importing = false;
+    if (token === importSequence) {
+      state.importing = false;
+      if (draft && $('upload-dialog').open) void researchPanel.run();
+    }
     $('pdf-file').disabled = false;
     $('pdf-file').value = '';
   }
@@ -602,120 +638,76 @@ $('replace-pdf-file').onchange = async (event) => {
     event.target.value = '';
   }
 };
-let bggSequence = 0;
-async function searchBgg() {
-  if (!draft || !APP_CONFIG.enableBgg || state.busy || state.importing) return;
-  const token = ++bggSequence,
-    currentDraft = draft,
-    query = $('game-title').value.trim();
-  if (query.length < 2) {
-    $('bgg-status').textContent = 'Informe um nome com pelo menos dois caracteres.';
-    return;
-  }
-  $('bgg-search').disabled = true;
-  $('bgg-search').setAttribute('aria-busy', 'true');
-  $('bgg-results').replaceChildren();
-  $('bgg-status').textContent = 'Procurando jogos com esse nome…';
-  try {
-    const results = await repository.lookup('search', query);
-    if (token !== bggSequence || draft !== currentDraft) return;
-    $('bgg-status').textContent = results.length ? 'Confirme qual jogo corresponde ao seu manual:' : 'Nenhuma correspondência encontrada. Você pode usar os dados do PDF e corrigir o título.';
-    for (const result of results) {
-      const button = node('button');
-      button.type = 'button';
-      button.append(node('span', null, result.title), node('small', null, result.year || ''));
-      button.onclick = () => selectBgg(result.id, currentDraft);
-      $('bgg-results').append(button);
+const researchPanel = createResearchPanel({
+  root: $('research-panel'),
+  getRepository: () => repository,
+  canUse: () => !!draft && !state.busy && !state.importing && $('upload-dialog').open && state.session.canWrite,
+  getCurrent() {
+    if (!draft) return null;
+    const values = Object.fromEntries(new FormData($('game-form')).entries());
+    for (const key of ['minPlayers', 'maxPlayers', 'durationMinutes', 'recommendedAge']) values[key] = values[key] ? Number(values[key]) : null;
+    for (const key of ['tags', 'mechanics'])
+      values[key] = String(values[key] || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    return { ...draft, ...values };
+  },
+  readPreference: () => readPreferences('recognition').language,
+  writePreference: (language) => writePreferences('recognition', { language }),
+  apply(values, candidate) {
+    const current = Object.fromEntries(new FormData($('game-form')).entries());
+    const normalized = validateGame(current),
+      sources = { ...draft.sources };
+    for (const field of ['title', 'description', 'minPlayers', 'maxPlayers', 'durationMinutes', 'recommendedAge', 'gameType', 'edition', 'language', 'tags', 'mechanics']) {
+      if (JSON.stringify(draft[field] ?? '') !== JSON.stringify(normalized[field] ?? '')) {
+        const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : field === 'durationMinutes' ? 'duration' : field;
+        sources[key] = { source: 'Conferido e ajustado por você', excerpt: key === 'players' ? playersLabel(normalized) : Array.isArray(normalized[field]) ? normalized[field].join(', ') : String(normalized[field] ?? '') };
+      }
     }
-  } catch (error) {
-    if (token === bggSequence && draft === currentDraft) $('bgg-status').textContent = errorMessage(error);
-  } finally {
-    if (token === bggSequence) {
-      $('bgg-search').disabled = false;
-      $('bgg-search').removeAttribute('aria-busy');
+    draft = { ...draft, ...normalized, ...values, sources };
+    for (const [field, value] of Object.entries(values)) {
+      const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : field === 'durationMinutes' ? 'duration' : field;
+      draft.sources[key] = {
+        source: candidate.source === 'ludopedia' ? 'Ludopedia · API · confirmado' : candidate.source === 'bgg' ? 'BoardGameGeek · API · confirmado' : 'Wikidata · confirmado',
+        excerpt: key === 'players' ? playersLabel(draft) : Array.isArray(value) ? value.join(', ') : String(value),
+        url: candidate.url,
+        license: candidate.license,
+        language: field === 'description' ? candidate.descriptionLanguage || 'unknown' : candidate.language,
+        confirmedAt: Date.now(),
+        editionConfirmedBy: state.session.user?.uid || 'device',
+      };
     }
-  }
-}
-$('bgg-search').onclick = searchBgg;
+    const previous = draft.sources.catalog?.matches || [];
+    const match = {
+      source: candidate.source,
+      id: candidate.id,
+      url: candidate.url,
+      identifiers: candidate.identifiers || {},
+      names: candidate.names.slice(0, 20),
+      edition: draft.edition,
+      originalFields: candidate.fields,
+      license: candidate.license,
+      attributionLogo: candidate.attributionLogo || '',
+      confirmedAt: Date.now(),
+    };
+    draft.sources.catalog = { source: 'Correspondências confirmadas · edição revisada manualmente', excerpt: candidate.url, matches: [...previous.filter((m) => !(m.source === match.source && m.id === match.id)), match].slice(-6) };
+    fillForm();
+  },
+});
 $('game-title').addEventListener('input', () => {
   $('bgg-web-search').href = bggWebsiteSearch($('game-title').value);
+  researchPanel.invalidate();
 });
 $('bgg-web-search').addEventListener('click', () => {
   $('bgg-web-search').href = bggWebsiteSearch($('game-title').value);
 });
-async function selectBgg(id, currentDraft) {
-  if (draft !== currentDraft || state.busy || state.importing) return;
-  const selection = ++bggSequence;
-  state.importing = true;
-  $('bgg-search').disabled = true;
-  $('bgg-search').setAttribute('aria-busy', 'true');
-  $('save-game').disabled = true;
-  $('bgg-results')
-    .querySelectorAll('button')
-    .forEach((button) => (button.disabled = true));
-  $('bgg-status').textContent = 'Buscando capa e informações do jogo…';
-  try {
-    const metadata = await repository.lookup('thing', id);
-    if (draft !== currentDraft) return;
-    const sourceURL = `https://boardgamegeek.com/boardgame/${metadata.id}`;
-    const description = plainText(metadata.description).slice(0, 2000);
-    const short = description.length > 600 ? description.slice(0, 600).replace(/\s+\S*$/, '') + '…' : description;
-    draft = {
-      ...draft,
-      title: metadata.title || draft.title,
-      description: short || draft.description,
-      minPlayers: metadata.minPlayers || draft.minPlayers,
-      maxPlayers: metadata.maxPlayers || draft.maxPlayers,
-      durationMinutes: metadata.durationMinutes || draft.durationMinutes,
-      bgg: {
-        id: metadata.id,
-        url: sourceURL,
-        matchedAt: Date.now(),
-        original: { title: metadata.title, description: metadata.description, minPlayers: metadata.minPlayers, maxPlayers: metadata.maxPlayers, durationMinutes: metadata.durationMinutes },
-      },
-      sources: { ...draft.sources },
-    };
-    for (const field of ['title', 'players', 'duration', 'description'].filter((field) =>
-      field === 'title' ? metadata.title : field === 'players' ? metadata.minPlayers && metadata.maxPlayers : field === 'duration' ? metadata.durationMinutes : short,
-    ))
-      draft.sources[field] = {
-        source: 'BoardGameGeek · correspondência confirmada',
-        excerpt: field === 'title' ? metadata.title : field === 'players' ? `${metadata.minPlayers ?? '—'}–${metadata.maxPlayers ?? '—'} jogadores` : field === 'duration' ? `${metadata.durationMinutes ?? '—'} minutos` : description.slice(0, 600),
-      };
-    const cover = safeImageUrl(metadata.image || metadata.thumbnail);
-    if (cover) {
-      try {
-        const selectedDraft = draft,
-          image = await imageToJpeg(await repository.fetchBggCover(metadata.id));
-        if (draft !== selectedDraft || selection !== bggSequence) return;
-        draftCoverBlob = image;
-        draft.cover = { kind: 'bgg', url: '', attribution: sourceURL, sourceUrl: cover };
-        draft.sources.cover = { source: 'BoardGameGeek · cópia no Drive central', excerpt: sourceURL };
-      } catch {
-        showNotice('Não foi possível importar a capa do BGG. Mantivemos a capa do manual para você revisar.');
-      }
-    }
-    fillForm();
-    $('bgg-results').replaceChildren();
-    $('bgg-status').textContent = 'Correspondência selecionada. Confira os dados; a descrição do BGG pode estar em inglês.';
-  } catch (error) {
-    if (draft === currentDraft) $('bgg-status').textContent = errorMessage(error);
-  } finally {
-    if (selection === bggSequence) {
-      state.importing = false;
-      $('save-game').disabled = false;
-      $('bgg-search').disabled = !APP_CONFIG.enableBgg || repository.mode !== 'firebase';
-      $('bgg-search').removeAttribute('aria-busy');
-    }
-    $('bgg-results')
-      .querySelectorAll('button')
-      .forEach((button) => (button.disabled = false));
-  }
-}
-function plainText(value) {
-  const doc = new DOMParser().parseFromString(String(value || ''), 'text/html');
-  return doc.body.textContent.replace(/\s+/g, ' ').trim();
-}
+$('game-form')
+  .elements.namedItem('language')
+  .addEventListener('change', () => researchPanel.invalidate());
+$('game-form')
+  .elements.namedItem('edition')
+  .addEventListener('input', () => researchPanel.invalidate());
 $('game-form').onsubmit = async (event) => {
   event.preventDefault();
   if (!draft || state.busy || state.importing) return;
@@ -737,6 +729,8 @@ $('game-form').onsubmit = async (event) => {
       ['language', 'language'],
     ])
       if ((draft[field] ?? '') !== (normalized[field] ?? '')) sources[sourceField] = { source: 'Conferido e ajustado por você', excerpt: sourceField === 'players' ? playersLabel(normalized) : String(normalized[field] ?? '') };
+    for (const field of ['tags', 'mechanics']) if (JSON.stringify(draft[field] || []) !== JSON.stringify(normalized[field])) sources[field] = { source: 'Conferido e ajustado por você', excerpt: normalized[field].join(', ') };
+    researchPanel.cancel();
     state.busy = true;
     $('game-form')
       .querySelectorAll('button,input,textarea,select')
@@ -767,7 +761,7 @@ $('game-form').onsubmit = async (event) => {
     $('game-form')
       .querySelectorAll('button,input,textarea,select')
       .forEach((el) => (el.disabled = false));
-    $('bgg-search').disabled = !APP_CONFIG.enableBgg || repository.mode !== 'firebase';
+    $('bgg-search').disabled = true;
     $('upload-progress').hidden = true;
   }
 };
@@ -1023,7 +1017,6 @@ function updateSession(session) {
 }
 async function start() {
   setupContent();
-  $('bgg-attribution').hidden = !APP_CONFIG.enableBgg;
   try {
     repository = localMode ? await (await import('./local-repository.js')).createLocalRepository() : await (await import('./firebase-repository.js')).createFirebaseRepository(APP_CONFIG);
     adminPanel = createAdminPanel({ repository, config: APP_CONFIG, onNotice: showNotice, onError: errorMessage });

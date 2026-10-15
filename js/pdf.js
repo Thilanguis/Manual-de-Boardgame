@@ -67,6 +67,7 @@ export async function inspectPdf(file, { maxBytes, onProgress = () => {}, signal
     const metadata = await pdf.getMetadata().catch(() => ({ info: {} }));
     let firstLines = [],
       text = '';
+    const pageTexts = [];
     const count = Math.min(pdf.numPages, 12);
     for (let pageNumber = 1; pageNumber <= count; pageNumber++) {
       signal?.throwIfAborted();
@@ -75,7 +76,9 @@ export async function inspectPdf(file, { maxBytes, onProgress = () => {}, signal
       const content = await page.getTextContent();
       const lines = linesFromItems(content.items);
       if (pageNumber === 1) firstLines = lines;
-      text += '\n' + lines.map((line) => line.text).join('\n');
+      const pageText = lines.map((line) => line.text).join('\n');
+      pageTexts.push(pageText);
+      text += '\n' + pageText;
       if (text.length > 80000) break;
     }
     signal?.throwIfAborted();
@@ -92,6 +95,11 @@ export async function inspectPdf(file, { maxBytes, onProgress = () => {}, signal
     const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
     const candidates = titleCandidates({ metadataTitle: metadata.info?.Title, filename: file.name, lines: firstLines });
     const fields = extractMetadata(text);
+    for (const value of Object.values(fields.sources)) {
+      const found = pageTexts.findIndex((page) => page.replace(/[‐‑–—]/g, '-').includes(value.excerpt));
+      if (found >= 0) value.page = found + 1;
+    }
+    if (fields.sources.originalTitle && !candidates.some((c) => c.text === fields.sources.originalTitle.excerpt)) candidates.push({ text: fields.sources.originalTitle.excerpt, source: 'PDF · título original explícito' });
     return {
       ...fields,
       title: candidates[0]?.text || '',

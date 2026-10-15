@@ -283,8 +283,9 @@
         <span class="brand-dot">.</span>
       </a>
       <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
-      <span>v1.3.2</span>
+      <span>v1.4.0</span>
       <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
+      <a id="ludopedia-attribution" href="https://ludopedia.com.br" target="_blank" rel="noopener noreferrer" hidden>Dados: Ludopedia</a>
     </footer>
     <dialog id="upload-dialog" class="wide-dialog" aria-labelledby="upload-title">
       <div class="dialog-header">
@@ -341,6 +342,39 @@
                 <input name="title" id="game-title" required maxlength="160" placeholder="Nome do jogo" />
               </label>
               <div id="title-suggestions" class="title-suggestions"></div>
+              <section id="research-panel" class="research-panel" aria-label="Pesquisa de jogos em múltiplas fontes">
+                <h3>Completar com fontes confiáveis</h3>
+                <div class="form-row">
+                  <label>
+                    Idioma preferido das informações
+                    <select data-research-language>
+                      <option value="pt-BR">Português brasileiro</option>
+                      <option value="fr">Francês</option>
+                      <option value="en">Inglês</option>
+                    </select>
+                  </label>
+                  <label>
+                    Tipo do manual
+                    <select data-research-kind>
+                      <option value="unknown">Ainda não confirmado</option>
+                      <option value="base">Jogo base</option>
+                      <option value="expansion">Expansão</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="research-actions">
+                  <button type="button" class="button secondary small" data-research-search>Pesquisar fontes</button>
+                  <button type="button" class="text-button" data-research-expand>Ampliar pesquisa</button>
+                  <button type="button" class="text-button" data-research-cancel hidden>Cancelar pesquisa</button>
+                </div>
+                <p data-research-status role="status" aria-live="polite"></p>
+                <div data-research-results class="research-results"></div>
+                <div data-research-review class="research-review" hidden></div>
+                <details>
+                  <summary>Disponibilidade e referências manuais</summary>
+                  <div data-research-sources></div>
+                </details>
+              </section>
               <div class="bgg-search">
                 <button class="button secondary small" type="button" id="bgg-search" aria-describedby="bgg-status">
                   <svg><use href="#i-search" /></svg>
@@ -352,7 +386,7 @@
               <div id="bgg-results" class="bgg-results"></div>
               <label>
                 Sobre o jogo
-                <textarea name="description" rows="4" maxlength="2000" placeholder="Uma descrição curta, quando identificada no manual ou no BGG."></textarea>
+                <textarea name="description" rows="4" maxlength="2000" placeholder="Uma descrição curta, com fonte identificada e conteúdo revisado."></textarea>
               </label>
               <div class="fields-row">
                 <label>
@@ -378,6 +412,7 @@
                 <select name="language">
                   <option value="pt-BR">Português</option>
                   <option value="en">Inglês</option>
+                  <option value="fr">Francês</option>
                   <option value="es">Espanhol</option>
                   <option value="other">Outro</option>
                 </select>
@@ -452,6 +487,7 @@
             <button class="button secondary" id="learn-game">Aprender a jogar</button>
             <button class="button secondary" id="quick-rules">Consulta rápida</button>
           </div>
+          <div id="detail-catalog-sources" class="catalog-attributions"></div>
           <a class="text-button" id="detail-source" target="_blank" rel="noopener noreferrer" hidden>Dados do BoardGameGeek ↗</a>
           <div class="admin-actions" id="detail-admin" hidden>
             <button class="text-button" id="edit-game">

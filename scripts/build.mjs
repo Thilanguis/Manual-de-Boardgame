@@ -11,7 +11,8 @@ for (const path of ['index.html', 'styles', 'js', 'assets', 'vendor', 'manifest.
 await mkdir(resolve(target, 'config'));
 await cp(resolve(root, 'config/app-config.js'), resolve(target, 'config/app-config.js'));
 const config = await readFile(resolve(target, 'config/app-config.js'), 'utf8');
-if (/PRIVATE KEY|private_key|(?:BGG_TOKEN|client_secret|refresh_token|GOOGLE_CLIENT_SECRET|GOOGLE_REFRESH_TOKEN|TICKET_KEY)\s*[:=]/i.test(config)) throw new Error('A configuração contém uma possível credencial privada.');
+if (/PRIVATE KEY|private_key|(?:LUDOPEDIA_TOKEN|BGG_TOKEN|app_key|access_token|client_secret|refresh_token|GOOGLE_CLIENT_SECRET|GOOGLE_REFRESH_TOKEN|TICKET_KEY)\s*[:=]/i.test(config))
+  throw new Error('A configuração contém uma possível credencial privada.');
 await writeFile(resolve(target, '.nojekyll'), '');
 const files = await readdir(target);
 console.log(`Aplicativo estático preparado em ${target} (${files.length} entradas). Sem transpilar ou empacotar frameworks.`);

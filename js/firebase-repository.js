@@ -4,6 +4,7 @@ import { OWNER_UID, accessFor, emptyPermissions, profileSummary, userChange } fr
 import { annotateAvailability } from './catalog-availability.js';
 import { requestBgg } from './bgg-client.js';
 import { createGuideRepository } from './guide-repository.js';
+import { researchRequest } from './research-client.js';
 const SDK = 'https://www.gstatic.com/firebasejs/13.0.0';
 
 export async function createFirebaseRepository(config) {
@@ -164,6 +165,11 @@ export async function createFirebaseRepository(config) {
     fetchBggCover(id) {
       requireWrite();
       return files.bggCover(id);
+    },
+    research(source, input, options) {
+      if (!config.fileStorage?.apiBase) throw new Error('Configure o endereço da API para pesquisar fontes externas.');
+      if (source !== 'sources') requireWrite();
+      return researchRequest(config.fileStorage.apiBase, () => auth.currentUser?.getIdToken(), source, input, options);
     },
     async getCoverURL(game) {
       if (game.cover?.url && !game.cover.driveFileId) return safeImageUrl(game.cover.url);

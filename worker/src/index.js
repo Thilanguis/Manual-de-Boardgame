@@ -3,6 +3,7 @@ import { getDocument, requirePermission, driveToken, driveMetadata, requireProje
 import { XMLParser } from 'fast-xml-parser';
 import { parseSearch, parseThing } from '../../backend/bgg-parser.js';
 import { cleanupGuides } from './guide-assets.js';
+import { sourceStatus, queryCatalog } from './catalog/index.js';
 
 const CHUNK_LIMIT = 8 * 1024 * 1024,
   JSON_LIMIT = 16384;
@@ -253,7 +254,7 @@ async function bgg(request, env, identity) {
     if (error.status !== 403) throw error;
     await requirePermission(env, identity, 'edit');
   }
-  if (!env.BGG_TOKEN) throw new ApiError(503, 'O reconhecimento pelo BGG ainda não foi ativado pelo administrador.');
+  if (!sourceStatus(env).find((source) => source.id === 'bgg').enabled) throw new ApiError(503, 'O reconhecimento pelo BGG exige aplicação aprovada, token e logo oficial de atribuição.');
   const input = await readJSON(request);
   let endpoint;
   if (input.action === 'search' && typeof input.query === 'string' && input.query.trim().length >= 2 && input.query.length <= 160) endpoint = `search?type=boardgame&query=${encodeURIComponent(input.query.trim())}`;
@@ -274,6 +275,7 @@ async function bgg(request, env, identity) {
   return json(data);
 }
 async function bggCover(request, env, identity, id) {
+  if (env.BGG_IMAGE_REUSE !== 'authorized') throw new ApiError(403, 'A importação de imagens desta fonte exige autorização específica de reutilização. Use a capa do PDF.');
   if (!/^[1-9]\d{0,8}$/.test(id)) throw new ApiError(400, 'Jogo BGG inválido.');
   const metadata = await (await bgg(new Request(request.url, { method: 'POST', body: JSON.stringify({ action: 'thing', id }) }), env, identity)).json();
   const url = new URL(metadata.image || metadata.thumbnail || 'https://invalid.invalid');
@@ -320,7 +322,10 @@ export async function handleRequest(request, env) {
         const claims = await verifyFirebaseToken(token, env.FIREBASE_PROJECT_ID);
         identity = { uid: claims.sub, token };
       }
-      if (url.pathname === '/v1/catalog/status' && request.method === 'POST') response = await catalogStatus(request, env, identity);
+      const research = /^\/v1\/research\/(wikidata|ludopedia|bgg)$/.exec(url.pathname);
+      if (url.pathname === '/v1/research/sources' && request.method === 'GET') response = json({ sources: sourceStatus(env) });
+      else if (research && request.method === 'POST') response = json(await queryCatalog(research[1], await readJSON(request), env, identity, request.signal));
+      else if (url.pathname === '/v1/catalog/status' && request.method === 'POST') response = await catalogStatus(request, env, identity);
       else if (url.pathname === '/v1/uploads' && request.method === 'POST') response = await uploadStart(request, env, identity);
       else if (url.pathname === '/v1/uploads/chunk' && request.method === 'PUT') response = await uploadChunk(request, env, identity);
       else if (url.pathname === '/v1/uploads/status' && request.method === 'POST') response = await uploadChunk(request, env, identity, true);

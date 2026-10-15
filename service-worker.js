@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.3.2';
+const VERSION = 'acervo-v1.4.0';
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
 const ESSENTIAL = [
@@ -20,6 +20,8 @@ const ESSENTIAL = [
   './js/permissions.js',
   './js/catalog-availability.js',
   './js/bgg-client.js',
+  './js/research-client.js',
+  './js/research-panel.js',
   './js/guide-model.js',
   './js/guide-repository.js',
   './js/guide-panel.js',

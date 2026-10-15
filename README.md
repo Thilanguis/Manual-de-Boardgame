@@ -17,6 +17,10 @@ O Drive central está configurado no Worker e em `config/app-config.js`. Consult
 
 Cada jogo oferece **Aprender a jogar**, **Consulta rápida** e **Manual completo**. Administradores com `editGames` podem analisar todas as páginas, organizar sugestões extraídas, editar seções com imagens e publicar após revisão. Rascunhos ficam privados; texto de índices completos é comprimido no Drive, com busca em Web Worker no navegador. A versão não usa IA nem OCR pago. [Uso, arquitetura, limites e testes](docs/BIBLIOTECA-INTELIGENTE.md).
 
+## Reconhecimento com múltiplas fontes
+
+O PDF continua como fonte principal. A pesquisa automática usa conectores independentes, resultados progressivos e prazos curtos, com idioma preferido PT-BR, cancelamento e opção **Ampliar pesquisa**. Cada campo externo exige revisão antes de aplicar; identidades, aliases, conflitos e atribuições são preservados. Wikidata está ativo sem chave. Ludopedia tem prioridade brasileira e conector preparado, aguardando token da aplicação autorizada. BGG aguarda aplicação aprovada, token e logo oficial. Editoras/lojas brasileiras, francesas e canadenses permanecem referências manuais enquanto não houver integração autorizada. [Investigação, fontes, condições e ativação segura](docs/FONTES-RECONHECIMENTO.md).
+
 ## Pessoas e permissões
 
 Visitantes leem conteúdo público sem conta. Novas contas recebem pending/user, sem privilégios. Aprovação as torna usuários comuns. O proprietário pode promover a subadmin, configurar approveUsers/addGames/editGames, rebaixar ou bloquear. Exclusão definitiva é exclusiva do superadmin; subadmins não gerenciam cargos ou configurações. Seu UID está fixado e protegido contra alterações pelo cliente.
@@ -57,7 +61,7 @@ Ferramentas de desenvolvimento têm overrides de correção para dependências t
 
 O [guia Firebase](docs/FIREBASE.md) explica bootstrap seguro do UID proprietário, regras, estados, painel e cotas. O [guia Google Drive/Cloudflare](docs/GOOGLE-DRIVE-CLOUDFLARE.md) contém Console Google Cloud, OAuth Web, escopo mínimo, Picker local autorizado, secrets e teste de envio real à pasta existente. Nenhuma nova pasta é criada automaticamente.
 
-BGG é opcional, via Worker com token secreto aprovado; vem desativado. PDFs escaneados não passam por OCR; campos sem evidência ficam desconhecidos para revisão. Favoritos e progresso continuam locais. Manuais interativos permanecem reservados para uma etapa futura.
+BGG é opcional, via Worker com token secreto aprovado; vem desativado. PDFs escaneados não passam por OCR; campos sem evidência ficam desconhecidos para revisão. Favoritos e progresso continuam locais. Manuais interativos e consulta rápida já estão disponíveis.
 
 ## Organização
 
