@@ -215,7 +215,7 @@ try {
   await owner.locator('[name=maxDurationMinutes]').fill('120');
   await owner.locator('#game-back').click();
   await owner.locator('[data-research-search]').click();
-  await owner.locator('.research-card button').click();
+  await owner.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
   assert.equal(await owner.locator('[data-research-field=title]').isChecked(), false);
   assert.equal(await owner.locator('[data-research-field=maxDurationMinutes]').isChecked(), false);
   await owner.locator('[data-research-field=maxDurationMinutes]').check();

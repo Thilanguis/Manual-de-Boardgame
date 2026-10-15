@@ -72,7 +72,7 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     assert.equal(await page.locator('#game-form [name=description]').inputValue(), '');
     await page.locator('#review-pending-suggestions').click();
-    await page.locator('.research-card button').click();
+    await page.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
     await page.locator('[data-research-review] input[type=checkbox]').last().check();
     await page.locator('[data-research-review] button').click();
     assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true);
@@ -89,7 +89,7 @@ try {
     });
     await page.locator('#game-back').click();
     await page.locator('[data-research-search]').click();
-    await page.locator('.research-card button').click();
+    await page.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
     for (const box of await page.locator('[data-research-review] input[type=checkbox]').all()) await box.check();
     await page.locator('[data-research-review] button').click();
     assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true, 'Aplicar sugestões deve abrir a etapa 2 mesmo com duração ainda incompleta');
@@ -106,7 +106,7 @@ try {
     });
     await page.locator('#game-back').click();
     await page.locator('[data-research-search]').click();
-    await page.locator('.research-card button').click();
+    await page.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
     const confirm = page.locator('[data-research-review] input[type=checkbox]').last();
     await confirm.check();
     assert.equal(await page.locator('[data-research-review] button').isDisabled(), true);

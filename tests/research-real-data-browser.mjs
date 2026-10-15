@@ -56,7 +56,7 @@ try {
     await page.waitForFunction(() => document.getElementById('account-label').textContent === 'Local');
     await page.locator('#empty-action').click();
     await page.locator('#pdf-file').setInputFiles(process.env.ACERVO_REAL_PDF);
-    await page.locator('.research-card[data-research-source=wikidata] button').click();
+    await page.locator('.research-card[data-research-source=wikidata]').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
     for (const box of await page.locator('[data-research-review] input[type=checkbox]').all()) await box.check();
     await page.locator('[data-research-review] button').click();
     assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true);

@@ -99,7 +99,7 @@ try {
   assert.equal(await page.locator('.research-card').count(), 1);
   assert.equal(await page.locator('#save-game').isEnabled(), true);
   assert.match(await page.locator('[data-research-status]').textContent(), /jogo encontrado.*Buscando mais/);
-  await page.locator('.research-card button').first().click();
+  await page.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).first().click();
   assert.equal(await page.locator('[data-research-field=minPlayers]').isChecked(), false);
   assert.equal(await page.locator('[data-research-field=minDurationMinutes]').isChecked(), false);
   assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '45');
@@ -117,7 +117,8 @@ try {
   await page.locator('[data-research-kind]').selectOption('base');
   await page.locator('[data-research-search]').click();
   await page.waitForFunction(() => document.querySelectorAll('.research-card').length === 2);
-  assert.equal(await page.locator('.research-card').filter({ hasText: 'Catan Expansão' }).locator('button').isDisabled(), true);
+  assert.equal(await page.locator('.research-card').filter({ hasText: 'Catan Expansão' }).getByRole('button', { name: 'Revisar sugestões', exact: true }).isDisabled(), true);
+  assert.equal(await page.locator('.research-card').filter({ hasText: 'Catan Expansão' }).locator('[data-research-use-all]').isDisabled(), true);
   await page.evaluate(() => (window.delayLudo = 6000));
   await page.locator('[data-research-expand]').click();
   await page.locator('[data-research-cancel]').click();

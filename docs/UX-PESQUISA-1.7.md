@@ -66,3 +66,11 @@ O teste administrativo com Auth/Firestore emulados também passou recebendo `1�
 ## Ajuste 1.7.4 — disposição anterior da biblioteca
 
 Restaurados os espaçamentos do destaque e a apresentação dos títulos dos cards anteriores ao refinamento 1.7.0. Sobre o acervo volta à faixa acima da biblioteca; atualização manual permanece discreta na posição anterior aos filtros. O bloco original do rodapé volta ao mesmo contêiner da biblioteca. Textos curtos e diagnóstico recolhido foram preservados, sem estado técnico na página inicial. Destaque acima da biblioteca, último clique, revisão manual e correções de duração continuam funcionando.
+
+## Atalhos 1.7.5 — aceitar sugestões em conjunto
+
+Cada resultado oferece Revisar sugestões e Usar sugestões lado a lado, tanto na inclusão quanto na edição. Usar sugestões carrega os detalhes da fonte quando necessário e transfere todos os campos disponíveis à etapa 2, sem abrir a lista. Substituições e divergências exigem confirmação; cancelar preserva os dados. Alterações feitas durante uma consulta interrompem a aplicação, em vez de sobrescrever a edição. Nenhum atalho publica automaticamente.
+
+A revisão mantém os campos individuais e inclui Selecionar todos, com estado parcial e opção de desmarcar todos. A confirmação do jogo/edição permanece separada. Ambos os caminhos compartilham aplicação, validação de permissões/tipo, proveniência e verificação de abertura da etapa 2. Upload e layout da biblioteca não foram alterados.
+
+Os testes de duração em navegador exercitam agora o atalho direto na inclusão, seleção/desmarcação em lote na revisão e, na edição, cancelamento e aceitação de substituição, preservação de texto fora da sugestão, salvamento e reabertura em desktop/celular. API e OCR são simulados; formulário e armazenamento local são reais, em perfil descartável.

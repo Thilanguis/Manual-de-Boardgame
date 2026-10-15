@@ -160,6 +160,11 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       action.type = 'button';
       action.className = 'button secondary small';
       action.onclick = () => select(original);
+      const useAll = node('button', 'Usar sugestões');
+      useAll.type = 'button';
+      useAll.className = 'button primary small';
+      useAll.dataset.researchUseAll = '';
+      useAll.onclick = () => select(original, true);
       card.append(heading);
       if (candidate.secondaryTitle) card.append(node('p', candidate.secondaryTitle));
       const source = candidate.url ? link(sourceNames[candidate.source], candidate.url) : node('small', sourceNames[candidate.source]);
@@ -176,7 +181,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       }
       if (facts.length) card.append(metadata);
       const additional = selectedFields(candidate, {}).filter((field) => field.key !== 'title').length;
-      card.append(node('small', additional ? 'Escolha quais informações usar na revisão.' : candidate.needsDetail ? 'Abra a revisão para consultar os dados desta fonte.' : 'Só o título foi encontrado. Sem outros dados para preencher.'));
+      card.append(node('small', additional ? 'Use todas as sugestões ou escolha os campos na revisão.' : candidate.needsDetail ? 'Abra a revisão para consultar os dados desta fonte.' : 'Só o título foi encontrado. Sem outros dados para preencher.'));
       const details = disclosure('Edição, nomes e direitos de uso');
       details.append(node('p', candidate.edition ? `Edição: ${candidate.edition}` : 'A fonte não confirmou a edição do seu manual.'));
       const names = [...new Set(candidate.names.map((name) => name.value))];
@@ -197,10 +202,13 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       if (related.length) details.append(node('p', `Também identificado em ${related.map((c) => sourceNames[c.source]).join(', ')}.`));
       card.append(details);
       if (kind.value !== 'unknown' && candidate.kind !== 'unknown' && candidate.kind !== kind.value) {
-        action.disabled = true;
+        action.disabled = useAll.disabled = true;
         card.append(node('p', 'Tipo incompatível com o manual; não aplicar.'));
       }
-      card.append(action);
+      const actions = node('div');
+      actions.className = 'research-actions';
+      actions.append(action, useAll);
+      card.append(actions);
       list.append(card);
     }
     const diagnostics = root.querySelector('[data-research-diagnostics]');
@@ -256,8 +264,9 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       }
     }
   }
-  async function select(candidate) {
+  async function select(candidate, acceptAll = false) {
     if (!canUse()) return;
+    const initial = getCurrent();
     detailController?.abort();
     detailController = new AbortController();
     const selectionController = detailController;
@@ -265,8 +274,9 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     cancel.hidden = false;
     const signal = detailController.signal,
       n = sequence;
-    review.hidden = false;
+    review.hidden = acceptAll;
     review.replaceChildren(node('p', 'Preparando as sugestões desta fonte…'));
+    if (acceptAll) status.textContent = 'Preparando sugestões…';
     try {
       if (candidate.needsDetail) {
         const result = await getRepository().research(candidate.source, { action: 'detail', id: candidate.id, pdfLanguage: getCurrent().language, preferredLanguage: language.value, kind: kind.value }, { signal });
@@ -279,16 +289,49 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       }
       if (signal.aborted || n !== sequence || !canUse()) return;
       selected = presentCandidate(candidate, candidates);
+      if (acceptAll) {
+        const fields = selectedFields(selected, initial);
+        if (!fields.length) throw new Error('Esta fonte não trouxe campos para preencher.');
+        if (fields.some((field) => JSON.stringify(field.current) !== JSON.stringify(getCurrent()[field.key]))) throw new Error('Você alterou os dados durante a consulta. Tente usar as sugestões novamente.');
+        const conflicts = fields.filter((field) => field.conflict);
+        if (
+          (conflicts.length || selected.conflicts?.length || selected.source === 'pdf') &&
+          !window.confirm(
+            `Usar todas as sugestões de ${sourceNames[selected.source]}?${conflicts.length ? '\nSubstituir: ' + conflicts.map((field) => fieldLabels[field.key]).join(', ') + '.' : ''}\nConfira o jogo, a edição e os dados na etapa 2 antes de salvar.`,
+          )
+        ) {
+          status.textContent = 'Nenhum campo foi alterado.';
+          return;
+        }
+        if (signal.aborted || n !== sequence) return;
+        finishApplication(Object.fromEntries(fields.map((field) => [field.key, field.value])), selected);
+        return;
+      }
       showReview();
       review.scrollIntoView({ block: 'start', behavior: 'smooth' });
     } catch (error) {
-      if (!signal.aborted && n === sequence) review.replaceChildren(node('p', error.message));
+      if (!signal.aborted && n === sequence) {
+        if (acceptAll) status.textContent = error.message;
+        else review.replaceChildren(node('p', error.message));
+      }
     } finally {
       if (selectionController === detailController) {
         detailActive = false;
         cancel.hidden = !active;
       }
     }
+  }
+  function finishApplication(values, candidate) {
+    if (!canUse()) throw new Error('Não foi possível aplicar agora. Tente novamente.');
+    if (kind.value !== 'unknown' && candidate.kind !== 'unknown' && kind.value !== candidate.kind) throw new Error('Jogo base e expansão não correspondem. Revise o resultado escolhido.');
+    apply(values, candidate);
+    onApplied(values);
+    const destination = root.closest('form')?.querySelector('[data-game-step="2"]');
+    if (destination?.hidden) throw new Error('Os campos foram preenchidos, mas a etapa 2 não abriu. Use “Conferir dados” no topo para continuar.');
+    appliedCandidates.add(candidateKey(candidate));
+    notifySuggestions();
+    review.hidden = true;
+    status.textContent = 'Campos preenchidos. Confira antes de salvar.';
   }
   function showReview() {
     const current = getCurrent();
@@ -309,6 +352,13 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       details.append(p);
     }
     review.append(node('p', selected.source === 'pdf' ? 'Confira o texto reconhecido nas páginas do manual.' : 'Confira se o título e a edição correspondem ao seu manual.'), details);
+    const allLabel = node('label'),
+      all = document.createElement('input');
+    all.type = 'checkbox';
+    all.dataset.researchAll = '';
+    allLabel.className = 'research-choice';
+    allLabel.append(all, node('span', 'Selecionar todos'));
+    review.append(allLabel);
     const choices = [];
     for (const field of selectedFields(selected, current)) {
       const label = node('label'),
@@ -348,9 +398,16 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     button.disabled = true;
     function updateSelection() {
       const count = choices.filter(([, box]) => box.checked).length;
+      all.checked = !!choices.length && count === choices.length;
+      all.indeterminate = count > 0 && count < choices.length;
+      all.disabled = !choices.length;
       selectionStatus.textContent = count ? `${count} campo(s) selecionado(s).` : 'Selecione ao menos um campo.';
       button.disabled = !confirm.checked || !count;
     }
+    all.onchange = () => {
+      choices.forEach(([, checkbox]) => (checkbox.checked = all.checked));
+      updateSelection();
+    };
     review.addEventListener('change', updateSelection, { signal: detailController.signal });
     updateSelection();
     review.append(selectionStatus, errorMessage, button);
@@ -379,14 +436,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       }
       // Nenhum campo muda enquanto o administrador não confirmar explicitamente.
       try {
-        apply(values, selected);
-        onApplied(values);
-        const destination = root.closest('form')?.querySelector('[data-game-step="2"]');
-        if (destination?.hidden) throw new Error('Os campos foram preenchidos, mas a etapa 2 não abriu. Use “Conferir dados” no topo para continuar.');
-        appliedCandidates.add(candidateKey(selected));
-        notifySuggestions();
-        review.hidden = true;
-        status.textContent = 'Campos preenchidos. Confira antes de salvar.';
+        finishApplication(values, selected);
       } catch (error) {
         errorMessage.textContent = error.message;
         errorMessage.hidden = false;

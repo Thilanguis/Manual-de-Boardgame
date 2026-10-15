@@ -53,12 +53,27 @@ try {
         await page.locator('.research-options summary').click();
         await page.locator('[data-research-ocr]').click();
       }
-      await page.locator('.research-card button').click();
-      assert.equal(await page.locator('[data-research-field=minDurationMinutes]').count(), 1, item.name);
-      assert.equal(await page.locator('[data-research-field=maxDurationMinutes]').count(), 1, item.name);
-      for (const box of await page.locator('[data-research-review] input[type=checkbox]').all()) await box.check();
-      await page.locator('[data-research-review] button').click();
-      assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true);
+      if (item.name.startsWith('fixa-')) {
+        const accept = (dialog) => dialog.accept();
+        page.on('dialog', accept);
+        await page.locator('[data-research-use-all]').click();
+        assert.equal(await page.locator('[data-research-review]').isVisible(), false);
+        page.off('dialog', accept);
+      } else {
+        await page.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
+        assert.equal(await page.locator('[data-research-field=minDurationMinutes]').count(), 1, item.name);
+        assert.equal(await page.locator('[data-research-field=maxDurationMinutes]').count(), 1, item.name);
+        await page.locator('[data-research-all]').check();
+        for (const box of await page.locator('[data-research-field]').all()) assert.equal(await box.isChecked(), true);
+        await page.locator('[data-research-all]').uncheck();
+        for (const box of await page.locator('[data-research-field]').all()) assert.equal(await box.isChecked(), false);
+        await page.locator('[data-research-all]').check();
+        // Selecionar todos não confirma a revisão no lugar do administrador.
+        assert.equal(await page.locator('[data-research-review] button').isDisabled(), true);
+        await page.locator('[data-research-review] input[type=checkbox]').last().check();
+        await page.locator('[data-research-review] button').click();
+      }
+      assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true, item.name + ': ' + (await page.locator('[data-research-status]').textContent()));
       for (const [key, value] of [
         ['minDurationMinutes', item.expected[0]],
         ['maxDurationMinutes', item.expected[1]],
@@ -92,10 +107,38 @@ try {
       await page.locator('#game-next').click();
       assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), String(item.expected[0]));
       assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), String(item.expected[1]));
+      if (item.name === 'fixa-limites-vazios') {
+        await page.locator('#game-form [name=description]').fill('Descrição editada por mim.');
+        await page.evaluate(() => {
+          window.durationCase.fields = { durationMinutes: 90 };
+        });
+        await page.locator('#game-back').click();
+        await page.locator('[data-research-search]').click();
+        page.once('dialog', (dialog) => dialog.dismiss());
+        await page.locator('[data-research-use-all]').click();
+        await page.waitForFunction(() => document.querySelector('[data-research-status]').textContent === 'Nenhum campo foi alterado.');
+        assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '75');
+        page.once('dialog', (dialog) => dialog.accept());
+        await page.locator('[data-research-use-all]').click();
+        await page.locator('[data-game-step="2"]').waitFor({ state: 'visible' });
+        assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '90');
+        assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '90');
+        assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'Descrição editada por mim.');
+        await page.locator('#game-next').click();
+        await page.locator('[name=confirmed]').check();
+        await page.locator('#save-game').click();
+        await page.locator('#upload-dialog').waitFor({ state: 'hidden' });
+        await page.reload();
+        await page.locator('.card-main').click();
+        await page.locator('#edit-game').click();
+        await page.locator('#game-next').click();
+        assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '90');
+        assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'Descrição editada por mim.');
+      }
       assert.deepEqual(errors, []);
       await context.close();
     }
-  console.log(`${cases.length * 2} fluxos desktop/celular: duração fixa/intervalo/horas/OCR legado → revisão → dois inputs → ida/volta → registro salvo → reabertura passaram.`);
+  console.log(`${cases.length * 2} fluxos desktop/celular: usar sugestões/selecionar todos/cancelar substituição na edição → duração fixa/intervalo/horas/OCR legado → revisão → dois inputs → ida/volta → registro salvo → reabertura passaram.`);
 } finally {
   await browser.close();
 }
