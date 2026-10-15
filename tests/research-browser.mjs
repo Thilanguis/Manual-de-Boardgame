@@ -86,6 +86,7 @@ try {
       canUse: () => true,
       readPreference: () => '',
       writePreference: () => {},
+      onApplied: () => document.querySelector('[data-step-target="2"]').click(),
       apply(values, c) {
         window.appliedSource = c.source;
         for (const [k, v] of Object.entries(values)) document.getElementById('game-form').elements.namedItem(k).value = v;
@@ -109,6 +110,8 @@ try {
   assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'jogo de tabuleiro');
   assert.equal(await page.locator('[name=minPlayers]').inputValue(), '2');
   assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '45');
+  assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true);
+  await page.locator('#game-back').click();
   await page.waitForFunction(() => document.querySelectorAll('.research-card').length === 2);
   await page.locator('[data-research-kind]').selectOption('base');
   await page.locator('[data-research-search]').click();

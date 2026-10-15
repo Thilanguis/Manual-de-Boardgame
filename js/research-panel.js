@@ -15,7 +15,7 @@ const link = (label, url) => {
   return el;
 };
 const display = (value) => (Array.isArray(value) ? value.join(', ') : String(value ?? 'não informado'));
-export function createResearchPanel({ root, getRepository, getCurrent, getPdf, apply, canUse, readPreference, writePreference }) {
+export function createResearchPanel({ root, getRepository, getCurrent, getPdf, apply, canUse, readPreference, writePreference, onApplied = () => {}, onSuggestions = () => {} }) {
   let controller,
     detailController,
     sequence = 0,
@@ -30,6 +30,11 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     ocrActive = false,
     ocrCandidate = null,
     sourceFailure = '';
+  const appliedCandidates = new Set();
+  const candidateKey = (candidate) => `${candidate.source}:${candidate.id}`;
+  function notifySuggestions() {
+    onSuggestions([...(ocrCandidate ? [ocrCandidate] : []), ...candidates].filter((candidate) => !appliedCandidates.has(candidateKey(candidate))).length);
+  }
   const language = root.querySelector('[data-research-language]'),
     kind = root.querySelector('[data-research-kind]'),
     status = root.querySelector('[data-research-status]'),
@@ -62,6 +67,8 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     statuses = new Map();
     selected = null;
     ocrCandidate = null;
+    appliedCandidates.clear();
+    notifySuggestions();
     if (ocrStatus) ocrStatus.textContent = '';
     list.replaceChildren();
     review.replaceChildren();
@@ -123,6 +130,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     }
   }
   function render() {
+    notifySuggestions();
     const availability = root.querySelector('[data-research-availability]');
     if (availability) {
       availability.replaceChildren();
@@ -177,6 +185,8 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     controller = new AbortController();
     const signal = controller.signal;
     candidates = [];
+    appliedCandidates.clear();
+    notifySuggestions();
     statuses.clear();
     review.hidden = true;
     selected = null;
@@ -285,23 +295,41 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     label.className = 'research-choice';
     label.append(confirm, node('span', 'Conferi o jogo, a edição e os campos escolhidos com o PDF original.'));
     review.append(label);
-    const button = node('button', 'Aplicar campos confirmados');
+    const selectionStatus = node('p'),
+      errorMessage = node('p'),
+      button = node('button', 'Usar campos na etapa 2');
+    selectionStatus.setAttribute('aria-live', 'polite');
+    errorMessage.setAttribute('role', 'alert');
+    errorMessage.hidden = true;
     button.type = 'button';
     button.className = 'button primary small';
     button.disabled = true;
-    confirm.onchange = () => (button.disabled = !confirm.checked);
-    review.append(button);
+    function updateSelection() {
+      const count = choices.filter(([, box]) => box.checked).length;
+      selectionStatus.textContent = count
+        ? `${count} campo(s) selecionado(s) para preencher em “Conferir dados”. Valores diferentes do PDF só serão substituídos se você os selecionar.`
+        : 'Selecione pelo menos um campo para usar em “Conferir dados”.';
+      button.disabled = !confirm.checked || !count;
+    }
+    review.addEventListener('change', updateSelection, { signal: detailController.signal });
+    updateSelection();
+    review.append(selectionStatus, errorMessage, button);
     button.onclick = () => {
       if (!canUse() || !confirm.checked) return;
       if (kind.value !== 'unknown' && selected.kind !== 'unknown' && kind.value !== selected.kind) return;
       const values = Object.fromEntries(choices.filter(([, box]) => box.checked).map(([field]) => [field.key, field.value]));
+      if (!Object.keys(values).length) return;
       // Nenhum campo muda enquanto o administrador não confirmar explicitamente.
       try {
         apply(values, selected);
+        appliedCandidates.add(candidateKey(selected));
+        notifySuggestions();
         review.hidden = true;
-        status.textContent = 'Campos confirmados aplicados. A capa do PDF e os dados não selecionados foram preservados.';
+        status.textContent = 'Campos confirmados preenchidos na etapa 2. Você pode conferir e editar antes de salvar.';
+        onApplied(values);
       } catch (error) {
-        review.append(node('p', error.message));
+        errorMessage.textContent = error.message;
+        errorMessage.hidden = false;
       }
     };
   }
@@ -370,6 +398,8 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     candidates = [];
     statuses.clear();
     selected = null;
+    appliedCandidates.clear();
+    notifySuggestions();
     list.replaceChildren();
     review.hidden = true;
   }

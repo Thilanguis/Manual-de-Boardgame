@@ -349,6 +349,10 @@ label,
 .review-notice p {
   font-size: 13px;
 }
+
+#research-pending {
+  flex-direction: column;
+}
 .game-step {
   display: grid;
   gap: 20px;

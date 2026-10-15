@@ -287,7 +287,7 @@
         <span class="brand-dot">.</span>
       </a>
       <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
-      <span>v1.6.0</span>
+      <span>v1.6.1</span>
       <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
       <a id="ludopedia-attribution" href="https://ludopedia.com.br" target="_blank" rel="noopener noreferrer" hidden>Dados: Ludopedia</a>
     </footer>
@@ -425,6 +425,11 @@
               <section class="game-step" data-game-step="2" aria-labelledby="information-heading" hidden>
                 <h3 id="information-heading" tabindex="-1">Confira as informações</h3>
                 <p class="step-intro">Preencha somente o que você puder confirmar. Campos desconhecidos podem ficar em branco.</p>
+                <div id="research-pending" class="review-notice" hidden>
+                  <p id="research-pending-text" role="status"></p>
+                  <button id="review-pending-suggestions" type="button" class="button secondary small">Revisar sugestões encontradas</button>
+                </div>
+                <p id="research-applied" class="step-intro" role="status" hidden></p>
                 <label>
                   Resumo do jogo
                   <textarea name="description" rows="4" maxlength="2000" placeholder="Objetivo, contexto e o que os jogadores fazem, com origem identificada."></textarea>

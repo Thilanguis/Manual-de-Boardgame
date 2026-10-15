@@ -501,6 +501,7 @@ function formatBytes(size = 0) {
 }
 function resetDraft() {
   researchPanel.reset();
+  $('research-applied').hidden = true;
   gameSteps.reset();
   $('bgg-search').removeAttribute('aria-busy');
   importAbort?.abort();
@@ -748,6 +749,16 @@ const researchPanel = createResearchPanel({
   },
   readPreference: () => readPreferences('recognition').language,
   writePreference: (language) => writePreferences('recognition', { language }),
+  onSuggestions(count) {
+    $('research-pending').hidden = !count;
+    $('research-pending-text').textContent = `${count} resultado(s) da pesquisa aguardam revisão. As sugestões só preenchem os campos abaixo depois de você confirmar sua origem e selecionar os dados.`;
+  },
+  onApplied(values) {
+    $('research-applied').textContent =
+      `Preenchido pela pesquisa: ${[...new Set(Object.keys(values).map((key) => ({ description: 'resumo', minDurationMinutes: 'duração', maxDurationMinutes: 'duração', minPlayers: 'jogadores', maxPlayers: 'jogadores', recommendedAge: 'idade', tags: 'categorias', mechanics: 'mecânicas', gameType: 'tipo', title: 'nome', edition: 'edição' })[key] || key))].join(', ')}. Confira os valores antes de publicar.`;
+    $('research-applied').hidden = false;
+    gameSteps.go(2);
+  },
   apply(values, candidate) {
     const current = Object.fromEntries(new FormData($('game-form')).entries());
     const normalized = validateGame({ ...current, ...values }),
@@ -762,7 +773,7 @@ const researchPanel = createResearchPanel({
         };
       }
     }
-    draft = { ...draft, ...normalized, ...values, sources };
+    draft = { ...draft, ...normalized, sources };
     for (const [field, value] of Object.entries(values)) {
       const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(field) ? 'duration' : field;
       draft.sources[key] = {
@@ -808,6 +819,11 @@ const researchPanel = createResearchPanel({
     fillForm();
   },
 });
+$('review-pending-suggestions').onclick = () => {
+  gameSteps.go(1);
+  const target = $('research-panel').querySelector('[data-research-review]:not([hidden]) input, .research-card button');
+  target?.focus();
+};
 $('game-title').addEventListener('input', () => {
   $('bgg-web-search').href = bggWebsiteSearch($('game-title').value);
   $('title-warning').hidden = !isTechnicalTitle($('game-title').value);

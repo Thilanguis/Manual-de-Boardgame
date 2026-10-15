@@ -76,3 +76,9 @@ Verificações automatizadas:
 108 testes automatizados de unidades/regras (47 frontend/OAuth local, 42 Worker, 19 Firestore) passaram, além das suítes de navegador e builds. Fixtures, screenshots e relatórios brutos ficam em `test-output/`, fora do Git e da publicação.
 
 Authentication/Firestore completos foram testados em `demo-acervo`; isso não cria usuários de produção nem exercita um popup Google real. O upload central não foi refeito com arquivos particulares: o código de envio foi preservado e suas regressões continuam passando. As fontes externas podem continuar incompletas quando não houver dados autorizados, e o usuário deve confirmar o título antigo no editor. Spark, Workers Free, Drive existente e GitHub Pages permanecem a infraestrutura, sem novos serviços pagos ou credenciais.
+
+### Correção 1.6.1 — pesquisa e etapa 2
+
+A pesquisa apresentava sugestões na identificação, mas avançar deixava o formulário sem indicar que elas ainda aguardavam confirmação. Agora a etapa 2 mostra resultados pendentes com um atalho para revisá-los. “Usar campos na etapa 2” aplica os campos selecionados e leva diretamente ao formulário preenchido, com indicação do que foi aproveitado. Uma seleção vazia não pode mais ser apresentada como aplicação bem-sucedida. Erros de validação ficam visíveis na revisão; dados conflitantes continuam exigindo seleção explícita.
+
+O teste `tests/research-transfer-browser.mjs` utiliza o `app.js` real, PDF sintético e armazenamento IndexedDB real; somente o conector externo recebe uma fixture. Em desktop e celular, verificou resumo, duração fixa de 75 minutos, substituição confirmada por faixa 60–120, categorias, resumo da publicação e valores após salvar/recarregar/reabrir. A pesquisa progressiva e o cancelamento também foram verificados. Não houve alteração no upload, nas permissões ou no leitor PDF.
