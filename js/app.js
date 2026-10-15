@@ -286,7 +286,6 @@ async function renderHero() {
   const lastId = lastViewedGames.get(storageKey('last-viewed')) || readPreferences('last-viewed').gameId;
   const game = state.games.find((game) => game.id === lastId && readableGame(game));
   const hero = document.querySelector('.hero');
-  document.querySelector('main').classList.toggle('has-library', state.games.some(readableGame));
   hero.hidden = !game;
   hero.classList.toggle('has-game', !!game);
   $('hero-art').hidden = !!game;
@@ -986,7 +985,6 @@ function setupContent() {
   $('switch-mode').textContent = localMode ? 'Abrir biblioteca compartilhada' : 'Usar biblioteca deste dispositivo';
 }
 $('setup-button').onclick = () => {
-  $('setup-button').closest('details').open = false;
   setupContent();
   showDialog('setup-dialog');
 };

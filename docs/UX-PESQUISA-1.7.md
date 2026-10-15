@@ -62,3 +62,7 @@ A conversão agora acontece antes da revisão, tanto para pesquisa quanto OCR. D
 Não foram acrescentadas durações ao catálogo de produção nem novos conectores. Ausência de duração na fonte permanece ausência; esta alteração corrige o aproveitamento de valores explicitamente informados.
 
 O teste administrativo com Auth/Firestore emulados também passou recebendo `1–2,5 horas` com limites nulos: os inputs e o documento salvo contêm 60 e 150 minutos. O teste não grava no catálogo de produção.
+
+## Ajuste 1.7.3 — disposição anterior da biblioteca
+
+Restaurados os espaçamentos do destaque e a apresentação dos títulos dos cards anteriores ao refinamento 1.7.0. Sobre o acervo volta à faixa acima da biblioteca; atualização manual permanece discreta na posição anterior aos filtros. O bloco original do rodapé volta ao mesmo contêiner da biblioteca. Textos curtos e diagnóstico recolhido foram preservados, sem estado técnico na página inicial. Destaque acima da biblioteca, último clique, revisão manual e correções de duração continuam funcionando.

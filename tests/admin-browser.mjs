@@ -144,13 +144,11 @@ try {
   const guest = await page();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 1);
   driveFailure = true;
-  await guest.locator('.library-options summary').click();
   await guest.locator('#refresh-library').click();
   await guest.waitForFunction(() => document.getElementById('notice-text').textContent.includes('Falha transitória'));
   assert.equal(await guest.locator('.game-card').count(), 1);
   driveFailure = false;
   driveAvailable = false;
-  await guest.locator('.library-options summary').click();
   await guest.locator('#refresh-library').click();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 0);
   assert.equal(await guest.locator('#unavailable-games').isVisible(), false);
@@ -195,7 +193,6 @@ try {
   await owner.waitForFunction(() => !document.getElementById('read-manual').disabled);
   assert.match(await owner.locator('#detail-manual').textContent(), /páginas/);
   await owner.locator('[data-close=detail-dialog]').click();
-  await guest.locator('.library-options summary').click();
   await guest.locator('#refresh-library').click();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 1);
   assert.equal(await owner.locator('#unavailable-games').isVisible(), false);

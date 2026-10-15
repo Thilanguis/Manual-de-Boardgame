@@ -136,7 +136,9 @@ try {
     await page.locator('[data-close=detail-dialog]').click();
     assert.match(await page.locator('#hero-description').textContent(), /Sociedade/);
     assert(!(await page.locator('main').innerText()).match(/Firebase|Cloudflare|Spark|Drive central/));
-    assert.equal(await page.locator('.connection-bar').isVisible(), false);
+    assert.equal(await page.locator('#connection-status').isVisible(), false);
+    assert.equal(await page.locator('#setup-button').isVisible(), true);
+    assert.equal(await page.locator('#biblioteca > .bottom-note').count(), 1);
     if (await page.locator('#notice-close').isVisible()) await page.locator('#notice-close').click();
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
     await page.screenshot({ path: `test-output/home-one-${width}.png`, fullPage: true, animations: 'disabled' });
@@ -157,7 +159,6 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
     await page.screenshot({ path: `test-output/home-many-${width}.png`, fullPage: true, animations: 'disabled' });
-    await page.locator('.library-options summary').click();
     await page.locator('#setup-button').click();
     assert.equal(await page.locator('#setup-technical').isVisible(), false);
     await page.locator('[data-close=setup-dialog]').click();

@@ -153,11 +153,15 @@
         </div>
       </section>
       <div class="library-container" id="biblioteca">
-        <div class="connection-bar" hidden>
-          <span id="connection-status">
+        <div class="connection-bar">
+          <span id="connection-status" hidden>
             <span class="status-dot"></span>
             Conectando seu acervo…
           </span>
+          <button id="setup-button">
+            Sobre o acervo
+            <svg><use href="#i-info" /></svg>
+          </button>
         </div>
         <div id="library-error" class="inline-error" role="status" hidden></div>
         <p id="connection-warning" class="inline-error" role="status" hidden></p>
@@ -178,16 +182,7 @@
               <span class="red-dot">.</span>
             </h2>
           </div>
-          <div class="library-secondary">
-            <span class="count-badge" id="game-count">0 jogos</span>
-            <details class="library-options">
-              <summary aria-label="Opções da biblioteca">Opções</summary>
-              <div class="library-options-menu">
-                <button class="text-button" id="refresh-library" hidden>Atualizar biblioteca</button>
-                <button class="text-button" id="setup-button">Sobre o acervo</button>
-              </div>
-            </details>
-          </div>
+          <span class="count-badge" id="game-count">0 jogos</span>
         </div>
         <div class="library-toolbar">
           <label class="search-field">
@@ -218,6 +213,7 @@
             </label>
           </div>
         </div>
+        <button class="text-button" id="refresh-library" hidden>Atualizar biblioteca</button>
         <div class="filter-chips" role="group" aria-label="Filtrar jogos">
           <button class="chip active" data-filter="all" aria-pressed="true">Todos os jogos</button>
           <button class="chip" data-filter="favorites" aria-pressed="false">
@@ -267,30 +263,28 @@
           <p>Tente outro nome ou ajuste os filtros.</p>
           <button class="button secondary" id="clear-filters">Limpar filtros</button>
         </div>
+        <section class="bottom-note">
+          <div>
+            <svg><use href="#i-book" /></svg>
+            <p>
+              <strong>O manual certo. Na hora de jogar.</strong>
+              <span>Leia sem sair do Acervo, no celular, no tablet ou na sua tela favorita.</span>
+            </p>
+          </div>
+          <button id="footer-install">
+            Leve o Acervo com você
+            <svg><use href="#i-arrow" /></svg>
+          </button>
+        </section>
       </div>
     </main>
-    <div class="library-container footer-note-container">
-      <section class="bottom-note">
-        <div>
-          <svg><use href="#i-book" /></svg>
-          <p>
-            <strong>O manual certo. Na hora de jogar.</strong>
-            <span>Leia sem sair do Acervo, no celular, no tablet ou na sua tela favorita.</span>
-          </p>
-        </div>
-        <button id="footer-install">
-          Leve o Acervo com você
-          <svg><use href="#i-arrow" /></svg>
-        </button>
-      </section>
-    </div>
     <footer class="site-footer">
       <a class="brand footer-brand" href="./">
         acervo
         <span class="brand-dot">.</span>
       </a>
       <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
-      <span>v1.7.2</span>
+      <span>v1.7.3</span>
       <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
       <a id="ludopedia-attribution" href="https://ludopedia.com.br" target="_blank" rel="noopener noreferrer" hidden>Dados: Ludopedia</a>
     </footer>
