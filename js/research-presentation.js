@@ -17,7 +17,7 @@ export function candidateFacts(candidate) {
   const fields = Object.fromEntries(selectedFields(candidate, {}).map(({ key, value }) => [key, value]));
   return [
     ['Jogadores', fields.minPlayers && fields.maxPlayers ? playersLabel(fields) : fields.minPlayers ? `A partir de ${fields.minPlayers}` : fields.maxPlayers ? `Até ${fields.maxPlayers}` : ''],
-    ['Duração', fields.minDurationMinutes && fields.maxDurationMinutes ? durationLabel(fields) : ''],
+    ['Duração', fields.minDurationMinutes && fields.maxDurationMinutes ? durationLabel(fields) : fields.minDurationMinutes ? `A partir de ${fields.minDurationMinutes} min` : fields.maxDurationMinutes ? `Até ${fields.maxDurationMinutes} min` : ''],
     ['Idade', fields.recommendedAge ? `${fields.recommendedAge}+ anos` : ''],
     ['Tipo', fields.gameType],
     ['Categorias', fields.tags?.join(', ')],

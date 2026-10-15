@@ -50,3 +50,15 @@ A aplicação agora normaliza o rascunho sem exigir que os demais campos já est
 Além de Sina e do caso só-título, `tests/research-real-data-browser.mjs` foi executado com o PDF real de **The Texas Chainsaw Massacre Slaughterhouse** e os metadados públicos reais já cadastrados, usados exclusivamente como resposta simulada da pesquisa. Todas as caixas foram marcadas. Título, descrição, jogadores 2–5 e duração 45–60 foram conferidos nos inputs e no registro local salvo em desktop/celular. Esse teste não altera dados de produção, não envia o PDF ao Drive e não afirma que uma API externa forneceu esses campos.
 
 `tests/last-viewed-browser.mjs` verifica ausência de destaque antes de clicar, posição superior em 1440/768/390 px, troca pelo último clique, persistência após recarregar, manutenção da escolha após novo upload e ocultação ao remover o jogo selecionado. O rodapé anterior permanece preservado.
+
+## Correções 1.7.2 — duração encontrada e inputs de minutos
+
+Foram reproduzidas perdas na conversão de sugestões: `durationMinutes: 75` acompanhado de limites nulos era ignorado, e valores como `45 min` acabavam como `NaN`, deixando inputs numéricos vazios. O caminho do OCR também filtrava o campo de duração antigo antes de convertê-lo.
+
+A conversão agora acontece antes da revisão, tanto para pesquisa quanto OCR. Duração fixa preenche ambos os limites; intervalo explícito preserva os dois valores; horas explícitas viram minutos, sem arredondar ou estimar. Um limite ausente só é completado se a mesma resposta também fornecer a duração completa e os valores forem compatíveis. Um mínimo isolado, sem essa informação, não é transformado em duração fixa. Dados apagados pelo administrador não são recuperados a partir de um valor antigo do cadastro.
+
+`tests/research-duration.test.mjs` falhou antes da correção e passou depois. `tests/research-duration-browser.mjs` verifica cinco formatos em desktop/celular: limites vazios, um limite vazio com duração fixa explícita, número com unidade, intervalo em horas e OCR no formato antigo. Em todos os dez fluxos, confirma os dois inputs, ida/volta, números e origem no registro salvo e valores ao reabrir o cadastro. As respostas externas e do reconhecedor são fixtures identificadas, e o aplicativo/revisão/formulário/IndexedDB são reais em perfil descartável.
+
+Não foram acrescentadas durações ao catálogo de produção nem novos conectores. Ausência de duração na fonte permanece ausência; esta alteração corrige o aproveitamento de valores explicitamente informados.
+
+O teste administrativo com Auth/Firestore emulados também passou recebendo `1–2,5 horas` com limites nulos: os inputs e o documento salvo contêm 60 e 150 minutos. O teste não grava no catálogo de produção.

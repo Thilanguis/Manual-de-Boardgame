@@ -99,8 +99,9 @@ async function page() {
               description: 'Trabalhe com a Sociedade para proteger Frodo e enfrentar as ameaças da Terra-média.',
               minPlayers: 1,
               maxPlayers: 5,
-              minDurationMinutes: 60,
-              maxDurationMinutes: 150,
+              durationMinutes: '1–2,5 horas',
+              minDurationMinutes: null,
+              maxDurationMinutes: null,
               recommendedAge: 14,
               tags: ['Aventura', 'Estratégia'],
               mechanics: ['Cooperação'],
@@ -370,7 +371,7 @@ try {
   assert.equal(await applicant.locator('#profile-status').textContent(), 'Conta bloqueada');
   assert.deepEqual(errors, []);
   console.log(
-    'QA de contas/dados em emuladores: recuperação de senha aplicada e novo login, perfil sem UID em destaque, duração 60–120 salva,  cadastro pendente, aviso/contador em tempo real, aprovação, promoção, aprovação por subadmin, bloqueio imediato, histórico e responsividade passaram.',
+    'QA de contas/dados em emuladores: recuperação de senha aplicada e novo login, perfil sem UID em destaque, duração 60–150 salva a partir de horas, cadastro pendente, aviso/contador em tempo real, aprovação, promoção, aprovação por subadmin, bloqueio imediato, histórico e responsividade passaram.',
   );
 } finally {
   await browser.close();

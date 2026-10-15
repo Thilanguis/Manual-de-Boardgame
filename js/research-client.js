@@ -1,5 +1,6 @@
 import { normalizeText, durationRange, synopsisText } from './model.js';
 import { RESEARCH_PROTOCOL } from './research-contract.js';
+import { durationSuggestion } from './research-duration.js';
 
 export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', wikipedia: 'Wikipédia', pdf: 'PDF · OCR local', bgg: 'BoardGameGeek' };
 export function researchSummary(sources, statuses) {
@@ -120,8 +121,8 @@ export const fieldLabels = {
   edition: 'Edição',
 };
 export function selectedFields(candidate, current) {
-  const range = durationRange(candidate.fields);
-  const fields = { ...candidate.fields, ...(range.minDurationMinutes != null && range.maxDurationMinutes != null ? range : {}) };
+  const { durationMinutes, minDurationMinutes, maxDurationMinutes, ...otherFields } = candidate.fields;
+  const fields = { ...otherFields, ...durationSuggestion(candidate.fields) };
   current = { ...current, ...durationRange(current) };
   return Object.entries(fields)
     .filter(([key, value]) => fieldLabels[key] && value !== '' && value != null && (!Array.isArray(value) || value.length) && (key !== 'description' || synopsisText(value)))

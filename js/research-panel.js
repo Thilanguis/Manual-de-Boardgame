@@ -414,7 +414,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       });
       if (control.signal.aborted || !canUse()) return;
       const { sources: evidence, ...metadata } = result.metadata;
-      const fields = Object.fromEntries(Object.entries(metadata).filter(([key, value]) => fieldLabels[key] && value != null && value !== '' && (!Array.isArray(value) || value.length)));
+      const fields = Object.fromEntries(selectedFields({ fields: metadata }, {}).map(({ key, value }) => [key, value]));
       if (!Object.keys(fields).length) {
         ocrCandidate = null;
         if (ocrStatus) ocrStatus.textContent = 'Nenhum dado legível encontrado. Você pode preencher pelo manual.';
