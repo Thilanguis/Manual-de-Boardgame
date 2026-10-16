@@ -1,3 +1,4 @@
+import '../scripts/test-guard.mjs';
 // Servidor efêmero e perfil Chrome isolado para reproduzir cache HTTP/PWA antigo.
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';

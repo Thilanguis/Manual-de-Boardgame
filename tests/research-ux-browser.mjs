@@ -1,3 +1,5 @@
+import '../scripts/test-guard.mjs';
+import { enableLocalFixture } from './local-fixture.mjs';
 // app.js real, PDFs/IndexedDB reais em perfil descartável; somente conectores externos simulados.
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
@@ -73,6 +75,7 @@ try {
     const page = await context.newPage(),
       errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
+    await enableLocalFixture(page.context());
     await page.goto(`${process.env.ACERVO_TEST_URL || 'http://localhost:4174'}/?local=1`);
     await page.waitForFunction(() => document.getElementById('account-label').textContent === 'Local');
     await page.locator('#empty-action').click();
@@ -171,6 +174,11 @@ try {
     // Outro PDF evita a proteção legítima de duplicidade.
     await page.locator('#pdf-file').setInputFiles({ name: 'Sina-variante-PT-BR.pdf', mimeType: 'application/pdf', buffer: Buffer.concat([bytes, Buffer.from('\n%fixture-variant')]) });
     await card.waitFor();
+    await page.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
+    await page.locator('.research-options').evaluate((element) => (element.open = true));
+    await page.locator('[data-research-refresh]').check();
+    await page.locator('[data-research-search]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
     assert.match(await card.innerText(), /Só o título.*Sem outros dados/);
     assert.equal(await card.locator('.research-facts').count(), 0);
     assert(!(await card.innerText()).includes('2025 board game'));

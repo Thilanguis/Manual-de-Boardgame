@@ -655,10 +655,14 @@ label,
 }
 .detail-layout {
   grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  align-items: start;
 }
 .detail-cover {
   padding: 24px;
   min-height: 360px;
+  align-self: start;
+  position: sticky;
+  top: 0;
 }
 .detail-cover img {
   max-height: 560px;
@@ -676,6 +680,90 @@ label,
   font-size: 15px;
   line-height: 1.75;
   color: #c5bdce;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+#detail-description.expanded {
+  display: block;
+  overflow: visible;
+}
+#detail-description-toggle {
+  margin-top: -10px;
+  margin-bottom: 16px;
+}
+.game-disclosure,
+#detail-admin {
+  border-top: 1px solid var(--line);
+  padding: 16px 0;
+  margin-top: 12px;
+}
+.game-disclosure > summary,
+#detail-admin > summary {
+  cursor: pointer;
+  font-weight: 650;
+  padding: 4px 0;
+}
+.document-reading-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+.document-reading-row p {
+  font-size: 13px;
+  color: var(--muted);
+}
+.knowledge-section {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+.knowledge-section textarea {
+  width: 100%;
+  min-height: 120px;
+}
+.knowledge-section textarea,
+.knowledge-section select {
+  background: #111115;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+#game-knowledge-admin label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 10px 0;
+}
+#game-knowledge-admin input[type='checkbox'] {
+  margin-top: 3px;
+  accent-color: #ed334b;
+  flex-shrink: 0;
+}
+.knowledge-section a {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.knowledge-section select {
+  width: 100%;
+  margin: 8px 0;
+}
+.knowledge-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.knowledge-status {
+  color: var(--muted);
+  font-size: 13px;
 }
 .detail-edition {
   font-size: 14px;
@@ -748,6 +836,9 @@ label,
   }
 }
 @media (max-width: 600px) {
+  .detail-cover {
+    position: static;
+  }
   .search-field kbd {
     display: none;
   }
@@ -993,4 +1084,131 @@ label,
   #upload-dialog[data-step='3'] .review-aside {
     display: none;
   }
+}
+
+.research-choice select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* A autenticação abre antes de qualquer conteúdo privado. */
+#session-loading:not([hidden]) {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  color: var(--muted, #aaa);
+}
+body:not(.access-approved) > .site-header,
+body:not(.access-approved) > main,
+body:not(.access-approved) > .site-footer,
+body:not(.access-approved) > #reader {
+  display: none !important;
+}
+.document-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-block: 1rem;
+}
+.document-row {
+  padding: 0.8rem;
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+}
+.document-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+.document-row select,
+.document-row input {
+  max-width: 100%;
+}
+.document-row progress {
+  width: 100%;
+}
+.guide-entry-actions > div {
+  flex: 1 1 12rem;
+}
+.guide-entry-actions > div > small {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--muted, #aaa);
+}
+.document-actions details,
+.document-management {
+  width: 100%;
+}
+.document-actions summary,
+.document-management summary,
+#detail-admin > summary {
+  cursor: pointer;
+  padding-block: 0.5rem;
+}
+.document-actions details[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.document-actions details[open] > button {
+  margin: 0.3rem;
+}
+#detail-admin {
+  margin-top: 1rem;
+}
+
+/* Gestão separada da consulta: uma área por vez, sem acordeões encadeados. */
+.game-documents-summary {
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--border, #333);
+  padding-top: 1rem;
+}
+.game-documents-summary h3 {
+  font-size: 1rem;
+}
+.game-manage-entry {
+  margin-top: 1.5rem;
+}
+.management-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+}
+.management-tabs [aria-pressed='true'] {
+  border-color: #dc2646;
+  color: #fff;
+  background: #3a1820;
+}
+.management-danger {
+  border-top: 1px solid #363638;
+  margin: 0;
+  padding: 12px 26px;
+  flex: 0 0 auto;
+}
+#game-management-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#game-management-dialog .dialog-header {
+  flex: 0 0 auto;
+}
+#game-management-dialog .dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+.game-management-dialog .document-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: 0.7rem;
+}
+.game-management-dialog .document-actions details {
+  flex: 1 0 100%;
+}
+.game-management-dialog .document-list > label {
+  align-self: start;
+  margin-bottom: 1rem;
 }

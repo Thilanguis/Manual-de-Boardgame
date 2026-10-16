@@ -1,3 +1,4 @@
+import { MAX_PDF_BYTES } from '../../js/pdf-limits.js';
 import { ApiError, permissions } from './auth.js';
 import { DRIVE_FOLDER_ID } from '../../js/permissions.js';
 
@@ -23,6 +24,7 @@ export async function getDocument(env, path, token = '', fetcher = fetch) {
   const response = await fetcher(firestoreURL(env, path), { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal: AbortSignal.timeout(15000) });
   if (response.status === 404) return null;
   if (response.status === 403 || response.status === 401) throw new ApiError(403, 'Você não tem acesso a este conteúdo.');
+  if (response.status === 429) throw new ApiError(429, 'A consulta atingiu o limite disponível. Tente novamente mais tarde.');
   if (!response.ok) throw new ApiError(503, 'O Firestore não respondeu. Tente novamente.');
   const data = await response.json();
   return { ...decodeFields(data.fields || {}), _updateTime: data.updateTime };
@@ -34,7 +36,8 @@ export async function requirePermission(env, identity, action, fetcher = fetch) 
   return profile;
 }
 export async function driveToken(env, fetcher = fetch) {
-  if (env.DRIVE_FOLDER_ID && env.DRIVE_FOLDER_ID !== DRIVE_FOLDER_ID) throw new ApiError(503, 'O armazenamento deve usar a pasta PDFs indicada pelo proprietário.');
+  const simulated = env.FIREBASE_PROJECT_ID === 'demo-acervo' && env.LOCAL_SIMULATED_SERVICES === 'true' && env.DRIVE_FOLDER_ID === 'dev-acervo-folder';
+  if (env.DRIVE_FOLDER_ID && env.DRIVE_FOLDER_ID !== DRIVE_FOLDER_ID && !simulated) throw new ApiError(503, 'O armazenamento deve usar a pasta PDFs indicada pelo proprietário.');
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.GOOGLE_REFRESH_TOKEN || !env.DRIVE_FOLDER_ID || !env.DRIVE_OWNER_EMAIL) throw new ApiError(503, 'O Drive central ainda precisa ser conectado pelo proprietário.');
   if (oauthCache?.expires > Date.now() + 60000) return oauthCache.token;
   if (refreshing) return refreshing;
@@ -69,7 +72,7 @@ export function safeDriveSession(value) {
 export async function driveMetadata(env, id, fetcher = fetch) {
   if (!/^[A-Za-z0-9_-]{6,200}$/.test(String(id))) throw new ApiError(400, 'Identificador de arquivo inválido.');
   const token = await driveToken(env, fetcher);
-  const response = await fetcher(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,size,parents,appProperties,owners(emailAddress,me),trashed`, {
+  const response = await fetcher(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,size,parents,appProperties,owners(emailAddress,me),trashed,permissions(type,role)`, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(15000),
   });
@@ -77,22 +80,29 @@ export async function driveMetadata(env, id, fetcher = fetch) {
   if (!response.ok) throw new ApiError(response.status === 429 || response.status === 403 ? 429 : 502, 'Não foi possível consultar o Drive central. Confira suas cotas e a autorização da pasta.');
   return response.json();
 }
-export function belongsToProject(file, env, { gameId, kind, nonce, allowTrashed = false } = {}) {
+export function belongsToProject(file, env, { gameId, kind, nonce, documentId, sourceHash, allowTrashed = false, allowPublic = false } = {}) {
   const owner = file?.owners?.some((owner) => owner.me === true && owner.emailAddress?.toLowerCase() === env.DRIVE_OWNER_EMAIL.toLowerCase());
   return (
     !!file &&
     (allowTrashed || file.trashed !== true) &&
     owner &&
+    (allowPublic || !file.permissions?.some((permission) => ['anyone', 'domain'].includes(permission.type))) &&
     file.appProperties?.acervoProject === env.FIREBASE_PROJECT_ID &&
     (kind === 'folder'
       ? file.id === env.DRIVE_FOLDER_ID && file.mimeType === 'application/vnd.google-apps.folder'
-      : file.parents?.includes(env.DRIVE_FOLDER_ID) && file.appProperties?.gameId === gameId && file.appProperties?.kind === kind && (!nonce || file.appProperties?.uploadNonce === nonce))
+      : file.parents?.includes(env.DRIVE_FOLDER_ID) &&
+        file.appProperties?.gameId === gameId &&
+        file.appProperties?.kind === kind &&
+        (!nonce || file.appProperties?.uploadNonce === nonce) &&
+        (!documentId || file.appProperties?.documentId === documentId) &&
+        (!sourceHash || file.appProperties?.sourceHash === sourceHash))
   );
 }
 export async function requireProjectFile(env, id, context, fetcher = fetch) {
   const file = await driveMetadata(env, id, fetcher);
   if (!file) throw new ApiError(404, 'O arquivo não está disponível no Drive.');
-  if (!belongsToProject(file, env, { ...context, allowTrashed: true })) throw new ApiError(403, 'O arquivo não pertence à pasta e ao jogo autorizados.');
+  if (!context?.allowTrashed && file.permissions?.some((permission) => ['anyone', 'domain'].includes(permission.type))) throw new ApiError(403, 'O proprietário precisa remover o compartilhamento público deste arquivo no Drive.');
+  if (!belongsToProject(file, env, { ...context, allowTrashed: true, allowPublic: context?.allowTrashed === true })) throw new ApiError(403, 'O arquivo não pertence à pasta e ao jogo autorizados.');
   if (file.trashed === true && !context?.allowTrashed) throw new ApiError(410, 'Este arquivo foi removido para a lixeira do Google Drive.');
   return file;
 }
@@ -100,17 +110,20 @@ export async function deleteProjectFile(env, id, context, fetcher = fetch) {
   if (!id) return;
   const file = await driveMetadata(env, id, fetcher);
   if (!file) return;
-  if (!belongsToProject(file, env, { ...context, allowTrashed: true })) throw new ApiError(403, 'A exclusão de arquivos fora da pasta do projeto foi bloqueada.');
+  if (!belongsToProject(file, env, { ...context, allowTrashed: true, allowPublic: true })) throw new ApiError(403, 'A exclusão de arquivos fora da pasta do projeto foi bloqueada.');
   // O proprietário já removeu o arquivo. Preservar a possibilidade de restauração na lixeira.
   if (file.trashed === true) return;
   const response = await fetcher(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${await driveToken(env, fetcher)}` }, signal: AbortSignal.timeout(15000) });
   if (!response.ok && response.status !== 404) throw new ApiError(502, 'Não foi possível concluir a exclusão no Drive. Tente novamente.');
 }
 export function validateUpload(input, maxPdfBytes) {
-  if (!/^[a-f0-9-]{36}$/i.test(input.gameId) || !['manual', 'cover', 'guideAsset'].includes(input.kind)) throw new ApiError(400, 'Jogo ou tipo de arquivo inválido.');
-  const max = input.kind === 'manual' ? maxPdfBytes : 8 * 1024 * 1024;
-  const mimeTypes = input.kind === 'guideAsset' ? ['image/jpeg', 'application/gzip'] : [input.kind === 'manual' ? 'application/pdf' : 'image/jpeg'];
-  if (!Number.isInteger(input.size) || input.size < 1 || input.size > max || !mimeTypes.includes(input.mimeType)) throw new ApiError(400, 'O arquivo tem tamanho ou formato não permitido.');
+  if (!/^[a-f0-9-]{36}$/i.test(input.gameId) || !['manual', 'cover', 'guideAsset', 'document', 'documentIndex'].includes(input.kind)) throw new ApiError(400, 'Jogo ou tipo de arquivo inválido.');
+  const max = ['manual', 'document'].includes(input.kind) ? Math.min(MAX_PDF_BYTES, maxPdfBytes || MAX_PDF_BYTES) : 8 * 1024 * 1024;
+  const mimeTypes = input.kind === 'guideAsset' ? ['image/jpeg', 'application/gzip'] : input.kind === 'documentIndex' ? ['application/gzip'] : [['manual', 'document'].includes(input.kind) ? 'application/pdf' : 'image/jpeg'];
+  if (['document', 'documentIndex'].includes(input.kind) && (!/^(main|[a-f0-9-]{36})$/.test(input.documentId || '') || !/^[a-f0-9]{64}$/.test(input.sourceHash || ''))) throw new ApiError(400, 'Documento ou versão inválidos.');
+  if (!Number.isInteger(input.size) || input.size < 1) throw new ApiError(400, 'O tamanho do arquivo é inválido.');
+  if (!mimeTypes.includes(input.mimeType)) throw new ApiError(400, 'O formato deste arquivo não é permitido.');
+  if (input.size > max) throw new ApiError(413, `Este arquivo ultrapassa o limite de ${max / 1024 / 1024} MiB permitido pelo servidor.`);
   const name = String(input.name || '')
     .replace(/[\r\n\x00-\x1f]/g, ' ')
     .trim()

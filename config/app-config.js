@@ -1,5 +1,8 @@
+import { MAX_PDF_BYTES } from '../js/pdf-limits.js';
+import { DEV_CONFIG } from '../js/development.js';
+
 // Configuração WEB pública do NOVO projeto. Nunca use conta de serviço ou token BGG aqui.
-export const APP_CONFIG = {
+const HOSTED_CONFIG = {
   firebase: {
     apiKey: 'AIzaSyAldLivHy0rW_G0Y_j3CMbTeRRwgPCn_6s',
     authDomain: 'manual-de-boardgame.firebaseapp.com',
@@ -15,5 +18,6 @@ export const APP_CONFIG = {
   bggEndpoint: '',
   enableBgg: false,
   allowPasswordLogin: true,
-  maxPdfBytes: 50 * 1024 * 1024,
+  maxPdfBytes: MAX_PDF_BYTES,
 };
+export const APP_CONFIG = typeof location !== 'undefined' && location.hostname !== 'thilanguis.github.io' ? DEV_CONFIG : HOSTED_CONFIG;

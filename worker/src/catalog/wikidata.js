@@ -1,4 +1,4 @@
-import { facts, positive, text } from './io.js';
+import { facts, positive, text, catalogPlans } from './io.js';
 import { queryVariants, reviewedIdentity } from '../../../js/game-identities.js';
 import { normalizeText } from '../../../js/model.js';
 
@@ -21,13 +21,13 @@ export function wikidataCandidate(entity, language = 'pt-BR', classesData = {}, 
     .find((v) => /^[1-9]\d{0,8}$/.test(String(v)));
   // Um título homônimo de cidade/filme/videogame nunca basta para identificar um jogo.
   const classes = itemIDs(entity, 'P31');
-  if (!classes.includes('Q131436') && !bgg) return null;
+  if (!classes.some((id) => ['Q131436', 'Q142714', 'Q60474521'].includes(id)) && !bgg) return null;
   if (classes.some((id) => ['Q7889', 'Q5398426', 'Q21192438'].includes(id))) return null;
   const title = preferred(entity.labels, language, pdfLanguage),
     description = preferred(entity.descriptions, language, pdfLanguage);
   if (!title) return null;
   const conflicts = [];
-  const quantity = (property, field, max, units) => {
+  const quantity = (property, field, max, units, factors = {}) => {
     const all = claims(entity, property);
     // Qualificadores podem distinguir edições; não fundir números dessas afirmações.
     const ambiguous = all.some((c) => Object.keys(c.qualifiers || {}).length);
@@ -37,7 +37,7 @@ export function wikidataCandidate(entity, language = 'pt-BR', classesData = {}, 
           .filter((c) => !Object.keys(c.qualifiers || {}).length)
           .map((c) => {
             const value = c.mainsnak.datavalue?.value;
-            return value && units.includes(value.unit) ? positive(value.amount, max) : null;
+            return value && units.includes(value.unit) ? positive(Number(value.amount) * (factors[value.unit] || 1), max) : null;
           })
           .filter(Boolean),
       ),
@@ -54,7 +54,17 @@ export function wikidataCandidate(entity, language = 'pt-BR', classesData = {}, 
   const names = [];
   for (const [code, value] of Object.entries(entity.labels || {})) names.push({ value: text(value.value), language: code });
   for (const [code, values] of Object.entries(entity.aliases || {})) for (const value of values) names.push({ value: text(value.value), language: code });
-  const genres = itemIDs(entity, 'P136')
+  const explicitItems = (property) => {
+    if (claims(entity, property).some((claim) => Object.keys(claim.qualifiers || {}).length)) conflicts.push(`${property}: classificação específica de edição; confira o manual.`);
+    return claims(entity, property)
+      .filter((claim) => !Object.keys(claim.qualifiers || {}).length)
+      .map((claim) => claim.mainsnak.datavalue?.value?.id)
+      .filter(Boolean);
+  };
+  const mechanics = explicitItems('P4151')
+    .map((id) => ({ id, label: preferred(classesData[id]?.labels, language, pdfLanguage) }))
+    .filter((value) => value.label);
+  const genres = explicitItems('P136')
     .filter((id) => !['Q142714', 'Q131436', 'Q3244175'].includes(id))
     .map((id) => ({ id, label: preferred(classesData[id]?.labels, language, pdfLanguage) }))
     .filter((v) => v.label);
@@ -72,28 +82,47 @@ export function wikidataCandidate(entity, language = 'pt-BR', classesData = {}, 
       description: text(description?.value, 600),
       minPlayers: min,
       maxPlayers: max,
-      recommendedAge: quantity('P2899', 'Idade', 100, ['1', 'http://www.wikidata.org/entity/Q24564698']),
-      durationMinutes: quantity('P2047', 'Duração', 1440, ['http://www.wikidata.org/entity/Q7727']),
+      mechanics: mechanics.map((value) => text(value.label.value, 40)).slice(0, 12),
+      recommendedAge: quantity('P2899', 'Idade', 100, ['1', 'http://www.wikidata.org/entity/Q24564698', 'http://www.wikidata.org/entity/Q577']),
+      durationMinutes: quantity('P2047', 'Duração', 1440, ['http://www.wikidata.org/entity/Q7727', 'http://www.wikidata.org/entity/Q25235'], { 'http://www.wikidata.org/entity/Q25235': 60 }),
     },
-    { names: names.filter((n) => n.value).slice(0, 40), identifiers: { wikidata: entity.id, ...(bgg ? { bgg: String(bgg) } : {}) }, language: title.language, descriptionLanguage: description?.language || '', license: 'CC0', conflicts },
+    {
+      names: names.filter((n) => n.value).slice(0, 40),
+      identifiers: { wikidata: entity.id, ...(bgg ? { bgg: String(bgg) } : {}) },
+      language: title.language,
+      descriptionLanguage: description?.language || '',
+      license: 'CC0',
+      kind: classes.includes('Q60474521') ? 'expansion' : 'unknown',
+      conflicts,
+    },
   );
   // P18 é um nome de arquivo no Commons, não uma licença de reprodução da imagem.
   result.fieldReasons = {
     recommendedAge: result.fields.recommendedAge ? '' : 'Wikidata não informou idade inequívoca (P2899).',
     durationMinutes: result.fields.durationMinutes ? '' : 'Duração ausente ou divergente; não calculamos uma média.',
-    mechanics: 'Não há mecânicas explícitas disponíveis neste conector; gênero não é convertido em mecânica.',
+    mechanics: mechanics.length ? '' : 'A fonte não informou mecânicas explícitas (P4151); gênero não é convertido em mecânica.',
     tags: categories.length ? '' : 'Não há gênero/categoria explícitos utilizáveis nesta entidade.',
     gameType: cooperative ? '' : 'A entidade não declara um tipo de partida específico utilizável.',
   };
-  result.fieldEvidence = { gameType: cooperative ? 'P31 → Q1783817 (cooperative board game)' : '', tags: genres.map((v) => v.id + ' → ' + v.label.value).join('; ') };
-  result.fieldLanguages = { title: title.language, description: description?.language || '', gameType: language, tags: [...new Set(genres.map((v) => v.label.language))].join(', ') || language };
+  result.fieldEvidence = {
+    mechanics: mechanics.map((value) => value.id + ' → ' + value.label.value).join('; '),
+    gameType: cooperative ? 'P31 → Q1783817 (cooperative board game)' : '',
+    tags: genres.map((v) => v.id + ' → ' + v.label.value).join('; '),
+  };
+  result.fieldLanguages = {
+    mechanics: [...new Set(mechanics.map((value) => value.label.language))].join(', ') || language,
+    title: title.language,
+    description: description?.language || '',
+    gameType: language,
+    tags: [...new Set(genres.map((v) => v.label.language))].join(', ') || language,
+  };
   return result;
 }
 export async function wikidataEntities(ids, input, io) {
   if (!ids.length) return [];
   const data = await io(api({ action: 'wbgetentities', ids: ids.slice(0, 12).join('|'), props: 'labels|descriptions|aliases|claims|sitelinks', languages: 'pt-br|pt|fr|en' }, input.interactive));
   const entities = Object.values(data.entities || {});
-  const classIDs = [...new Set(entities.flatMap((e) => [...itemIDs(e, 'P31'), ...itemIDs(e, 'P136')]))].slice(0, 16);
+  const classIDs = [...new Set(entities.flatMap((e) => [...itemIDs(e, 'P31'), ...itemIDs(e, 'P136'), ...itemIDs(e, 'P4151')]))].slice(0, 16);
   let classes = {};
   if (classIDs.length) {
     try {
@@ -116,13 +145,11 @@ export async function wikidata(input, io) {
   if (input.action === 'detail') ids = [input.id];
   else {
     const plans = queryVariants(input);
-    const results = await Promise.allSettled(
-      plans.map(async (plan) => {
-        const result = await io(api({ action: 'wbsearchentities', search: plan.query, language: plan.language, type: 'item', limit: input.expanded ? '15' : '10' }, input.interactive));
-        diagnostics.queries.push({ ...plan, status: 'ok', rawCount: result.search?.length || 0 });
-        return result.search || [];
-      }),
-    );
+    const results = await catalogPlans(plans, async (plan) => {
+      const result = await io(api({ action: 'wbsearchentities', search: plan.query, language: plan.language, type: 'item', limit: input.expanded ? '15' : '10' }, input.interactive));
+      diagnostics.queries.push({ ...plan, status: 'ok', rawCount: result.search?.length || 0 });
+      return result.search || [];
+    });
     for (let i = 0; i < results.length; i++) if (results[i].status === 'rejected') diagnostics.failures.push({ ...plans[i], error: results[i].reason.message });
     const hits = results
       .filter((r) => r.status === 'fulfilled')

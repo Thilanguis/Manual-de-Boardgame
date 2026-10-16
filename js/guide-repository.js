@@ -18,6 +18,7 @@ export function createGuideRepository(repository, { db, dbSDK, auth, files }) {
   });
   return {
     async getGuide(game, draft = false) {
+      if (!repository.session.canRead) throw new Error('Entre com uma conta aprovada.');
       if (draft) editable();
       const snapshot = await dbSDK.getDocFromServer(ref(draft ? 'guideDrafts' : 'gameGuides', game));
       return snapshot.exists() ? parseGuide(snapshot.data()) : null;

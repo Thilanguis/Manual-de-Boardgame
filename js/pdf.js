@@ -1,4 +1,5 @@
 import { linesFromItems, titleCandidates, extractMetadata } from './recognition.js';
+import { MAX_PDF_BYTES } from './pdf-limits.js';
 
 let library;
 export async function pdfLibrary() {
@@ -12,14 +13,37 @@ export async function pdfLibrary() {
 
 export async function loadPdf(blob) {
   const pdfjs = await pdfLibrary();
-  return pdfjs.getDocument({
-    data: new Uint8Array(await blob.arrayBuffer()),
+  // Ler somente os trechos pedidos pelo PDF.js evita copiar o arquivo inteiro
+  // para o worker durante a leitura, análise e OCR de manuais grandes.
+  let stopped = false,
+    task;
+  const range = new pdfjs.PDFDataRangeTransport(blob.size, new Uint8Array(), true);
+  range.requestDataRange = (begin, end) => {
+    void blob
+      .slice(begin, end)
+      .arrayBuffer()
+      .then((buffer) => {
+        if (!stopped) range.onDataRange(begin, new Uint8Array(buffer));
+      })
+      .catch(() => {
+        if (!stopped) void task.destroy();
+      });
+  };
+  range.abort = () => {
+    stopped = true;
+  };
+  task = pdfjs.getDocument({
+    range,
+    rangeChunkSize: 256 * 1024,
+    disableAutoFetch: true,
+    disableStream: true,
     cMapUrl: new URL('../vendor/pdfjs/cmaps/', import.meta.url).href,
     cMapPacked: true,
     standardFontDataUrl: new URL('../vendor/pdfjs/standard_fonts/', import.meta.url).href,
     wasmUrl: new URL('../vendor/pdfjs/wasm/', import.meta.url).href,
     isEvalSupported: false,
-  }).promise;
+  });
+  return task.promise;
 }
 export async function loadRemotePdf(source) {
   const pdfjs = await pdfLibrary();
@@ -53,14 +77,21 @@ export async function imageToJpeg(blob) {
   return image;
 }
 
-export async function verifyPdf(file, maxBytes) {
-  if (!file || file.size === 0 || file.size > maxBytes) throw new Error(`Selecione um PDF de até ${Math.round(maxBytes / 1024 / 1024)} MB.`);
+export async function verifyPdf(file, maxBytes = MAX_PDF_BYTES) {
+  maxBytes = Math.min(MAX_PDF_BYTES, maxBytes || MAX_PDF_BYTES);
+  if (!file || file.size === 0 || file.size > maxBytes) throw new Error(`Selecione um PDF de até ${Math.round(maxBytes / 1024 / 1024)} MiB.`);
   const header = new TextDecoder().decode(await file.slice(0, 1024).arrayBuffer());
   if (!header.includes('%PDF-')) throw new Error('Este arquivo não parece ser um PDF válido.');
 }
 
 export async function inspectPdf(file, { maxBytes, onProgress = () => {}, signal } = {}) {
   await verifyPdf(file, maxBytes);
+  signal?.throwIfAborted();
+  // Web Crypto exige o conteúdo inteiro: terminar o hash antes de abrir o
+  // documento evita manter esse buffer junto das imagens decodificadas.
+  onProgress('Conferindo o arquivo…');
+  const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  signal?.throwIfAborted();
   onProgress('Abrindo o PDF…');
   const pdf = await loadPdf(file);
   try {
@@ -79,20 +110,20 @@ export async function inspectPdf(file, { maxBytes, onProgress = () => {}, signal
       const pageText = lines.map((line) => line.text).join('\n');
       pageTexts.push(pageText);
       text += '\n' + pageText;
+      page.cleanup();
       if (text.length > 80000) break;
     }
     signal?.throwIfAborted();
     onProgress('Preparando a capa do manual…');
     const page = await pdf.getPage(1);
     const original = page.getViewport({ scale: 1 });
-    const viewport = page.getViewport({ scale: Math.min(1.5, 900 / original.width) });
+    const viewport = page.getViewport({ scale: Math.min(1.5, 900 / original.width, Math.sqrt(2_000_000 / (original.width * original.height))) });
     const canvas = document.createElement('canvas');
     canvas.width = Math.ceil(viewport.width);
     canvas.height = Math.ceil(viewport.height);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport, background: '#ffffff' }).promise;
     const coverBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.87));
     canvas.width = canvas.height = 0;
-    const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
     const candidates = titleCandidates({ metadataTitle: metadata.info?.Title, filename: file.name, lines: firstLines });
     const fields = extractMetadata(text);
     if (fields.language === 'other' && /(?:^|[_\s\[])pt[-_ ]?br(?:\b|_)/i.test(metadata.info?.Title + ' ' + file.name)) {

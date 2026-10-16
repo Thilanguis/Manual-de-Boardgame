@@ -61,5 +61,8 @@ test('rótulo genérico e texto estrangeiro sem revisão não aparecem como sino
   const game = { description: 'Explore Middle-earth with your companions.', sources: { description: { language: 'en' } } };
   assert.equal(displayDescription(game), '');
   game.sources.description.confirmedAt = 1;
+  assert.equal(displayDescription(game), '');
+  game.description = 'Explore a Terra-média com seus companheiros.';
+  game.sources.description.language = 'pt-BR';
   assert.equal(displayDescription(game), game.description);
 });

@@ -29,10 +29,10 @@ test('indisponibilidade das chaves não libera o acesso', async () => {
   await assert.rejects(verifyFirebaseToken(await token(), project, { cache: false, fetcher: async () => new Response(null, { status: 503 }) }), denied(503));
 });
 test('permissões exigem perfil ativo e flag específica; UID proprietário sozinho não basta', () => {
-  assert.deepEqual(permissions(null, 'owner', 'owner'), { add: false, edit: false, delete: false });
-  assert.deepEqual(permissions({ uid: 'owner', status: 'blocked', role: 'superadmin' }, 'owner', 'owner'), { add: false, edit: false, delete: false });
-  assert.deepEqual(permissions({ uid: 'sub', status: 'approved', role: 'subadmin', permissions: { addGames: true, editGames: true, deleteGames: true } }, 'sub', 'owner'), { add: true, edit: true, delete: false });
-  assert.deepEqual(permissions({ uid: 'sub', status: 'approved', role: 'superadmin', permissions: { deleteGames: true } }, 'sub', 'owner'), { add: false, edit: false, delete: false });
+  assert.deepEqual(permissions(null, 'owner', 'owner'), { read: false, add: false, edit: false, delete: false });
+  assert.deepEqual(permissions({ uid: 'owner', status: 'blocked', role: 'superadmin' }, 'owner', 'owner'), { read: false, add: false, edit: false, delete: false });
+  assert.deepEqual(permissions({ uid: 'sub', status: 'approved', role: 'subadmin', permissions: { addGames: true, editGames: true, deleteGames: true } }, 'sub', 'owner'), { read: true, add: true, edit: true, delete: false });
+  assert.deepEqual(permissions({ uid: 'sub', status: 'approved', role: 'superadmin', permissions: { deleteGames: true } }, 'sub', 'owner'), { read: false, add: false, edit: false, delete: false });
 });
 test('cada autorização consulta o perfil atual pelo JWT Firebase, inclusive após revogação', async () => {
   let enabled = true,
@@ -94,8 +94,10 @@ test('sessões Drive bloqueiam outros hosts, credenciais e caminhos para impedir
 });
 test('tamanho, formato e blocos respeitam 50 MiB, 8 MiB e múltiplos de 256 KiB', () => {
   const input = { gameId: '12345678-1234-1234-1234-123456789abc', kind: 'manual', mimeType: 'application/pdf', size: 52428800, name: 'manual.pdf' };
-  assert.equal(validateUpload(input, 52428800).size, 52428800);
-  assert.throws(() => validateUpload({ ...input, size: 52428801 }, 52428800), denied(400));
+  for (const size of [50 * 1024 * 1024 - 1, 52428800]) {
+    for (const kind of ['manual', 'document']) assert.equal(validateUpload({ ...input, kind, documentId: 'main', sourceHash: 'a'.repeat(64), size }, 52428800).size, size);
+  }
+  assert.throws(() => validateUpload({ ...input, size: 52428801 }, 52428800), denied(413));
   assert.throws(() => validateUpload({ ...input, mimeType: 'text/html' }, 52428800), denied(400));
   assert.equal(parseRange('bytes 0-262143/300000', 300000, 262144).length, 262144);
   assert.equal(parseRange('bytes 262144-299999/300000', 300000, 37856).length, 37856);

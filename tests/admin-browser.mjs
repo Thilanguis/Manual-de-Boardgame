@@ -1,3 +1,5 @@
+import '../scripts/test-guard.mjs';
+import { openGameManagement } from './game-ui-fixture.mjs';
 // Somente Auth/Firestore emulados e perfis descartáveis. Não cria contas reais.
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
@@ -68,20 +70,20 @@ async function page() {
   await context.route('**/config/app-config.js', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
-      body: `export const APP_CONFIG=${JSON.stringify({ firebase: { apiKey: 'demo-api-key', authDomain: 'demo-acervo.firebaseapp.com', projectId, appId: '1:000:web:test' }, fileStorage: { provider: 'drive', apiBase: 'https://api.example.test' }, emulators: { auth: 'http://127.0.0.1:9099', host: '127.0.0.1', port: 8080 }, enableBgg: false, enableGoogleLogin: false, maxPdfBytes: 52428800 })};`,
+      body: `export const APP_CONFIG=${JSON.stringify({ firebase: { apiKey: 'demo-api-key', authDomain: 'demo-acervo.firebaseapp.com', projectId, appId: '1:000:web:test' }, fileStorage: { provider: 'drive', apiBase: 'http://127.0.0.1:8789' }, emulators: { auth: 'http://127.0.0.1:9099', host: '127.0.0.1', port: 8080 }, enableBgg: false, enableGoogleLogin: false, maxPdfBytes: 209715200 })};`,
     }),
   );
-  await context.route('https://api.example.test/v1/catalog/status', (route) =>
+  await context.route('http://127.0.0.1:8789/v1/catalog/status', (route) =>
     route.fulfill({
       status: driveFailure ? 502 : 200,
       contentType: 'application/json',
       body: JSON.stringify(driveFailure ? { error: 'Falha transitória de teste' } : { games: [{ id: gameId, available: driveAvailable, reason: driveAvailable ? 'available' : 'trashed' }] }),
     }),
   );
-  await context.route('https://api.example.test/v1/research/sources', (route) =>
+  await context.route('http://127.0.0.1:8789/v1/research/sources', (route) =>
     route.fulfill({ contentType: 'application/json', body: JSON.stringify({ protocol: 2, apiVersion: '1.5.0', sources: [{ id: 'wikidata', name: 'Wikidata', enabled: true, url: 'https://www.wikidata.org', reason: 'fixture CC0' }] }) }),
   );
-  await context.route('https://api.example.test/v1/research/wikidata', (route) => {
+  await context.route('http://127.0.0.1:8789/v1/research/wikidata', (route) => {
     assert(route.request().headers().authorization.startsWith('Bearer '));
     assert.equal(route.request().postDataJSON().preferredLanguage, 'pt-BR');
     return route.fulfill({
@@ -198,6 +200,7 @@ try {
   assert.equal(await owner.locator('#unavailable-games').isVisible(), false);
   assert.equal(await owner.locator('.hero').isVisible(), false, 'Não há destaque antes de clicar em um jogo');
   await owner.locator('.card-main').click();
+  await openGameManagement(owner, 'manage-information');
   await owner.locator('#edit-game').click();
   assert.equal(await owner.locator('#title-warning').isVisible(), true);
   assert.equal(await owner.locator('#game-title').inputValue(), 'ZMGPSM0101 v1.0.indd');
@@ -246,10 +249,35 @@ try {
   assert.equal(saved.minDurationMinutes, 60);
   assert.equal(saved.maxDurationMinutes, 150);
   assert.equal(saved.durationMinutes, null);
+  let researchSaved;
+  await env.withSecurityRulesDisabled(async (context) => {
+    researchSaved = (await getDoc(doc(context.firestore(), 'gameResearch', gameId))).data();
+  });
+  assert(researchSaved?.aliases.includes('o senhor dos aneis sina da sociedade'));
+  assert.equal(JSON.parse(researchSaved.content).candidates[0].id, 'Q137295527');
+  assert.equal(JSON.parse(researchSaved.content).decisions.length > 0, true);
   assert.equal(saved.description, 'Trabalhe com a Sociedade para proteger Frodo e enfrentar as ameaças da Terra-média.');
   assert.equal(saved.minPlayers, 1);
   assert.equal(saved.maxPlayers, 5);
   assert.equal(saved.recommendedAge, 14);
+  const secondDevice = await page();
+  let extraQueries = 0;
+  secondDevice.on('request', (request) => {
+    if (request.url().endsWith('/v1/research/wikidata')) extraQueries++;
+  });
+  await secondDevice.locator('#account-button').click();
+  await secondDevice.locator('#login-form [name=email]').fill('owner@example.test');
+  await secondDevice.locator('#login-form [name=password]').fill('Fixture-password-123');
+  await secondDevice.locator('#login-form [name=password]').press('Enter');
+  await secondDevice.locator('#manage-button').waitFor({ state: 'visible' });
+  await secondDevice.locator('.card-main').click();
+  await openGameManagement(secondDevice, 'manage-information');
+  await secondDevice.locator('#edit-game').click();
+  await secondDevice.locator('[data-research-search]').click();
+  await secondDevice.waitForFunction(() => document.querySelector('[data-research-status]').textContent.startsWith('Informações recuperadas'));
+  assert.equal(extraQueries, 0, 'Segundo dispositivo recupera pesquisa do Firestore sem consultar API');
+  await secondDevice.close();
+
   assert.deepEqual(saved.tags, ['Aventura', 'Estratégia']);
   assert.deepEqual(saved.mechanics, ['Cooperação']);
   assert.equal(saved.gameType, 'Cooperativo');
@@ -257,6 +285,7 @@ try {
   assert.equal(saved.sources.catalog.matches[0].id, 'Q137295527');
   assert.match(saved.sources.title.source, /ajustado por você/);
   await owner.locator('.card-main').click();
+  await openGameManagement(owner, 'manage-guide');
   await owner.locator('#edit-guide').click();
   await owner.getByRole('button', { name: 'Nova seção', exact: true }).click();
   await owner.locator('.guide-editor-section [name=title]').fill('Preparação revisada');
@@ -268,7 +297,7 @@ try {
   await guest.locator('#learn-game').click();
   await guest.waitForFunction(() => document.getElementById('guide-content').textContent.includes('ainda não tem um guia publicado'));
   assert.equal(await guest.locator('#guide-edit').isVisible(), false);
-  await owner.getByRole('button', { name: 'Publicar guia revisado' }).click();
+  await owner.getByRole('button', { name: 'Publicar guia' }).click();
   await owner.waitForFunction(() => document.getElementById('guide-status').textContent.startsWith('Guia publicado'));
   await guest.locator('#guide-close').click();
   await guest.locator('.card-main').click();
@@ -368,7 +397,7 @@ try {
   assert.equal(await applicant.locator('#profile-status').textContent(), 'Conta bloqueada');
   assert.deepEqual(errors, []);
   console.log(
-    'QA de contas/dados em emuladores: recuperação de senha aplicada e novo login, perfil sem UID em destaque, duração 60–150 salva a partir de horas, cadastro pendente, aviso/contador em tempo real, aprovação, promoção, aprovação por subadmin, bloqueio imediato, histórico e responsividade passaram.',
+    'QA de contas/dados em emuladores: recuperação de senha aplicada e novo login, perfil sem UID em destaque, duração 60–150 salva a partir de horas, cadastro pendente, aviso/contador em tempo real, aprovação, promoção, aprovação por subadmin, bloqueio imediato, histórico, pesquisa privada salva, reutilização via Firestore em segundo dispositivo sem chamadas externas e responsividade passaram.',
   );
 } finally {
   await browser.close();

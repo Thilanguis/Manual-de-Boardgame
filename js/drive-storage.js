@@ -1,3 +1,4 @@
+import { MAX_PDF_BYTES } from './pdf-limits.js';
 // Somente o JWT Firebase vai à API. Credenciais OAuth do Drive ficam no Worker.
 function endpointRoot(value) {
   try {
@@ -11,11 +12,42 @@ function endpointRoot(value) {
 }
 export function createDriveStorage(config, getToken, getUid) {
   const api = () => endpointRoot(config.apiBase);
+  let controller = new AbortController();
+  let health;
+  async function capabilities(refresh = false) {
+    if (refresh) health = null;
+    return (health ||= fetch(`${api()}/health`, { cache: 'no-store', signal: AbortSignal.timeout(4000) })
+      .then(async (response) => {
+        if (!response.ok) throw Object.assign(new Error('Não foi possível conferir a conexão dos documentos.'), { status: response.status });
+        return response.json();
+      })
+      .catch((error) => {
+        health = null;
+        throw error;
+      }));
+  }
+  async function validatePdfUpload(blob) {
+    if (!Number.isSafeInteger(blob.size) || !blob.size || blob.size > MAX_PDF_BYTES) throw new Error('Selecione um PDF de até 50 MiB.');
+    const info = await capabilities(true),
+      known = Number.isSafeInteger(info.maxPdfBytes) && info.maxPdfBytes > 0;
+    if (known && blob.size > info.maxPdfBytes) {
+      const limit = (info.maxPdfBytes / 1024 / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+      throw Object.assign(new Error(`O servidor conectado aceita PDFs de até ${limit} MiB. Seus dados continuam preenchidos.`), {
+        status: 413,
+        code: 'upload/server-limit',
+      });
+    }
+    return info;
+  }
   async function call(path, { method = 'GET', json, body, headers = {}, signal } = {}) {
+    const uid = getUid(),
+      current = controller;
     const token = await getToken();
+    if (!token || !uid || current !== controller) throw new Error('Entre com uma conta aprovada.');
     const response = await fetch(`${api()}${path}`, {
       method,
-      signal,
+      signal: signal ? AbortSignal.any([signal, current.signal]) : current.signal,
+      cache: 'no-store',
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(json ? { 'Content-Type': 'application/json' } : {}), ...headers },
       body: json ? JSON.stringify(json) : body,
     });
@@ -45,6 +77,13 @@ export function createDriveStorage(config, getToken, getUid) {
   }
   return {
     provider: 'drive',
+    capabilities,
+    validatePdfUpload,
+    async knowledge(game, input) {
+      const info = await capabilities();
+      if (!(info.knowledgeProtocol >= 1)) return { status: 'pending_configuration', message: 'A geração aguarda a configuração da IA.', knowledge: null };
+      return (await call(`/v1/games/${encodeURIComponent(game.id)}/knowledge`, input ? { method: 'POST', json: input } : {})).json();
+    },
     async checkGames(games) {
       const results = [];
       for (let offset = 0; offset < games.length; offset += 20) {
@@ -74,13 +113,14 @@ export function createDriveStorage(config, getToken, getUid) {
         kind = options.kind || (path.endsWith('/manual.pdf') ? 'manual' : 'cover'),
         mimeType = options.mimeType || (kind === 'manual' ? 'application/pdf' : 'image/jpeg');
       if (!gameId) throw new Error('Referência de arquivo inválida.');
+      if (['manual', 'document'].includes(kind)) await validatePdfUpload(blob);
       const digest = options.fingerprint || Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), (b) => b.toString(16).padStart(2, '0')).join('');
-      const key = `acervo-upload:${config.projectId}:${getUid()}:${gameId}:${kind}:${digest}`;
+      const key = `acervo-upload:${config.projectId}:${getUid()}:${gameId}:${kind}${options.documentId ? `-${options.documentId}` : ''}:${digest}`;
       let state = loadState(key),
         position = 0;
       if (state) {
         try {
-          const resumed = await (await call('/v1/uploads/status', { method: 'POST', headers: { 'X-Upload-Ticket': state.ticket } })).json();
+          const resumed = await (await call('/v1/uploads/status', { method: 'POST', signal: options.signal, headers: { 'X-Upload-Ticket': state.ticket } })).json();
           if (resumed.complete) return { ...resumed, resumeKey: key };
           position = resumed.received;
         } catch (error) {
@@ -91,17 +131,26 @@ export function createDriveStorage(config, getToken, getUid) {
         }
       }
       if (!state) {
-        const result = await (await call('/v1/uploads', { method: 'POST', json: { gameId, kind, size: blob.size, mimeType, name: options.name || (kind === 'manual' ? 'manual.pdf' : 'capa.jpg') } })).json();
+        const result = await (
+          await call('/v1/uploads', {
+            method: 'POST',
+            signal: options.signal,
+            json: { gameId, kind, documentId: options.documentId || '', sourceHash: options.sourceHash || options.fingerprint || '', size: blob.size, mimeType, name: options.name || (kind === 'manual' ? 'manual.pdf' : 'capa.jpg') },
+          })
+        ).json();
         state = { ticket: result.ticket, startedAt: Date.now() };
         storeState(key, state);
       }
       onProgress(Math.round((position / blob.size) * 100));
       let failures = 0;
       while (position < blob.size) {
+        options.signal?.throwIfAborted();
         const end = Math.min(position + 8 * 1024 * 1024, blob.size),
           chunk = blob.slice(position, end, mimeType);
         try {
-          const result = await (await call('/v1/uploads/chunk', { method: 'PUT', headers: { 'X-Upload-Ticket': state.ticket, 'Content-Range': `bytes ${position}-${end - 1}/${blob.size}`, 'Content-Type': chunk.type }, body: chunk })).json();
+          const result = await (
+            await call('/v1/uploads/chunk', { method: 'PUT', signal: options.signal, headers: { 'X-Upload-Ticket': state.ticket, 'Content-Range': `bytes ${position}-${end - 1}/${blob.size}`, 'Content-Type': chunk.type }, body: chunk })
+          ).json();
           if (result.complete) {
             onProgress(100);
             return { ...result, resumeKey: key };
@@ -111,9 +160,10 @@ export function createDriveStorage(config, getToken, getUid) {
           failures = 0;
           onProgress(Math.round((position / blob.size) * 100));
         } catch (error) {
+          if (error.name === 'AbortError' || options.signal?.aborted) throw error;
           if ((error.status && ![429, 502, 503, 504].includes(error.status)) || failures++ >= 3) throw error;
           await new Promise((resolve) => setTimeout(resolve, Math.min(8000, 1000 * 2 ** failures)));
-          const result = await (await call('/v1/uploads/status', { method: 'POST', headers: { 'X-Upload-Ticket': state.ticket } })).json();
+          const result = await (await call('/v1/uploads/status', { method: 'POST', signal: options.signal, headers: { 'X-Upload-Ticket': state.ticket } })).json();
           if (result.complete) {
             onProgress(100);
             return { ...result, resumeKey: key };
@@ -124,7 +174,8 @@ export function createDriveStorage(config, getToken, getUid) {
       throw new Error('O Drive não confirmou o arquivo. Selecione-o novamente para retomar.');
     },
     async get(game, kind, maxBytes, { signal } = {}) {
-      const response = await call(`/v1/games/${encodeURIComponent(game.id)}/${kind}`, { signal });
+      if (kind.startsWith('documents/') && !((await capabilities()).fileProtocol >= 2)) throw Object.assign(new Error('A conexão dos documentos precisa ser atualizada para usar este recurso.'), { status: 426 });
+      const response = await call(`/v1/games/${encodeURIComponent(game.id)}/${kind}`, { signal, headers: kind.startsWith('documents/') && game.manual?.sha256 ? { 'X-Document-Hash': game.manual.sha256 } : {} });
       if (Number(response.headers.get('Content-Length')) > maxBytes) throw new Error('Arquivo maior que o permitido.');
       const blob = await response.blob();
       if (blob.size > maxBytes) throw new Error('Arquivo maior que o permitido.');
@@ -132,7 +183,13 @@ export function createDriveStorage(config, getToken, getUid) {
     },
     async readerSource(game) {
       const token = await getToken();
-      return { url: `${api()}/v1/games/${encodeURIComponent(game.id)}/manual`, headers: token ? { Authorization: `Bearer ${token}` } : {} };
+      if (!token || !getUid()) throw new Error('Entre com uma conta aprovada.');
+      const modern = game.documentId && (await capabilities()).fileProtocol >= 2;
+      if (game.documentId && !game.legacyManual && !modern) throw Object.assign(new Error('A conexão dos documentos precisa ser atualizada para abrir este PDF.'), { status: 426 });
+      return {
+        url: `${api()}/v1/games/${encodeURIComponent(game.id)}/${modern ? `documents/${encodeURIComponent(game.documentId)}/pdf` : 'manual'}`,
+        headers: { Authorization: `Bearer ${token}`, ...(modern && game.manual?.sha256 ? { 'X-Document-Hash': game.manual.sha256 } : {}) },
+      };
     },
     async finalize(reference) {
       await call('/v1/uploads/finalize', { method: 'POST', json: { receipt: reference.receipt } });
@@ -149,6 +206,9 @@ export function createDriveStorage(config, getToken, getUid) {
       }
       throw new Error('A limpeza precisa continuar. Repita a exclusão pendente.');
     },
+    async deleteDocument(game, id) {
+      return (await call(`/v1/games/${encodeURIComponent(game.id)}/documents/${encodeURIComponent(id)}`, { method: 'DELETE' })).json();
+    },
     async getGuideAsset(game, id) {
       const response = await call(`/v1/games/${encodeURIComponent(game.id)}/guide-assets/${encodeURIComponent(id)}`);
       const blob = await response.blob();
@@ -163,6 +223,12 @@ export function createDriveStorage(config, getToken, getUid) {
         throw error;
       }
     },
-    close() {},
+    resetSession() {
+      controller.abort();
+      controller = new AbortController();
+    },
+    close() {
+      controller.abort();
+    },
   };
 }

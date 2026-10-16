@@ -44,7 +44,7 @@ export function queryVariants(input) {
     seen.add(`${language}:${normalized}`);
     values.push({ query, language: language.startsWith('pt') ? 'pt' : language, reason });
   };
-  add(input.query, input.pdfLanguage === 'fr' ? 'fr' : input.pdfLanguage === 'en' ? 'en' : 'pt', 'título enviado');
+  add(input.query, 'pt', 'título enviado, prioridade PT-BR');
   for (const name of identity?.names || []) add(name.value, name.language, 'alias editorial revisado');
   for (const name of input.alternateTitles || [])
     for (const language of ['pt-BR', 'en', 'fr'].includes(name.language) ? [name.language] : ['en', 'fr', 'pt']) add(name.value, language, 'título original explícito no PDF; idioma do nome não presumido');
@@ -61,5 +61,8 @@ export function queryVariants(input) {
       add(subtitle, name.language, 'subtítulo do alias revisado');
     }
   }
-  return values.slice(0, input.expanded ? 8 : 5);
+  // Garante cobertura dos três índices, inclusive para PDF português.
+  for (const language of ['en', 'fr']) add(input.query, language, 'índice complementar');
+  const preferred = ['pt', 'en', 'fr'].map((language) => values.find((v) => v.language === language)).filter(Boolean);
+  return [...preferred, ...values.filter((v) => !preferred.includes(v))].slice(0, input.expanded ? 8 : 6);
 }

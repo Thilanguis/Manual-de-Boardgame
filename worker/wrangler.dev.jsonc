@@ -1,0 +1,14 @@
+{
+  "name": "acervo-development-only",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-14",
+  "workers_dev": false,
+  "vars": {
+    "FIREBASE_PROJECT_ID": "demo-acervo",
+    "OWNER_UID": "dev-acervo-owner",
+    "MAX_PDF_BYTES": "52428800"
+  },
+  "durable_objects": { "bindings": [{ "name": "GAME_KNOWLEDGE", "class_name": "KnowledgeStore" }] },
+  "migrations": [{ "tag": "v1-knowledge", "new_sqlite_classes": ["KnowledgeStore"] }],
+  "observability": { "enabled": false }
+}

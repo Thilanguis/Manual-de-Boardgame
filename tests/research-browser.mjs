@@ -1,3 +1,5 @@
+import '../scripts/test-guard.mjs';
+import { enableLocalFixture } from './local-fixture.mjs';
 // Fontes e PDF sintéticos; não escreve no Firebase/Drive nem usa credenciais reais.
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
@@ -20,6 +22,7 @@ const browser = await chromium.launch({ channel: 'chrome', headless: true }),
   errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 try {
+  await enableLocalFixture(page.context());
   await page.goto(`${process.env.ACERVO_TEST_URL || 'http://localhost:4174'}/?local=1`);
   await page.waitForFunction(() => document.getElementById('connection-status').textContent.includes('Neste dispositivo'));
   await page.locator('#empty-action').click();
@@ -115,6 +118,8 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.research-card').length === 2);
   await page.locator('.research-options summary').click();
   await page.locator('[data-research-kind]').selectOption('base');
+  await page.locator('.research-options').evaluate((element) => (element.open = true));
+  await page.locator('[data-research-refresh]').check();
   await page.locator('[data-research-search]').click();
   await page.waitForFunction(() => document.querySelectorAll('.research-card').length === 2);
   assert.equal(await page.locator('.research-card').filter({ hasText: 'Catan Expansão' }).getByRole('button', { name: 'Revisar sugestões', exact: true }).isDisabled(), true);
@@ -133,6 +138,13 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   }
   await page.screenshot({ path: 'test-output/research-mobile.png', fullPage: true });
+  await page.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
+  await page.evaluate(() => (window.delayLudo = 12000));
+  const started = Date.now();
+  await page.locator('[data-research-search]').click();
+  await page.waitForFunction(() => !document.querySelector('[data-research-search]').disabled, { timeout: 10000 });
+  assert(Date.now() - started < 9000, 'Fonte lenta não pode manter a pesquisa bloqueada por dezenas de segundos');
+  assert.match(await page.locator('[data-research-status]').textContent(), /Algumas fontes não responderam/);
   assert.deepEqual(errors, []);
   console.log('PDF francês, PT-BR padrão, resultados progressivos, confirmação de campos, expansão, cancelamento e celular/tablet passaram.');
 } finally {

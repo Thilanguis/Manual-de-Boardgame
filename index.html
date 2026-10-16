@@ -16,6 +16,7 @@
     <script type="module" src="js/app.js"></script>
   </head>
   <body>
+    <div id="session-loading" role="status" aria-live="polite">Abrindo o Acervo…</div>
     <a class="skip-link" href="#biblioteca">Ir para a biblioteca</a>
     <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
@@ -77,7 +78,7 @@
           <span class="avatar">A</span>
           <span id="account-label">Entrar</span>
         </button>
-        <button class="button primary compact" data-add>
+        <button class="button primary compact" data-add hidden>
           <svg><use href="#i-plus" /></svg>
           <span>Adicionar jogo</span>
         </button>
@@ -165,6 +166,10 @@
         </div>
         <div id="library-error" class="inline-error" role="status" hidden></div>
         <p id="connection-warning" class="inline-error" role="status" hidden></p>
+        <p id="cover-warning" class="inline-error" role="status" hidden>
+          Algumas capas não carregaram.
+          <button type="button" class="text-button" id="retry-covers">Tentar novamente</button>
+        </p>
         <section id="recent-section" class="recent-section" hidden>
           <div class="section-heading">
             <h2>
@@ -255,7 +260,7 @@
             <svg><use href="#i-upload" /></svg>
             <span>Escolher um manual</span>
           </button>
-          <span class="empty-note" id="empty-note">PDF de até 50 MB · Seus arquivos, seu acervo</span>
+          <span class="empty-note" id="empty-note">PDF de até 50 MiB · Seus arquivos, seu acervo</span>
         </section>
         <div class="no-results" id="no-results" hidden>
           <svg><use href="#i-search" /></svg>
@@ -284,7 +289,7 @@
         <span class="brand-dot">.</span>
       </a>
       <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
-      <span>v1.7.5</span>
+      <span>v1.11.0</span>
       <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
       <a id="ludopedia-attribution" href="https://ludopedia.com.br" target="_blank" rel="noopener noreferrer" hidden>Dados: Ludopedia</a>
     </footer>
@@ -326,18 +331,19 @@
       <div class="dialog-body upload-body">
         <div id="upload-picker">
           <label class="dropzone" id="dropzone">
-            <input id="pdf-file" type="file" accept="application/pdf,.pdf" />
+            <input id="pdf-file" multiple type="file" accept="application/pdf,.pdf" />
             <span class="upload-circle">
               <svg><use href="#i-upload" /></svg>
             </span>
             <strong>Solte o manual por aqui</strong>
             <span>ou toque para escolher um arquivo</span>
-            <small>PDF · até 50 MB</small>
+            <small>PDF · até 50 MiB</small>
           </label>
           <p class="privacy-note">A leitura do PDF acontece no seu navegador. O arquivo só é salvo quando você confirmar os dados.</p>
         </div>
         <p id="upload-status" class="status-message" role="status" aria-live="polite"></p>
         <progress id="upload-progress" max="100" hidden></progress>
+        <div id="additional-pdfs" aria-live="polite"></div>
         <form id="game-form" novalidate hidden>
           <div class="review-grid">
             <aside class="review-aside">
@@ -374,7 +380,7 @@
                     <summary>Opções da pesquisa</summary>
                     <div class="form-row">
                       <label>
-                        Idioma preferido das informações
+                        Prioridade da pesquisa
                         <select data-research-language>
                           <option value="pt-BR">Português brasileiro</option>
                           <option value="fr">Francês</option>
@@ -390,6 +396,14 @@
                         </select>
                       </label>
                     </div>
+                    <label>
+                      Nomes alternativos
+                      <textarea data-research-aliases rows="2" maxlength="1000" placeholder="Um por linha. Opcional: en: título ou fr: título"></textarea>
+                    </label>
+                    <label class="research-choice">
+                      <input type="checkbox" data-research-refresh />
+                      Consultar novamente as fontes
+                    </label>
                     <button type="button" class="text-button" data-research-ocr>Ler texto das primeiras páginas</button>
                   </details>
                   <div class="research-actions">
@@ -506,7 +520,7 @@
                   <legend>Quem pode ler este manual?</legend>
                   <label class="confirm-check">
                     <input name="isPublic" type="checkbox" />
-                    <span>Publicar para visitantes, mesmo sem conta.</span>
+                    <span>Disponível para todas as contas aprovadas.</span>
                   </label>
                   <p class="label-hint" id="visibility-help"></p>
                 </fieldset>
@@ -550,52 +564,92 @@
           <p id="detail-title-warning" class="feedback-message" hidden></p>
           <div class="detail-tags" id="detail-tags"></div>
           <p id="detail-description"></p>
+          <button class="text-button" id="detail-description-toggle" aria-expanded="false" hidden>Ver mais</button>
           <div class="detail-stats" id="detail-stats"></div>
           <div class="detail-actions">
             <button class="button primary" id="read-manual">
               <svg><use href="#i-book" /></svg>
-              Manual completo
+              Ler manual
             </button>
             <button class="icon-button favorite-button" id="detail-favorite" aria-label="Adicionar aos favoritos">
               <svg><use href="#i-heart" /></svg>
             </button>
           </div>
-          <p class="manual-caption" id="detail-manual"></p>
           <div class="guide-entry-actions">
-            <button class="button secondary" id="learn-game">Aprender a jogar</button>
-            <button class="button secondary" id="quick-rules">Consulta rápida</button>
+            <div>
+              <button class="button secondary" id="learn-game">Como jogar</button>
+            </div>
+            <div>
+              <button class="button secondary" id="quick-rules">Buscar regras</button>
+            </div>
           </div>
           <p id="detail-guide-status" class="guide-availability" role="status"></p>
+          <section id="detail-documents-disclosure" class="game-documents-summary">
+            <h3>Manuais deste jogo</h3>
+            <div id="detail-documents"></div>
+            <p class="manual-caption" id="detail-manual" hidden></p>
+          </section>
           <div id="detail-catalog-sources" class="catalog-attributions"></div>
           <a class="text-button" id="detail-source" target="_blank" rel="noopener noreferrer" hidden>Dados do BoardGameGeek ↗</a>
-          <div class="admin-actions" id="detail-admin" hidden>
-            <button class="text-button" id="edit-game">
-              <svg><use href="#i-edit" /></svg>
-              Editar informações
-            </button>
-            <button class="text-button danger" id="delete-game">Excluir jogo</button>
-            <button class="text-button" id="edit-guide">Editar guia e índice</button>
-          </div>
+          <button class="button secondary game-manage-entry" id="detail-admin" hidden>Gerenciar jogo</button>
         </div>
       </div>
+    </dialog>
+    <dialog id="game-management-dialog" class="wide-dialog game-management-dialog" aria-labelledby="management-title">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">GERENCIAR JOGO</p>
+          <h2 id="management-title"></h2>
+        </div>
+        <button class="icon-button" data-close="game-management-dialog" aria-label="Fechar gerenciamento">
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <nav class="management-tabs" aria-label="Gerenciar jogo">
+          <button class="button secondary" data-game-management="manage-documents-section">PDFs</button>
+          <button class="button secondary" data-game-management="manage-information">Informações</button>
+          <button class="button secondary" data-game-management="manage-guide">Guia</button>
+        </nav>
+        <section id="manage-documents-section">
+          <h3>PDFs do jogo</h3>
+          <div id="manage-documents"></div>
+        </section>
+        <section id="manage-information" hidden>
+          <h3>Informações do jogo</h3>
+          <button class="button secondary" id="edit-game">
+            <svg><use href="#i-edit" /></svg>
+            Editar informações
+          </button>
+          <div id="game-knowledge-admin"></div>
+        </section>
+        <section id="manage-guide" hidden>
+          <h3>Como jogar</h3>
+          <p>Revise as seções antes de publicar o guia.</p>
+          <button class="button secondary" id="edit-guide">Editar guia</button>
+        </section>
+      </div>
+      <footer class="management-danger"><button class="text-button danger" id="delete-game">Excluir jogo</button></footer>
     </dialog>
     <dialog id="guide-dialog" class="guide-dialog" aria-labelledby="guide-title">
       <div class="dialog-header">
         <div>
-          <p class="eyebrow">REGRAS AO SEU ALCANCE</p>
+          <p class="eyebrow" id="guide-mode">COMO JOGAR</p>
           <h2 id="guide-title"></h2>
         </div>
         <button id="guide-close" class="button secondary small" type="button">Fechar</button>
       </div>
       <div class="dialog-body">
-        <nav class="guide-toolbar" aria-label="Modo de consulta">
-          <button id="guide-tab-learn" class="button secondary small" type="button">Aprender a jogar</button>
-          <button id="guide-tab-quick" class="button secondary small" type="button">Consulta rápida</button>
-          <button id="guide-edit" class="button secondary small" type="button" data-mutate hidden>Editar rascunho</button>
+        <nav class="guide-toolbar" aria-label="Modo de consulta" hidden>
+          <button id="guide-tab-learn" class="button secondary small" type="button" hidden>Como jogar</button>
+          <button id="guide-tab-quick" class="button secondary small" type="button" hidden>Buscar regras</button>
+          <button id="guide-ocr" class="button secondary small" type="button" data-mutate hidden>Ler páginas escaneadas</button>
+          <button id="guide-translate" class="button secondary small" type="button" data-mutate hidden title="Tradução neste dispositivo; pode baixar o pacote de idioma, sem enviar o manual.">Traduzir para português</button>
           <button id="guide-analyze" class="button secondary small" type="button" data-mutate>Analisar PDF completo</button>
           <button id="guide-cancel-analysis" class="button secondary small" type="button" hidden>Cancelar análise</button>
         </nav>
         <p id="guide-stale" class="guide-warning" hidden></p>
+        <p id="guide-translation-note" class="muted-text" hidden></p>
         <p id="guide-status" role="status" aria-live="polite" hidden></p>
         <progress id="guide-progress" max="1" value="0" hidden></progress>
         <input id="guide-search" type="search" placeholder="Pesquisar movimento, ataque, pontuação…" aria-label="Pesquisar regras" hidden />
@@ -630,7 +684,7 @@
         </button>
       </div>
       <form id="login-form" class="dialog-body auth-form" method="dialog">
-        <p>Seus jogos e seu acesso em um só lugar. A biblioteca pública pode ser lida sem conta.</p>
+        <p>Seus jogos e seu acesso em um só lugar. Entre para acessar seus manuais.</p>
         <label>
           E-mail
           <input name="email" type="email" autocomplete="username" required placeholder="voce@exemplo.com" />
@@ -654,7 +708,7 @@
         <p id="google-login-error" class="inline-error" role="alert" hidden></p>
       </div>
       <form id="register-form" class="dialog-body auth-form" method="dialog" hidden>
-        <p>Use seu e-mail e escolha uma senha. Sua conta aguardará aprovação; os manuais públicos já estão disponíveis.</p>
+        <p>Use seu e-mail e escolha uma senha. Sua conta aguardará aprovação; o acesso será liberado pelo proprietário.</p>
         <label>
           Seu nome
           <input name="name" autocomplete="name" maxlength="100" required />
@@ -709,6 +763,16 @@
           </div>
         </dl>
         <p id="session-status" class="feedback-message" role="status"></p>
+        <details id="preparation-warning" class="account-advanced" hidden>
+          <summary>Conexão dos documentos</summary>
+          <p>O preparo dos documentos está indisponível. Confira os detalhes da conexão.</p>
+          <button type="button" class="text-button" id="retry-preparation">Tentar novamente</button>
+          <details>
+            <summary>Detalhes</summary>
+            <p id="preparation-diagnostic"></p>
+          </details>
+        </details>
+
         <button class="button secondary full" id="retry-profile-button" hidden>Concluir solicitação de cadastro</button>
         <details id="google-link-section" class="account-advanced">
           <summary>Adicionar Google como opção de login</summary>
@@ -765,9 +829,9 @@
         <section data-admin-section="settings" hidden>
           <label class="check-row">
             <input id="library-public" type="checkbox" />
-            Permitir leitura pública de toda a biblioteca
+            Disponibilizar todo o catálogo para contas aprovadas
           </label>
-          <p class="muted-text">A biblioteca começa pública. Ao desligar, visitantes ainda podem ler jogos publicados individualmente.</p>
+          <p class="muted-text">O acesso sempre exige aprovação. Ao desmarcar, disponibilize cada jogo individualmente.</p>
           <button class="button primary" id="save-library-settings">Salvar configuração</button>
           <details class="storage-status">
             <summary>Conexão e diagnóstico</summary>
@@ -792,7 +856,7 @@
         <fieldset id="person-permissions">
           <legend>Permissões de subadministrador</legend>
           <label class="check-row">
-            <input id="permission-approve" type="checkbox" />
+            <input id="permission-approve" type="checkbox" disabled />
             Aprovar ou recusar cadastros
           </label>
           <label class="check-row">

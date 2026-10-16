@@ -1,3 +1,6 @@
+import '../scripts/test-guard.mjs';
+import { openGameManagement } from './game-ui-fixture.mjs';
+import { enableLocalFixture } from './local-fixture.mjs';
 // QA de integração em contexto isolado: as fixtures nunca entram na biblioteca do usuário.
 // Use ACERVO_TEST_MODULES para apontar ao runtime de testes, ou instale playwright e pdf-lib para desenvolvimento.
 import { createRequire } from 'node:module';
@@ -32,6 +35,7 @@ const page = await context.newPage(),
   errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
 try {
+  await enableLocalFixture(page.context());
   const response = await page.goto(`${base}/?local=1`);
   assert.equal(response.status(), 200);
   await page.waitForFunction(() => document.getElementById('connection-status').textContent.includes('Neste dispositivo'));
@@ -72,6 +76,7 @@ try {
   assert.equal(await page.locator('.game-card').count(), 0);
   await page.locator('#clear-filters').click();
   await page.locator('.card-main').click();
+  await openGameManagement(page, 'manage-information');
   await page.locator('#edit-game').click();
   await page.locator('[name=title]').fill('Ilha revisada');
   const replacement = await PDFDocument.create();
@@ -109,6 +114,7 @@ try {
     await page.locator('#reader-close').click();
   }
   await page.locator('.card-main').click();
+  await openGameManagement(page, 'manage-information');
   await page.locator('#delete-game').click();
   await page.locator('#confirm-delete').click();
   await page.waitForFunction(() => document.querySelectorAll('.game-card').length === 0 && !document.getElementById('delete-dialog').open);

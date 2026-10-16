@@ -2,7 +2,7 @@ import { normalizeText, durationRange, synopsisText } from './model.js';
 import { RESEARCH_PROTOCOL } from './research-contract.js';
 import { durationSuggestion } from './research-duration.js';
 
-export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', wikipedia: 'Wikipédia', pdf: 'PDF · OCR local', bgg: 'BoardGameGeek' };
+export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', wikipedia: 'Wikipédia', pdf: 'PDF · texto do manual', bgg: 'BoardGameGeek' };
 export function researchSummary(sources, statuses) {
   const active = sources.filter((s) => s.enabled),
     disabled = sources.filter((s) => !s.enabled),
@@ -91,7 +91,8 @@ export function sameWork(a, b) {
   // Nomes parecidos não demonstram identidade ou edição.
   if (a.kind !== 'unknown' && b.kind !== 'unknown' && a.kind !== b.kind) return false;
   if (a.edition && b.edition && normalizeText(a.edition) !== normalizeText(b.edition)) return false;
-  return Object.entries(a.identifiers || {}).some(([key, id]) => id && b.identifiers?.[key] === id);
+  const shared = Object.entries(a.identifiers || {}).filter(([key, id]) => id && b.identifiers?.[key]);
+  return shared.length > 0 && shared.every(([key, id]) => b.identifiers[key] === id);
 }
 export function matchWarnings(candidate, { title, edition = '', kind = 'unknown' }, others = []) {
   const names = candidate.names?.map((n) => normalizeText(n.value)) || [];
@@ -119,6 +120,7 @@ export const fieldLabels = {
   mechanics: 'Mecânicas',
   gameType: 'Tipo',
   edition: 'Edição',
+  language: 'Idioma do manual',
 };
 export function selectedFields(candidate, current) {
   const { durationMinutes, minDurationMinutes, maxDurationMinutes, ...otherFields } = candidate.fields;
@@ -131,6 +133,6 @@ export function selectedFields(candidate, current) {
       value,
       current: current[key],
       conflict: current[key] !== '' && current[key] !== null && current[key] !== undefined && JSON.stringify(current[key]) !== JSON.stringify(value),
-      checked: (current[key] === '' || current[key] == null || (Array.isArray(current[key]) && !current[key].length)) && !candidate.conflicts?.length,
+      checked: (current[key] === '' || current[key] == null || (Array.isArray(current[key]) && !current[key].length)) && !candidate.conflicts?.length && (!candidate.requiresEditionReview || key === 'title'),
     }));
 }

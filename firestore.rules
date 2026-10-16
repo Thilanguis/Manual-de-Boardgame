@@ -2,18 +2,13 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function active() {
-      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved';
-    }
-    function owner() {
-      return active() && request.auth.uid == '7TitBObtb8a0W8GisSstSM1RHiX2'
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
-    }
-    function subadmin() { return active() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'subadmin'; }
-    function allowed(permission) { return owner() || (subadmin() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions[permission] == true); }
+    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function active() { return signedIn() && profile().uid == request.auth.uid && profile().status == 'approved' && (profile().role in ['user','subadmin'] || (request.auth.uid == '7TitBObtb8a0W8GisSstSM1RHiX2' && profile().role == 'superadmin')); }
+    function owner() { return signedIn() && request.auth.uid == '7TitBObtb8a0W8GisSstSM1RHiX2' && profile().status == 'approved' && profile().role == 'superadmin'; }
+    function subadmin() { return active() && profile().role == 'subadmin'; }
+    function allowed(permission) { return signedIn() && (owner() || (profile().status == 'approved' && profile().role == 'subadmin' && profile().permissions[permission] == true)); }
     function admin() { return owner() || subadmin(); }
-    function reviewer() { return allowed('approveUsers'); }
+    function reviewer() { return owner(); }
     function publicLibrary() {
       return !exists(/databases/$(database)/documents/settings/library) || get(/databases/$(database)/documents/settings/library).data.publicRead == true;
     }
@@ -90,9 +85,14 @@ service cloud.firestore {
       allow create: if validEvent(request.resource.data,id);
       allow update, delete: if false;
     }
+    match /cacheKeys/{uid} {
+      allow get: if active() && request.auth.uid == uid;
+      allow create: if active() && request.auth.uid == uid && request.resource.data.keys().hasOnly(['key']) && request.resource.data.key is string && request.resource.data.key.matches('^[a-f0-9]{64}$');
+      allow update, delete, list: if false;
+    }
     match /admins/{uid} { allow read, write: if false; }
     match /settings/library {
-      allow get: if true;
+      allow get: if active();
       allow list, create, delete: if false;
       allow update: if owner() && request.resource.data.keys().hasOnly(['publicRead','version','updatedAt','lastEventId'])
         && request.resource.data.keys().hasAll(['publicRead','version','updatedAt','lastEventId'])
@@ -110,9 +110,33 @@ service cloud.firestore {
               && ((g.minDurationMinutes == g.maxDurationMinutes && g.durationMinutes == g.minDurationMinutes)
                 || (g.minDurationMinutes != g.maxDurationMinutes && g.durationMinutes == null)))));
     }
+    function validDocument(d, id, key) {
+      let m=d.manual;
+      let previous = previousDocuments();
+      let legacy = resource != null && ((key == 'main' && m == resource.data.manual) || (key in previous && m == previous[key].manual));
+      return key.matches('^(main|[a-f0-9-]{36})$') && d.keys().hasOnly(['id','name','documentType','language','edition','manual'])
+        && d.id == key && d.name is string && d.name.size() > 0 && d.name.size() <= 160
+        && d.documentType in ['principal','complemento','referencia','solo','faq','errata','expansao']
+        && d.language is string && d.language.size() <= 20 && d.edition is string && d.edition.size() <= 100
+        && (legacy || (m.path == 'games/' + id + '/documents/' + key + '.pdf'
+          && m.type == 'application/pdf' && m.name is string && m.name.size() <= 255
+          && m.size is int && m.size > 0 && m.size <= 52428800 && m.pages is int && m.pages > 0
+          && m.sha256.matches('^[a-f0-9]{64}$') && m.storage == 'drive' && m.driveFileId.matches('^[A-Za-z0-9_-]{6,200}$')));
+    }
+    function docAt(g,id,keys,n) { return keys.size() <= n || validDocument(g.documents[keys[n]],id,keys[n]); }
+    function previousDocuments() { return resource != null && ('documents' in resource.data) ? resource.data.documents : {}; }
+    function validDocuments(g,id) {
+      let old = previousDocuments();
+      let changed = ('documents' in g) ? g.documents.diff(old).addedKeys().union(g.documents.diff(old).changedKeys()) : [].toSet();
+      return !('documents' in g) ? old.size() == 0 : (g.documents is map && g.documents.size() > 0 && g.documents.size() <= 12
+        && g.primaryDocumentId in g.documents && g.manual == g.documents[g.primaryDocumentId].manual
+        && (g.documents.diff(old).removedKeys().size() == 0 || owner())
+        && g.documentChanges is list && g.documentChanges.size() <= 2 && changed.hasOnly(g.documentChanges)
+        && (changed.size() == 0 || (docAt(g,id,g.documentChanges,0) && docAt(g,id,g.documentChanges,1))));
+    }
     function validGame(id) {
       let g = request.resource.data;
-      return g.keys().hasOnly(['id','title','description','minPlayers','maxPlayers','durationMinutes','minDurationMinutes','maxDurationMinutes','tags','language','manual','cover','sources','bgg','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting','deleteRequestedBy','recommendedAge','gameType','mechanics','edition'])
+      return g.keys().hasOnly(['id','title','description','minPlayers','maxPlayers','durationMinutes','minDurationMinutes','maxDurationMinutes','tags','language','manual','cover','sources','bgg','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting','deleteRequestedBy','recommendedAge','gameType','mechanics','edition','documents','primaryDocumentId','documentChanges'])
         && g.keys().hasAll(['id','title','description','minPlayers','maxPlayers','durationMinutes','tags','language','manual','cover','sources','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting'])
         && g.id == id && g.schemaVersion == 1 && g.isPublic is bool && g.deleting is bool
         && g.title is string && g.title.size() > 0 && g.title.size() <= 160
@@ -126,19 +150,25 @@ service cloud.firestore {
         && (!('gameType' in g) || (g.gameType is string && g.gameType.size() <= 80))
         && (!('edition' in g) || (g.edition is string && g.edition.size() <= 100))
         && (!('mechanics' in g) || (g.mechanics is list && g.mechanics.size() <= 8))
-        && g.manual is map && g.manual.path == 'games/' + id + '/manual.pdf'
+        && g.manual is map && (g.manual.path == 'games/' + id + '/manual.pdf' || (('primaryDocumentId' in g) && g.manual.path == 'games/' + id + '/documents/' + g.primaryDocumentId + '.pdf'))
+        && validDocuments(g,id)
         && g.manual.name is string && g.manual.name.size() <= 255
-        && g.manual.type == 'application/pdf' && g.manual.size is int && g.manual.size > 0 && g.manual.size <= 52428800
+        && g.manual.type == 'application/pdf' && g.manual.size is int && g.manual.size > 0 && (g.manual.size <= 52428800 || (resource != null && (g.manual == resource.data.manual || (('primaryDocumentId' in g) && g.primaryDocumentId in previousDocuments() && g.manual == previousDocuments()[g.primaryDocumentId].manual))))
         && g.manual.pages is int && g.manual.pages >= 1
         && g.manual.sha256 is string && g.manual.sha256.matches('^[a-f0-9]{64}$')
         && g.manual.storage == 'drive' && g.manual.driveFileId is string && g.manual.driveFileId.matches('^[A-Za-z0-9_-]{6,200}$')
         && g.cover is map && g.sources is map && g.createdAt is timestamp && g.updatedAt == request.time && g.createdBy is string;
     }
+    function documentUpdate(id) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['documents','primaryDocumentId','documentChanges','manual','language','updatedAt'])
+        && request.resource.data.updatedAt == request.time && validDocuments(request.resource.data,id)
+        && request.resource.data.language == request.resource.data.documents[request.resource.data.primaryDocumentId].language;
+    }
     match /games/{id} {
-      allow read: if admin() || ((!('deleting' in resource.data) || resource.data.deleting == false) && (publicLibrary() || resource.data.isPublic == true));
+      allow read: if active() && (admin() || ((!('deleting' in resource.data) || resource.data.deleting == false) && (publicLibrary() || resource.data.isPublic == true)));
       allow create: if allowed('addGames') && validGame(id) && request.resource.data.deleting == false && !('deleteRequestedBy' in request.resource.data)
         && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time;
-      allow update: if validGame(id) && request.resource.data.createdAt == resource.data.createdAt && request.resource.data.createdBy == resource.data.createdBy
+      allow update: if (allowed('editGames') || owner()) && (documentUpdate(id) || validGame(id)) && request.resource.data.createdAt == resource.data.createdAt && request.resource.data.createdBy == resource.data.createdBy
         && ((allowed('editGames') && (!('deleting' in resource.data) || resource.data.deleting == false)
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['deleting','deleteRequestedBy']))
         || (owner() && request.resource.data.deleting == true && request.resource.data.deleteRequestedBy == request.auth.uid
@@ -148,7 +178,7 @@ service cloud.firestore {
     function guideGame(id) { return get(/databases/$(database)/documents/games/$(id)).data; }
     function canReadGuide(id) {
       let g = guideGame(id);
-      return admin() || (g.deleting == false && (publicLibrary() || g.isPublic == true));
+      return active() && (admin() || (g.deleting == false && (publicLibrary() || g.isPublic == true)));
     }
     function canEditGuide(id) { return allowed('editGames') && guideGame(id).deleting == false; }
     function validGuide(g, id) {
@@ -189,6 +219,37 @@ service cloud.firestore {
       allow update: if publishGuide(id) && request.resource.data.revision == resource.data.revision + 1;
       allow delete: if owner();
     }
+    function documentHash(game,id) { return ('documents' in game) ? game.documents[id].manual.sha256 : (id == 'main' ? game.manual.sha256 : ''); }
+    match /games/{id}/indexes/{documentId} {
+      allow read: if canReadGuide(id);
+      allow create, update: if (canEditGuide(id) || (allowed('addGames') && guideGame(id).createdBy == request.auth.uid && guideGame(id).deleting == false))
+        && request.resource.data.keys().hasOnly(['documentId','sourceHash','fileId','state','readablePages','translatedPages','revision','updatedAt','updatedBy'])
+        && request.resource.data.documentId == documentId && request.resource.data.sourceHash == documentHash(guideGame(id),documentId)
+        && request.resource.data.fileId.matches('^[A-Za-z0-9_-]{6,200}$')
+        && (!('readablePages' in request.resource.data) || (request.resource.data.readablePages is int && request.resource.data.readablePages >= 0 && request.resource.data.readablePages <= 20000))
+        && (!('translatedPages' in request.resource.data) || (request.resource.data.translatedPages is int && request.resource.data.translatedPages >= 0 && request.resource.data.translatedPages <= 20000))
+        && request.resource.data.state in ['ready','partial','attention'] && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && request.resource.data.revision == (resource == null ? 1 : resource.data.revision + 1);
+      allow delete: if owner();
+    }
+    match /documentDeletion/{id} {
+      allow get, delete: if owner();
+      allow create, update: if owner() && guideGame(id).deleting == true && request.resource.data.keys().hasOnly(['done']) && request.resource.data.done is int && request.resource.data.done >= 0 && request.resource.data.done <= 12;
+    }
+    match /games/{id}/removals/{documentId} {
+      allow get, list, delete: if owner();
+      allow create: if owner() && documentId.matches('^(main|[a-f0-9-]{36})$')
+        && request.resource.data.keys().hasOnly(['gameId','documentId','document','indexFileId','indexSourceHash','removedBy'])
+        && request.resource.data.gameId == id && request.resource.data.documentId == documentId
+        && request.resource.data.removedBy == request.auth.uid
+        && request.resource.data.document == get(/databases/$(database)/documents/games/$(id)).data.documents[documentId]
+        && !(documentId in getAfter(/databases/$(database)/documents/games/$(id)).data.documents)
+        && (exists(/databases/$(database)/documents/games/$(id)/indexes/$(documentId))
+          ? (request.resource.data.indexFileId == get(/databases/$(database)/documents/games/$(id)/indexes/$(documentId)).data.fileId
+            && request.resource.data.indexSourceHash == get(/databases/$(database)/documents/games/$(id)/indexes/$(documentId)).data.sourceHash)
+          : (request.resource.data.indexFileId == '' && request.resource.data.indexSourceHash == ''));
+      allow update: if false;
+    }
     match /guideDeletion/{id} {
       allow get, delete: if owner();
       allow create, update: if owner() && guideGame(id).deleting == true
@@ -196,6 +257,25 @@ service cloud.firestore {
         && request.resource.data.remaining is list && request.resource.data.remaining.size() <= 200
         && request.resource.data.preserved is bool;
       allow list: if false;
+    }
+    // Pesquisa não publicada: somente editores ativos; projeção confirmada segue no jogo.
+    function researchEditor() { return allowed('editGames') || allowed('addGames'); }
+    function researchGame(id) { return get(/databases/$(database)/documents/games/$(id)).data; }
+    function validResearch(id) {
+      let r = request.resource.data;
+      return r.keys().hasOnly(['gameId','schemaVersion','aliases','content','fetchedAt','revision','updatedAt','updatedBy'])
+        && r.keys().hasAll(['gameId','schemaVersion','aliases','content','fetchedAt','revision','updatedAt','updatedBy'])
+        && r.gameId == id && r.schemaVersion == 1 && r.aliases is list && r.aliases.size() <= 32
+        && r.content is string && r.content.size() <= 120000 && r.fetchedAt is int && r.fetchedAt > 0
+        && r.revision is int && r.updatedBy == request.auth.uid && r.updatedAt == request.time
+        && exists(/databases/$(database)/documents/games/$(id)) && researchGame(id).deleting == false
+        && (allowed('editGames') || (allowed('addGames') && researchGame(id).createdBy == request.auth.uid));
+    }
+    match /gameResearch/{id} {
+      allow read: if researchEditor();
+      allow create: if researchEditor() && validResearch(id) && request.resource.data.revision == 1;
+      allow update: if researchEditor() && validResearch(id) && request.resource.data.revision == resource.data.revision + 1;
+      allow delete: if owner();
     }
     match /{document=**} { allow read, write: if false; }
   }

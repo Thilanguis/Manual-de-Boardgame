@@ -1,0 +1,5 @@
+{
+  "name": "acervo-browser-tests",
+  "private": true,
+  "dependencies": { "playwright": "1.56.1", "pdf-lib": "1.17.1" }
+}

@@ -1,3 +1,6 @@
+import '../scripts/test-guard.mjs';
+import { openGameManagement } from './game-ui-fixture.mjs';
+import { enableLocalFixture } from './local-fixture.mjs';
 // Fluxos reais do frontend e IndexedDB, somente em perfil local descartável.
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
@@ -20,6 +23,7 @@ const context = await browser.newContext({ serviceWorkers: 'block' }),
 page.on('pageerror', (e) => errors.push(e.message));
 await mkdir('test-output', { recursive: true });
 try {
+  await enableLocalFixture(page.context());
   await page.goto((process.env.ACERVO_TEST_URL || 'http://localhost:4174') + '/?local=1');
   await page.waitForFunction(() => document.getElementById('connection-status').textContent.includes('Neste dispositivo'));
   for (const [label, width, height] of [
@@ -89,6 +93,7 @@ try {
   await page.locator('#sort').selectOption('duration');
   assert.deepEqual((await page.locator('.card-title').allTextContents()).slice(0, 3), ['Rápido', 'Legado', 'Exploradores da Ilha']);
   await page.locator('.card-main').filter({ hasText: 'Legado' }).click();
+  await openGameManagement(page, 'manage-information');
   await page.locator('#edit-game').click();
   assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '30');
   assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '30');
@@ -111,6 +116,7 @@ try {
   });
   assert.equal(legacySource, 'PDF', 'Editar somente o título preserva a evidência antiga da duração');
   await page.locator('#title-repairs button').click();
+  await openGameManagement(page, 'manage-information');
   await page.locator('#edit-game').click();
   assert.equal(await page.locator('#game-title').inputValue(), 'ZMGPSM0101 v1.0.indd');
   await page.locator('#game-next').click();

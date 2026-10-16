@@ -1,12 +1,13 @@
 export const OWNER_UID = '7TitBObtb8a0W8GisSstSM1RHiX2';
 export const DRIVE_FOLDER_ID = '1XUgXOYRigMaYuNMbFVcjDp6obEp4r7wR';
 export const emptyPermissions = () => ({ approveUsers: false, addGames: false, editGames: false, deleteGames: false });
-export const defaultSubadminPermissions = () => ({ approveUsers: true, addGames: true, editGames: true, deleteGames: false });
+export const defaultSubadminPermissions = () => ({ approveUsers: false, addGames: true, editGames: true, deleteGames: false });
 export function accessFor(profile, uid, ownerUid = OWNER_UID) {
   const owner = uid === ownerUid && profile?.uid === uid && profile?.role === 'superadmin' && profile?.status === 'approved';
   const subadmin = profile?.uid === uid && profile?.role === 'subadmin' && profile?.status === 'approved';
   const rights = {
-    canApproveUsers: owner || (subadmin && profile.permissions?.approveUsers === true),
+    canRead: !!uid && profile?.uid === uid && profile?.status === 'approved' && (['user', 'subadmin'].includes(profile.role) || owner),
+    canApproveUsers: owner,
     canAdd: owner || (subadmin && profile.permissions?.addGames === true),
     canEdit: owner || (subadmin && profile.permissions?.editGames === true),
     canDelete: owner,

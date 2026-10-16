@@ -2,7 +2,7 @@ import { before, after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs, runTransaction, serverTimestamp, Timestamp, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs, runTransaction, serverTimestamp, Timestamp, onSnapshot, writeBatch } from 'firebase/firestore';
 import { OWNER_UID, emptyPermissions, defaultSubadminPermissions, profileSummary, userChange } from '../js/permissions.js';
 
 let env;
@@ -70,7 +70,91 @@ beforeEach(async () => {
 });
 after(async () => env?.cleanup());
 
-test('proveniência de catálogo e aliases são salvos apenas por editor aprovado, com leitura pública herdada', async () => {
+test('remoção recuperável é exclusiva do proprietário e exige retirada atômica do documento correto', async () => {
+  const extraId = '22345678-1234-1234-1234-123456789abc',
+    manual = game('existing').manual;
+  const main = { id: 'main', name: 'Principal', documentType: 'principal', language: 'pt', edition: '', manual };
+  const extra = { ...main, id: extraId, name: 'Complemento', manual: { ...manual, path: `games/existing/documents/${extraId}.pdf`, driveFileId: 'extra123' } };
+  await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), { documents: { main, [extraId]: extra }, documentChanges: ['main', extraId], primaryDocumentId: 'main', updatedAt: serverTimestamp() }));
+  const record = { gameId: 'existing', documentId: extraId, document: extra, indexFileId: '', indexSourceHash: '', removedBy: OWNER_UID };
+  const pending = doc(ownerDb, 'games', 'existing', 'removals', extraId);
+  await assertFails(setDoc(pending, record));
+  const batch = writeBatch(ownerDb);
+  batch.update(doc(ownerDb, 'games', 'existing'), { documents: { main }, documentChanges: [], updatedAt: serverTimestamp() });
+  batch.set(pending, record);
+  await assertSucceeds(batch.commit());
+  await assertSucceeds(getDoc(pending));
+  for (const uid of [null, 'pending', 'member', 'sub', 'blocked']) {
+    const ref = doc(db(uid), 'games', 'existing', 'removals', extraId);
+    await assertFails(getDoc(ref));
+    await assertFails(deleteDoc(ref));
+  }
+  await assertFails(updateDoc(pending, { indexFileId: 'foreign123' }));
+  await assertSucceeds(deleteDoc(pending));
+});
+
+test('limite de 50 MiB vale para manual legado e documentos adicionais, inclusive no cadastro', async () => {
+  const sizes = [52428799, 52428800];
+  for (const size of [...sizes, 52428801, 104857600, 157286400, 209715200]) {
+    const id = `size-${size}`,
+      record = game(id);
+    record.manual.size = size;
+    record.createdAt = serverTimestamp();
+    record.updatedAt = serverTimestamp();
+    const write = setDoc(doc(ownerDb, 'games', id), record);
+    if (size > 52428800) await assertFails(write);
+    else await assertSucceeds(write);
+    const manual = { ...game('existing').manual, path: 'games/existing/documents/main.pdf', size },
+      documents = { main: { id: 'main', name: 'Principal', documentType: 'principal', language: 'pt', edition: '', manual } };
+    const update = updateDoc(doc(ownerDb, 'games', 'existing'), { manual, documents, documentChanges: ['main'], primaryDocumentId: 'main', updatedAt: serverTimestamp() });
+    if (size > 52428800) await assertFails(update);
+    else await assertSucceeds(update);
+    const extra = {
+      ...documents,
+      '00000000-0000-0000-0000-000000000001': { ...documents.main, id: '00000000-0000-0000-0000-000000000001', manual: { ...manual, path: 'games/existing/documents/00000000-0000-0000-0000-000000000001.pdf', driveFileId: 'extra123' } },
+    };
+    const additional = updateDoc(doc(ownerDb, 'games', 'existing'), { documents: extra, documentChanges: ['00000000-0000-0000-0000-000000000001'], updatedAt: serverTimestamp() });
+    if (size > 52428800) await assertFails(additional);
+    else await assertSucceeds(additional);
+  }
+});
+
+test('PDFs antigos acima de 50 MiB permitem leitura, edição dos dados e troca de principal; novos arquivos grandes são recusados', async () => {
+  const id = 'legacy-large',
+    extraId = '00000000-0000-0000-0000-000000000001';
+  const original = { ...game(id), isPublic: true };
+  original.manual.size = 104857600;
+  const main = { id: 'main', name: 'Principal antigo', documentType: 'principal', language: 'pt', edition: '', manual: original.manual };
+  const extra = { ...main, id: extraId, name: 'Complemento antigo', manual: { ...main.manual, size: 157286400, path: `games/${id}/documents/${extraId}.pdf`, driveFileId: 'legacyextra123' } };
+  const documents = { main, [extraId]: extra };
+  await env.withSecurityRulesDisabled((c) => setDoc(doc(c.firestore(), 'games', id), { ...original, documents, primaryDocumentId: 'main', documentChanges: [] }));
+  const ref = doc(ownerDb, 'games', id);
+  await assertSucceeds(getDoc(ref));
+  await assertSucceeds(updateDoc(ref, { title: 'Dados corrigidos', updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(ref, { documents: { ...documents, [extraId]: { ...extra, name: 'Nome revisado' } }, documentChanges: [extraId], updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(ref, { primaryDocumentId: extraId, manual: extra.manual, language: 'pt', documentChanges: [], updatedAt: serverTimestamp() }));
+  const replacement = { ...extra.manual, driveFileId: 'newlarge123', sha256: 'b'.repeat(64) };
+  await assertFails(updateDoc(ref, { manual: replacement, documents: { ...documents, [extraId]: { ...extra, manual: replacement } }, documentChanges: [extraId], updatedAt: serverTimestamp() }));
+});
+
+test('pesquisa reutilizável é privada, versionada e respeita permissão, autor e jogo existente', async () => {
+  const record = { gameId: 'existing', schemaVersion: 1, aliases: ['sina da sociedade'], content: JSON.stringify({ schemaVersion: 1, candidates: [] }), fetchedAt: Date.now(), revision: 1, updatedBy: OWNER_UID, updatedAt: serverTimestamp() };
+  for (const uid of [null, 'pending', 'member', 'blocked']) await assertFails(setDoc(doc(db(uid), 'gameResearch', 'existing'), { ...record, updatedBy: uid || 'visitor' }));
+  await assertSucceeds(setDoc(doc(ownerDb, 'gameResearch', 'existing'), record));
+  for (const uid of [null, 'pending', 'member', 'blocked']) await assertFails(getDoc(doc(db(uid), 'gameResearch', 'existing')));
+  await assertSucceeds(getDoc(doc(db('sub'), 'gameResearch', 'existing')));
+  await assertSucceeds(getDocs(query(collection(db('sub'), 'gameResearch'), where('aliases', 'array-contains', 'sina da sociedade'))));
+  await assertFails(updateDoc(doc(db('sub'), 'gameResearch', 'existing'), { revision: 2, updatedBy: OWNER_UID, updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(doc(db('sub'), 'gameResearch', 'existing'), { revision: 3, updatedBy: 'sub', updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(doc(db('sub'), 'gameResearch', 'existing'), { revision: 2, updatedBy: 'sub', content: 'a'.repeat(120001), updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(doc(db('sub'), 'gameResearch', 'existing'), { revision: 2, updatedBy: 'sub', updatedAt: serverTimestamp() }));
+  await assertFails(setDoc(doc(db('sub'), 'gameResearch', 'missing'), { ...record, gameId: 'missing', updatedBy: 'sub' }));
+  await assertFails(updateDoc(doc(db('addonly'), 'gameResearch', 'existing'), { revision: 3, updatedBy: 'addonly', updatedAt: serverTimestamp() }));
+  await assertFails(deleteDoc(doc(db('sub'), 'gameResearch', 'existing')));
+  await assertSucceeds(deleteDoc(doc(ownerDb, 'gameResearch', 'existing')));
+});
+
+test('proveniência de catálogo e aliases são salvos apenas por editor aprovado, com leitura privada', async () => {
   const sources = {
     description: { source: 'Wikidata · confirmado', excerpt: 'jogo de tabuleiro', url: 'https://www.wikidata.org/wiki/Q17271', license: 'CC0', language: 'pt', confirmedAt: 1 },
     catalog: {
@@ -80,7 +164,8 @@ test('proveniência de catálogo e aliases são salvos apenas por editor aprovad
     },
   };
   await assertSucceeds(updateDoc(doc(db('sub'), 'games', 'existing'), { sources, updatedAt: serverTimestamp() }));
-  const publicRecord = await assertSucceeds(getDoc(doc(db(), 'games', 'existing')));
+  await assertFails(getDoc(doc(db(), 'games', 'existing')));
+  const publicRecord = await assertSucceeds(getDoc(doc(ownerDb, 'games', 'existing')));
   assert.equal(publicRecord.data().sources.catalog.matches[0].id, 'Q17271');
   for (const uid of ['pending', 'member', 'blocked']) await assertFails(updateDoc(doc(db(uid), 'games', 'existing'), { sources, updatedAt: serverTimestamp() }));
 });
@@ -132,11 +217,11 @@ test('publicação exige rascunho revisado, versão do PDF, cópia fiel e audito
   await assertFails(setDoc(doc(ownerDb, 'gameGuides', 'published'), guideRecord('published')));
   await assertFails(publish(ownerDb, 'published', 1, { content: 'Texto diferente do rascunho' }));
   await assertSucceeds(publish(ownerDb, 'published'));
-  assert.match((await getDoc(doc(db(), 'gameGuides', 'published'))).data().content, /Texto revisado/);
+  assert.match((await getDoc(doc(db('member'), 'gameGuides', 'published'))).data().content, /Texto revisado/);
   await assertSucceeds(setDoc(doc(ownerDb, 'guideDrafts', 'published'), guideRecord('published', 2, { content: 'Alteração privada', reviewed: false })));
-  assert.match((await getDoc(doc(db(), 'gameGuides', 'published'))).data().content, /Texto revisado/);
+  assert.match((await getDoc(doc(db('member'), 'gameGuides', 'published'))).data().content, /Texto revisado/);
   await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'published'), { manual: { ...game('published').manual, sha256: 'b'.repeat(64) }, updatedAt: serverTimestamp() }));
-  await assertSucceeds(getDoc(doc(db(), 'gameGuides', 'published')));
+  await assertSucceeds(getDoc(doc(db('member'), 'gameGuides', 'published')));
   await assertFails(publish(ownerDb, 'published', 2, { draftRevision: 2 }));
   await assertFails(deleteDoc(doc(db('sub'), 'gameGuides', 'published')));
 });
@@ -155,10 +240,10 @@ test('guia publicado herda visibilidade do jogo; limpeza é exclusiva do proprie
   await assertSucceeds(deleteDoc(doc(ownerDb, 'guideDrafts', 'existing')));
 });
 
-test('visitante lê catálogo público e manual referenciado sem login, mas não escreve', async () => {
+test('visitante não lê catálogo, mesmo com biblioteca antiga marcada pública', async () => {
   const guest = db();
-  await assertSucceeds(getDoc(doc(guest, 'games', 'existing')));
-  await assertSucceeds(getDocs(query(collection(guest, 'games'), where('deleting', '==', false))));
+  await assertFails(getDoc(doc(guest, 'games', 'existing')));
+  await assertFails(getDocs(query(collection(guest, 'games'), where('deleting', '==', false))));
   await assertFails(setDoc(doc(guest, 'games', 'new'), { ...game('new'), createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
   await assertFails(getDocs(collection(guest, 'users')));
 });
@@ -183,8 +268,11 @@ test('usuário não altera o próprio status, cargo, permissões nem recria apó
   await assertFails(deleteDoc(doc(pendingDb, 'users', 'pending')));
   await assertFails(setDoc(doc(pendingDb, 'users', 'pending'), { ...profile('pending', 'user', 'pending'), createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
 });
-test('subadmin aprova ou recusa somente pending/user; usuário aprovado continua comum', async () => {
-  await assertSucceeds(change(db('sub'), 'pending', 'approve'));
+test('somente proprietário aprova; subadmin não recebe poder de aprovação por flag legada', async () => {
+  await env.withSecurityRulesDisabled((c) => updateDoc(doc(c.firestore(), 'users', 'sub'), { 'permissions.approveUsers': true }));
+  await assertFails(change(db('sub'), 'pending', 'approve'));
+  await assertFails(change(db('sub'), 'pending', 'reject'));
+  await assertSucceeds(change(ownerDb, 'pending', 'approve'));
   const approved = (await getDoc(doc(db('pending'), 'users', 'pending'))).data();
   assert.equal(approved.role, 'user');
   assert.deepEqual(approved.permissions, emptyPermissions());
@@ -250,13 +338,13 @@ test('adição e edição respeitam flags; subadministrador nunca exclui definit
   await assertFails(updateDoc(doc(sub, 'games', 'existing'), { deleting: true, deleteRequestedBy: 'sub', updatedAt: serverTimestamp() }));
   await assertSucceeds(deleteDoc(doc(ownerDb, 'games', 'new')));
 });
-test('bloqueio revoga escrita para uma sessão já autenticada, mas mantém leitura pública', async () => {
+test('bloqueio revoga escrita para uma sessão já autenticada, e leitura', async () => {
   const sub = db('sub');
   await assertSucceeds(updateDoc(doc(sub, 'games', 'existing'), { title: 'Antes do bloqueio', updatedAt: serverTimestamp() }));
   await assertSucceeds(change(ownerDb, 'sub', 'block'));
   await assertFails(updateDoc(doc(sub, 'games', 'existing'), { title: 'Após bloqueio', updatedAt: serverTimestamp() }));
   await assertFails(change(sub, 'pending', 'approve'));
-  await assertSucceeds(getDoc(doc(sub, 'games', 'existing')));
+  await assertFails(getDoc(doc(sub, 'games', 'existing')));
 });
 test('cadastros pendentes, rejeitados, bloqueados e admin legado não ganham escrita', async () => {
   await assertSucceeds(change(ownerDb, 'pending', 'reject'));
@@ -283,13 +371,14 @@ test('desligar leitura global exige auditagem e mantém jogos publicados dispon�
     }),
   );
   await assertFails(getDoc(doc(db(), 'games', 'existing')));
-  await assertSucceeds(getDoc(doc(db(), 'games', 'published')));
+  await assertFails(getDoc(doc(db(), 'games', 'published')));
+  await assertSucceeds(getDoc(doc(db('member'), 'games', 'published')));
 });
 
 test('intervalos de duração são validados no servidor sem conceder escrita a leitores', async () => {
   const change = { minDurationMinutes: 60, maxDurationMinutes: 120, durationMinutes: null, updatedAt: serverTimestamp() };
   await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), change));
-  assert.equal((await getDoc(doc(db(), 'games', 'existing'))).data().maxDurationMinutes, 120);
+  assert.equal((await getDoc(doc(ownerDb, 'games', 'existing'))).data().maxDurationMinutes, 120);
   for (const uid of ['member', 'pending', 'blocked']) await assertFails(updateDoc(doc(db(uid), 'games', 'existing'), { ...change, minDurationMinutes: 30 }));
   for (const values of [
     { minDurationMinutes: 60, maxDurationMinutes: null },
@@ -305,8 +394,56 @@ test('intervalos de duração são validados no servidor sem conceder escrita a 
 
 test('jogo legado com durationMinutes continua editável sem migração forçada', async () => {
   await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), { durationMinutes: 45, updatedAt: serverTimestamp() }));
-  const legacy = (await getDoc(doc(db(), 'games', 'existing'))).data();
+  const legacy = (await getDoc(doc(ownerDb, 'games', 'existing'))).data();
   assert.equal(legacy.durationMinutes, 45);
   assert.equal(Object.hasOwn(legacy, 'minDurationMinutes'), false);
   await assertFails(updateDoc(doc(ownerDb, 'games', 'existing'), { minDurationMinutes: 30, updatedAt: serverTimestamp() }));
+});
+
+test('cache privado exige aprovação, pertence à conta e não admite chave trocada pelo cliente', async () => {
+  for (const uid of [null, 'pending', 'blocked']) await assertFails(setDoc(doc(db(uid), 'cacheKeys', uid || 'guest'), { key: 'a'.repeat(64) }));
+  await assertSucceeds(setDoc(doc(db('member'), 'cacheKeys', 'member'), { key: 'a'.repeat(64) }));
+  await assertSucceeds(getDoc(doc(db('member'), 'cacheKeys', 'member')));
+  for (const uid of [null, 'pending', 'blocked', 'sub', OWNER_UID]) await assertFails(getDoc(doc(db(uid), 'cacheKeys', 'member')));
+  await assertFails(updateDoc(doc(db('member'), 'cacheKeys', 'member'), { key: 'b'.repeat(64) }));
+  await assertSucceeds(change(ownerDb, 'member', 'block'));
+  await assertFails(getDoc(doc(db('member'), 'cacheKeys', 'member')));
+});
+test('índice técnico é independente de guia, privado e vinculado ao documento e hash atuais', async () => {
+  const ref = (database) => doc(database, 'games', 'published', 'indexes', 'main');
+  const data = { documentId: 'main', sourceHash: 'a'.repeat(64), fileId: 'index-123', state: 'ready', revision: 1, updatedAt: serverTimestamp(), updatedBy: OWNER_UID };
+  await assertSucceeds(setDoc(ref(ownerDb), data));
+  await assertSucceeds(getDoc(ref(db('member'))));
+  for (const uid of [null, 'pending', 'blocked']) await assertFails(getDoc(ref(db(uid))));
+  await assertFails(setDoc(ref(db('member')), { ...data, revision: 2, updatedBy: 'member' }));
+  await assertFails(updateDoc(ref(ownerDb), { sourceHash: 'b'.repeat(64), revision: 2, updatedAt: serverTimestamp() }));
+  await assertFails(setDoc(doc(ownerDb, 'games', 'published', 'indexes', 'other'), { ...data, documentId: 'other' }));
+  await assertSucceeds(change(ownerDb, 'member', 'block'));
+  await assertFails(getDoc(ref(db('member'))));
+});
+test('múltiplos documentos preservam legado, validam alterações e impedem remoção por subadmin', async () => {
+  let documents = { main: { id: 'main', name: 'Principal', documentType: 'principal', language: game('existing').language, edition: '', manual: game('existing').manual } };
+  await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), { documents, documentChanges: ['main'], primaryDocumentId: 'main', updatedAt: serverTimestamp() }));
+  for (let n = 1; n < 12; n++) {
+    const id = `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
+    documents = { ...documents, [id]: { id, name: `Documento ${n}`, documentType: 'referencia', language: 'pt-BR', edition: '', manual: { ...game('existing').manual, path: `games/existing/documents/${id}.pdf`, driveFileId: `document-${n}` } } };
+    await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), { documents, documentChanges: [id], updatedAt: serverTimestamp() }));
+  }
+  const keys = Object.keys(documents),
+    removed = { ...documents };
+  delete removed[keys[1]];
+  await assertFails(updateDoc(doc(db('sub'), 'games', 'existing'), { documents: removed, documentChanges: [], updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), { documents: removed, documentChanges: [], updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(doc(db('member'), 'games', 'existing'), { documents: removed, documentChanges: [], updatedAt: serverTimestamp() }));
+  const invalid = { ...removed, main: { ...removed.main, manual: { ...removed.main.manual, path: 'personal/private.pdf' } } };
+  await assertFails(updateDoc(doc(ownerDb, 'games', 'existing'), { documents: invalid, documentChanges: ['main'], manual: invalid.main.manual, updatedAt: serverTimestamp() }));
+});
+
+test('disponibilidade global legada é preservada apenas para contas aprovadas; opção desligada respeita cada jogo', async () => {
+  await assertSucceeds(getDoc(doc(db('member'), 'games', 'existing')));
+  for (const uid of [null, 'pending', 'blocked']) await assertFails(getDoc(doc(db(uid), 'games', 'existing')));
+  await env.withSecurityRulesDisabled((c) => updateDoc(doc(c.firestore(), 'settings', 'library'), { publicRead: false }));
+  await assertFails(getDoc(doc(db('member'), 'games', 'existing')));
+  await assertSucceeds(getDoc(doc(db('member'), 'games', 'published')));
+  await assertSucceeds(getDoc(doc(ownerDb, 'games', 'existing')));
 });

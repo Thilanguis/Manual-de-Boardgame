@@ -22,7 +22,7 @@ Firebase Spark fornece login, catálogo e papéis. PDFs/capas ficam no Google Dr
 
 O login Firebase identifica cada administrador/subadministrador. A autorização OAuth do Drive é central, feita pelo proprietário; os uploads de todos usam essa mesma conta e quota. O proprietário já tem UID `7TitBObtb8a0W8GisSstSM1RHiX2`. Ao habilitar login Google, é necessário vincular esse provider à conta existente para preservar o UID.
 
-A configuração web Firebase já está integrada. O frontend usa `fileStorage: { provider: 'drive', apiBase: '' }`; a URL real do Worker precisa ser preenchida após a publicação. `enableBgg` começa `false`; `measurementId` não inicializa Analytics. O limite de PDF da aplicação é 52.428.800 bytes (50 MiB).
+A configuração web Firebase já está integrada. O frontend usa `fileStorage: { provider: 'drive', apiBase: '' }`; a URL real do Worker precisa ser preenchida após a publicação. `enableBgg` começa `false`; `measurementId` não inicializa Analytics. O limite de PDF da aplicação é 209.715.200 bytes (200 MiB).
 
 O catálogo usa `games/{uuid}`. A versão 1.2 usa `users/{uid}` para estados pending/approved/rejected/blocked, papéis user/subadmin/superadmin e flags approveUsers/addGames/editGames. Exclusão definitiva é exclusiva do proprietário fixado; `admins` é legado sem autorização. Mudanças administrativas exigem auditoria atômica. O padrão da migração é biblioteca pública; jogos em exclusão ficam ocultos dos visitantes. A coleção `manuals`, com futura referência `gameId`, permanece reservada e sem acesso.
 

@@ -1,3 +1,6 @@
+import '../scripts/test-guard.mjs';
+import { openGameManagement } from './game-ui-fixture.mjs';
+import { enableLocalFixture } from './local-fixture.mjs';
 // Exercita app.js e o salvamento reais, com PDF sintético e somente a API externa simulada.
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
@@ -46,6 +49,7 @@ try {
     const page = await context.newPage(),
       errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
+    await enableLocalFixture(page.context());
     await page.goto(`${process.env.ACERVO_TEST_URL || 'http://localhost:4174'}/?local=1`);
     await page.waitForFunction(() => document.getElementById('account-label').textContent === 'Local');
     await page.locator('#empty-action').click();
@@ -88,6 +92,8 @@ try {
       window.candidateFixture.fields = { description: 'Outro resumo confirmado.' };
     });
     await page.locator('#game-back').click();
+    await page.locator('.research-options').evaluate((element) => (element.open = true));
+    await page.locator('[data-research-refresh]').check();
     await page.locator('[data-research-search]').click();
     await page.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
     for (const box of await page.locator('[data-research-review] input[type=checkbox]').all()) await box.check();
@@ -105,6 +111,8 @@ try {
       window.candidateFixture.fields = { title: 'Catan', minDurationMinutes: 60, maxDurationMinutes: 120 };
     });
     await page.locator('#game-back').click();
+    await page.locator('.research-options').evaluate((element) => (element.open = true));
+    await page.locator('[data-research-refresh]').check();
     await page.locator('[data-research-search]').click();
     await page.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
     const confirm = page.locator('[data-research-review] input[type=checkbox]').last();
@@ -124,6 +132,7 @@ try {
     await page.locator('#upload-dialog').waitFor({ state: 'hidden' });
     await page.reload();
     await page.locator('.card-main').click();
+    await openGameManagement(page, 'manage-information');
     await page.locator('#edit-game').click();
     await page.locator('#game-next').click();
     assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '60');

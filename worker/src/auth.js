@@ -73,7 +73,7 @@ export function bearer(request) {
 }
 export function permissions(profile, uid, ownerUid) {
   const rights = accessFor(profile, uid, ownerUid);
-  return { add: rights.canAdd, edit: rights.canEdit, delete: rights.canDelete };
+  return { read: rights.canRead, add: rights.canAdd, edit: rights.canEdit, delete: rights.canDelete };
 }
 async function ticketKey(secret) {
   if (!secret) throw new ApiError(503, 'A API de arquivos ainda precisa ser configurada.');

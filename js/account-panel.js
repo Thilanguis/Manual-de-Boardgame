@@ -18,6 +18,7 @@ export function createAccountPanel({ root, getRepository, getSession, openDialog
   }
   function render() {
     setView(view, false);
+    if (!busy) for (const control of root.querySelectorAll('button,input')) if (!control.hasAttribute('data-close')) control.disabled = !getRepository();
     const { user, profile } = getSession();
     if (!user) return;
     const name = [profile?.name, user.displayName, user.email?.split('@')[0]].find((value) => value && value !== user.uid) || 'Minha conta';
@@ -32,11 +33,13 @@ export function createAccountPanel({ root, getRepository, getSession, openDialog
     $('profile-providers').textContent = [...new Set(providers.map((p) => ({ password: 'E-mail e senha', 'google.com': 'Google' })[p.providerId] || p.providerId))].join(' · ') || 'Método não informado';
     $('session-status').textContent =
       {
-        pending: 'Sua conta aguarda aprovação. Enquanto isso, todos os manuais públicos continuam disponíveis.',
+        pending: 'Sua conta está aguardando aprovação.',
         approved: 'Sua conta está aprovada.',
-        rejected: 'Sua solicitação foi recusada. Você continua podendo ler o conteúdo público.',
-        blocked: 'Os acessos da sua conta foram bloqueados. A leitura pública continua disponível.',
+        rejected: 'Sua solicitação foi recusada.',
+        blocked: 'Sua conta está bloqueada.',
       }[profile?.status] || (user.uid === OWNER_UID ? 'O perfil do proprietário ainda precisa ser preparado pelo procedimento seguro do projeto.' : 'Conclua sua solicitação para entrar na fila de aprovação.');
+    if (profile?.status === 'approved' && !getSession().canRead) $('session-status').textContent = navigator.onLine ? 'Verificando seu acesso…' : 'Conecte-se à internet para confirmar seu acesso.';
+    if (!navigator.onLine) $('session-status').textContent = 'Conecte-se à internet para confirmar seu acesso.';
     $('retry-profile-button').hidden = !!profile || user.uid === OWNER_UID;
     $('google-link-section').hidden = !googleEnabled || providers.some((p) => p.providerId === 'google.com');
   }
@@ -52,6 +55,7 @@ export function createAccountPanel({ root, getRepository, getSession, openDialog
     const error = errorId && $(errorId);
     if (error) error.hidden = true;
     try {
+      if (!getRepository()) throw new Error('A conexão ainda está sendo preparada. Tente novamente em instantes.');
       await action();
     } catch (cause) {
       if (error) {
@@ -90,7 +94,7 @@ export function createAccountPanel({ root, getRepository, getSession, openDialog
       await getRepository().register(data.get('name'), data.get('email'), data.get('password'));
       event.target.reset();
       closeDialog(root.id);
-      onNotice('Conta criada! Aguarde a aprovação de um administrador.');
+      onNotice('Conta criada! Aguarde a aprovação do proprietário.');
     });
   };
   $('recovery-form').onsubmit = (event) => {
@@ -120,7 +124,7 @@ export function createAccountPanel({ root, getRepository, getSession, openDialog
   $('retry-profile-button').onclick = () =>
     void run($('retry-profile-button'), 'Registrando solicitação…', null, async () => {
       await getRepository().retryProfile();
-      onNotice('Solicitação registrada. Aguarde a aprovação de um administrador.');
+      onNotice('Solicitação registrada. Aguarde a aprovação do proprietário.');
     });
   $('logout-button').onclick = () =>
     void run($('logout-button'), 'Saindo…', null, async () => {

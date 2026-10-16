@@ -1,7 +1,10 @@
+import { consolidateCandidates, researchSnapshot, factSignature } from './research-knowledge.js';
 import { parallelResearch, normalizedQuery, sourceNames, manualSources, sameWork, matchWarnings, selectedFields, fieldLabels, researchSummary } from './research-client.js';
 import { RESEARCH_PROTOCOL, RESEARCH_VERSION } from './research-contract.js';
 import { recognizePdfImages } from './pdf-ocr.js';
 import { presentCandidate, candidateFacts, resultSummary } from './research-presentation.js';
+import { createTextTranslator } from './translation.js';
+import { portugueseCandidate, translateCatalogCandidate, pdfMetadataCandidate } from './catalog-language.js';
 
 const node = (tag, text = '') => {
   const el = document.createElement(tag);
@@ -21,7 +24,19 @@ const disclosure = (title) => {
   details.append(node('summary', title));
   return details;
 };
-export function createResearchPanel({ root, getRepository, getCurrent, getPdf, apply, canUse, readPreference, writePreference, onApplied = () => document.querySelector('[data-step-target="2"]')?.click(), onSuggestions = () => {} }) {
+export function createResearchPanel({
+  root,
+  getRepository,
+  getCurrent,
+  getPdf,
+  apply,
+  canUse,
+  readPreference,
+  writePreference,
+  onApplied = () => document.querySelector('[data-step-target="2"]')?.click(),
+  onSuggestions = () => {},
+  onOcrPage = () => {},
+}) {
   let controller,
     detailController,
     sequence = 0,
@@ -36,6 +51,10 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     ocrActive = false,
     ocrCandidate = null,
     sourceFailure = '';
+  let snapshot = null,
+    queryInput = null,
+    decisions = [];
+  const aliasesInput = root.querySelector('[data-research-aliases]');
   const appliedCandidates = new Set();
   const candidateKey = (candidate) => `${candidate.source}:${candidate.id}`;
   function notifySuggestions() {
@@ -70,6 +89,11 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
   function reset() {
     cancelWork();
     candidates = [];
+    snapshot = queryInput = null;
+    decisions = [];
+    if (aliasesInput) aliasesInput.value = '';
+    const refresh = root.querySelector('[data-research-refresh]');
+    if (refresh) refresh.checked = false;
     statuses = new Map();
     selected = null;
     ocrCandidate = null;
@@ -149,7 +173,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     }
     list.replaceChildren();
     const priority = (c) => (c.source === 'ludopedia' ? 0 : c.fields?.title && ['pt-BR', 'pt-br', 'pt'].includes(c.language) ? 1 : getCurrent()?.language === 'fr' && c.language === 'fr' ? 2 : 3);
-    for (const original of [...(ocrCandidate ? [ocrCandidate] : []), ...candidates].sort((a, b) => priority(a) - priority(b))) {
+    for (const original of consolidateCandidates([...(ocrCandidate ? [ocrCandidate] : []), ...candidates]).sort((a, b) => priority(a) - priority(b))) {
       const candidate = presentCandidate(original, candidates);
       const card = node('article');
       card.className = 'research-card';
@@ -170,6 +194,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       const source = candidate.url ? link(sourceNames[candidate.source], candidate.url) : node('small', sourceNames[candidate.source]);
       source.className = 'research-source';
       card.append(source);
+      if (candidate.contributors?.length > 1) card.append(node('small', `${candidate.contributors.length} fontes · informações reunidas`));
       if (candidate.fields.description) card.append(node('p', candidate.fields.description));
       const facts = candidateFacts(candidate),
         metadata = node('dl');
@@ -181,8 +206,9 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       }
       if (facts.length) card.append(metadata);
       const additional = selectedFields(candidate, {}).filter((field) => field.key !== 'title').length;
-      card.append(node('small', additional ? 'Use todas as sugestões ou escolha os campos na revisão.' : candidate.needsDetail ? 'Abra a revisão para consultar os dados desta fonte.' : 'Só o título foi encontrado. Sem outros dados para preencher.'));
+      if (!additional) card.append(node('small', candidate.needsDetail ? 'Dados adicionais ainda não consultados.' : 'Só o título foi encontrado. Sem outros dados para preencher.'));
       const details = disclosure('Edição, nomes e direitos de uso');
+      for (const field of candidate.pendingTranslations || []) details.append(node('p', `${fieldLabels[field.key]} · original (${field.language}): ${display(field.value)}`));
       details.append(node('p', candidate.edition ? `Edição: ${candidate.edition}` : 'A fonte não confirmou a edição do seu manual.'));
       const names = [...new Set(candidate.names.map((name) => name.value))];
       if (names.length) details.append(node('p', names.join(' · ')));
@@ -208,12 +234,74 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       const actions = node('div');
       actions.className = 'research-actions';
       actions.append(action, useAll);
+      if (candidate.pendingTranslations?.length) {
+        card.append(node('small', 'Há textos aguardando tradução para português.'));
+        const translate = node('button', 'Traduzir para português');
+        translate.type = 'button';
+        translate.className = 'button secondary small';
+        translate.onclick = () => void translateSuggestion(original);
+        translate.title = 'Tradução neste dispositivo; pode baixar o pacote de idioma. Nenhum texto é enviado a um servidor.';
+        if (globalThis.Translator) actions.append(translate);
+        else card.append(node('small', 'A tradução local não está disponível aqui. Use a revisão para escrever em português.'));
+      }
       card.append(actions);
       list.append(card);
     }
     const diagnostics = root.querySelector('[data-research-diagnostics]');
     if (diagnostics) diagnostics.textContent = sourceFailure || researchSummary(sources, statuses);
     status.textContent = sourceFailure ? (getRepository().mode === 'local' ? sourceFailure : 'Não foi possível pesquisar agora. Tente novamente.') : resultSummary(candidates, sources, statuses);
+  }
+  function updateCandidate(next) {
+    candidates = candidates.map((c) => (c.source === next.source && c.id === next.id ? next : c));
+    if (ocrCandidate?.source === next.source && ocrCandidate?.id === next.id) ocrCandidate = next;
+  }
+  async function translateSuggestion(candidate) {
+    if (!canUse()) return;
+    detailController?.abort();
+    detailController = new AbortController();
+    const control = detailController,
+      n = sequence;
+    detailActive = true;
+    cancel.hidden = false;
+    const current = getCurrent();
+    const translator = createTextTranslator({ scope: `${getRepository().session?.user?.uid || 'device'}:${current.manual?.sha256 || 'catalog'}` });
+    try {
+      const members = candidate.members || [candidate];
+      const languages = [...new Set(members.flatMap((m) => portugueseCandidate(m).pendingTranslations.map((f) => f.language)))];
+      // Preparação começa no clique, sem enviar conteúdo a APIs remotas.
+      await Promise.all(
+        languages.map((language) =>
+          translator.prepare(language, {
+            allowDownload: true,
+            signal: control.signal,
+            onProgress: (text) => {
+              if (n === sequence) status.textContent = text;
+            },
+          }),
+        ),
+      );
+      for (const member of members) {
+        const next = await translateCatalogCandidate(member, translator, {
+          signal: control.signal,
+          onProgress: (text) => {
+            if (n === sequence) status.textContent = text;
+          },
+        });
+        if (n !== sequence || control.signal.aborted) return;
+        updateCandidate(next);
+      }
+      render();
+      status.textContent = 'Tradução pronta. Revise as sugestões antes de usar.';
+      if (queryInput) snapshot = researchSnapshot(queryInput, candidates, decisions);
+    } catch (error) {
+      if (n === sequence && !control.signal.aborted) status.textContent = error.message;
+    } finally {
+      translator.destroy();
+      if (control === detailController) {
+        detailActive = false;
+        cancel.hidden = !active;
+      }
+    }
   }
   async function run(expanded = false) {
     const current = getCurrent();
@@ -223,6 +311,9 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     controller = new AbortController();
     const signal = controller.signal;
     candidates = [];
+    if (ocrCandidate?.manualHash !== current.manual?.sha256 || ocrCandidate?.pdfMethod === 'text') ocrCandidate = null;
+    const extracted = pdfMetadataCandidate(current);
+    if (extracted) ocrCandidate = extracted;
     appliedCandidates.clear();
     notifySuggestions();
     statuses.clear();
@@ -234,26 +325,96 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     search.disabled = expand.disabled = true;
     search.setAttribute('aria-busy', 'true');
     status.textContent = 'Pesquisando…';
+    const budget = AbortSignal.any([signal, AbortSignal.timeout(expanded ? 10000 : 7000)]);
     try {
-      await loadSources(signal);
-      if (signal.aborted || n !== sequence) return;
-      const input = { action: 'search', query: normalizedQuery(current.title), pdfLanguage: current.language, preferredLanguage: language.value, kind: kind.value, expanded };
+      const input = { action: 'search', query: normalizedQuery(current.title), pdfLanguage: current.language, preferredLanguage: language.value, kind: kind.value, expanded, fetchedAt: Date.now() };
       input.alternateTitles = current.sources?.originalTitle ? [{ value: current.sources.originalTitle.excerpt, language: 'other' }] : [];
-      // Mantém a edição na evidência e pesquisa o nome do jogo separadamente.
-      if (current.edition) input.query = input.query.replace(/\s+(?:\d+(?:st|nd|rd|th|e|ª)?\s+)?(?:édition|edition|edição)\b.*$/i, '').trim() || input.query;
+      input.edition = current.edition || '';
+      input.gameId = current.id || '';
+      input.manualHash = current.manual?.sha256 || '';
+      input.alternateTitles.push(...(current.sources?.catalog?.matches || []).flatMap((match) => match.names || []));
+      input.alternateTitles.push(
+        ...String(aliasesInput?.value || '')
+          .split('\n')
+          .map((line) => {
+            const match = line.trim().match(/^(?:(pt-BR|pt|en|fr):\s*)?(.{2,160})$/i);
+            return match ? { value: match[2], language: /^pt/i.test(match[1] || '') ? 'pt-BR' : (match[1] || 'other').toLowerCase(), origin: 'pista informada pelo administrador' } : null;
+          })
+          .filter(Boolean),
+      );
+      input.alternateTitles = input.alternateTitles.filter((name, i, all) => all.findIndex((n) => n.value === name.value && n.language === name.language) === i).slice(0, 6);
+      queryInput = input;
+      const cacheSignal = AbortSignal.any([budget, AbortSignal.timeout(1200)]);
+      const cached =
+        !expanded &&
+        !root.querySelector('[data-research-refresh]')?.checked &&
+        (await Promise.race([
+          getRepository().findResearch?.(input, { signal: cacheSignal }),
+          new Promise((resolve) => {
+            if (cacheSignal.aborted) resolve(null);
+            else cacheSignal.addEventListener('abort', () => resolve(null), { once: true });
+          }),
+        ]));
+      if (signal.aborted || n !== sequence) return;
+      if (cached) {
+        queryInput = { ...input, fetchedAt: cached.fetchedAt };
+        snapshot = cached;
+        candidates = cached.candidates;
+        decisions = (cached.decisions || []).map((decision) => ({ ...decision, manualHash: decision.manualHash ?? cached.manualHash, edition: decision.edition ?? cached.edition }));
+        render();
+        status.textContent = `Informações recuperadas · ${new Date(cached.fetchedAt).toLocaleDateString('pt-BR')}.`;
+        return;
+      }
+      await loadSources(budget);
+      if (signal.aborted || n !== sequence) return;
       if (input.query.length < 2) {
         status.textContent = 'Informe o nome do jogo para pesquisar.';
         return;
       }
+      const collect = (update) => {
+        if (n !== sequence || signal.aborted) return;
+        statuses.set(update.source, update);
+        if (update.candidates)
+          for (const candidate of update.candidates) {
+            const stamped = { ...candidate, fetchedAt: update.fetchedAt || Date.now() };
+            const at = candidates.findIndex((c) => c.source === candidate.source && c.id === candidate.id);
+            if (at < 0) candidates.push(stamped);
+            else candidates[at] = stamped;
+          }
+        render();
+      };
       await parallelResearch(sources, input, (source, query, options) => getRepository().research(source, query, options), {
-        signal,
-        onUpdate(update) {
-          if (n !== sequence || signal.aborted) return;
-          statuses.set(update.source, update);
-          if (update.candidates) candidates.push(...update.candidates);
-          render();
-        },
+        signal: budget,
+        onUpdate: collect,
       });
+      const names = candidates
+        .flatMap((c) => c.names || [])
+        .filter((name) => ['pt', 'pt-BR', 'en', 'fr'].includes(name.language) && name.value !== input.query)
+        .slice(0, 6);
+      if (names.length && !budget.aborted && !input.alternateTitles.some((name) => names.some((n) => n.value === name.value))) {
+        await parallelResearch(
+          sources.filter((source) => ['wikidata', 'wikipedia'].includes(source.id)),
+          { ...input, alternateTitles: names },
+          (source, query, options) => getRepository().research(source, query, options),
+          { signal: budget, onUpdate: collect },
+        );
+      }
+      if (budget.aborted && !signal.aborted && n === sequence) {
+        for (const [id, state] of statuses) if (state.status === 'loading') statuses.set(id, { source: id, status: 'error', error: 'Prazo da pesquisa atingido.' });
+        render();
+      }
+      if (n === sequence && !signal.aborted) {
+        try {
+          snapshot = researchSnapshot(input, candidates, decisions);
+          void getRepository()
+            .saveResearch?.(snapshot, current.id ? current : null)
+            ?.catch(() => {
+              if (n === sequence && !signal.aborted) status.textContent += ' Não foi possível guardar a pesquisa para outros dispositivos.';
+            });
+        } catch {
+          status.textContent += ' Não foi possível guardar esta pesquisa; as sugestões continuam disponíveis.';
+        }
+      }
       if (!sources.some((s) => s.enabled)) render();
     } finally {
       if (n === sequence) {
@@ -278,17 +439,30 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     review.replaceChildren(node('p', 'Preparando as sugestões desta fonte…'));
     if (acceptAll) status.textContent = 'Preparando sugestões…';
     try {
-      if (candidate.needsDetail) {
-        const result = await getRepository().research(candidate.source, { action: 'detail', id: candidate.id, pdfLanguage: getCurrent().language, preferredLanguage: language.value, kind: kind.value }, { signal });
-        if (signal.aborted || n !== sequence) return;
-        const detail = result.candidates.find((c) => c.id === candidate.id);
-        if (!detail) throw new Error('Não foi possível confirmar este jogo nesta fonte.');
-        candidate = { ...detail, names: [...candidate.names, ...detail.names] };
-        candidates = candidates.map((c) => (c.source === candidate.source && c.id === candidate.id ? candidate : c));
+      if (candidate.needsDetail || candidate.members?.some((member) => member.needsDetail)) {
+        const members = await Promise.all(
+          (candidate.members || [candidate]).map(async (member) => {
+            if (!member.needsDetail) return member;
+            const result = await getRepository().research(member.source, { action: 'detail', id: member.id, query: initial.title, pdfLanguage: initial.language, preferredLanguage: language.value, kind: kind.value }, { signal });
+            const detail = result.candidates.find((c) => c.id === member.id);
+            if (!detail) throw new Error('Não foi possível confirmar este jogo nesta fonte.');
+            const next = { ...detail, names: [...member.names, ...detail.names], fetchedAt: result.fetchedAt || Date.now() };
+            candidates = candidates.map((c) => (c.source === next.source && c.id === next.id ? next : c));
+            return next;
+          }),
+        );
+        candidate = consolidateCandidates(members)[0];
         render();
       }
       if (signal.aborted || n !== sequence || !canUse()) return;
       selected = presentCandidate(candidate, candidates);
+      if (acceptAll && selected.requiresEditionReview) {
+        // Aprovações de outro PDF não autorizam o atalho de aceitação integral.
+        review.hidden = false;
+        showReview();
+        review.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        return;
+      }
       if (acceptAll) {
         const fields = selectedFields(selected, initial);
         if (!fields.length) throw new Error('Esta fonte não trouxe campos para preencher.');
@@ -328,6 +502,29 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     onApplied(values);
     const destination = root.closest('form')?.querySelector('[data-game-step="2"]');
     if (destination?.hidden) throw new Error('Os campos foram preenchidos, mas a etapa 2 não abriu. Use “Conferir dados” no topo para continuar.');
+    decisions.push({
+      manualHash: queryInput?.manualHash || '',
+      edition: queryInput?.edition || '',
+      source: candidate.source,
+      id: candidate.id,
+      fields: Object.keys(values),
+      reviewedAt: Date.now(),
+      reviewedBy: getRepository().session?.user?.uid || 'device',
+      values,
+      facts: Object.entries(values)
+        .map(([key, value]) => ({ ...(candidate.fieldSources?.[key] || candidate), key, value, state: 'confirmed' }))
+        .map(({ source, id, key, value, state, language, url, license }) => ({ source, id, key, value, state, language, url, license })),
+      rejected: selectedFields(candidate, {})
+        .filter((field) => !(field.key in values))
+        .map((field) => field.key),
+    });
+    if (queryInput) {
+      try {
+        snapshot = researchSnapshot(queryInput, candidates, decisions);
+      } catch {
+        snapshot = null;
+      }
+    }
     appliedCandidates.add(candidateKey(candidate));
     notifySuggestions();
     review.hidden = true;
@@ -338,6 +535,58 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     if (!current || !selected) return;
     review.replaceChildren();
     review.append(node('h4', 'Revisar sugestões'), node('p', 'Selecione os campos que deseja usar.'));
+    if (selected.pendingTranslations?.length) {
+      const translations = disclosure('Escrever tradução em português');
+      translations.append(node('p', 'Os originais serão preservados. Categorias e mecânicas: separe por vírgulas.'));
+      const inputs = [];
+      for (const pending of selected.pendingTranslations) {
+        const label = node('label', `${fieldLabels[pending.key]} · ${sourceNames[pending.source] || pending.source}`);
+        label.append(node('p', display(pending.value)));
+        const input = document.createElement('textarea');
+        input.rows = pending.key === 'description' ? 4 : 2;
+        input.maxLength = pending.key === 'description' ? 2000 : 400;
+        input.dataset.manualTranslation = pending.key;
+        label.append(input);
+        translations.append(label);
+        inputs.push([pending, input]);
+      }
+      const save = node('button', 'Adicionar traduções às sugestões');
+      save.type = 'button';
+      save.className = 'button secondary small';
+      save.onclick = () => {
+        for (const [pending, input] of inputs) {
+          if (!input.value.trim()) continue;
+          const member = (selected.members || [selected]).find((m) => m.source === pending.source && m.id === pending.id);
+          const fieldTranslations = {
+            ...member.fieldTranslations,
+            [pending.key]: {
+              sourceValue: pending.value,
+              value: Array.isArray(pending.value)
+                ? input.value
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                : input.value.trim(),
+              sourceLanguage: pending.language,
+              targetLanguage: 'pt-BR',
+              method: 'manual',
+              createdAt: Date.now(),
+            },
+          };
+          Object.assign(member, { fieldTranslations });
+          updateCandidate(member);
+        }
+        selected = presentCandidate(consolidateCandidates(selected.members || [selected])[0], candidates);
+        showReview();
+      };
+      translations.append(save);
+      review.append(translations);
+    }
+    if (selected.requiresEditionReview) {
+      const warning = node('p', 'A edição deste PDF ainda não foi conferida. Revise os campos antes de usar.');
+      warning.className = 'research-warning';
+      review.append(warning);
+    }
     const details = disclosure('Origem, edição e direitos de uso');
     details.append(node('p', `Fonte: ${sourceNames[selected.source]} · ${selected.license || 'consulte as condições de uso'}`));
     if (selected.url) details.append(link('Consultar a origem', selected.url));
@@ -365,12 +614,64 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
         checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.checked = field.checked;
+      if (
+        [...decisions]
+          .reverse()
+          .find((decision) => decision.source === selected.source && decision.id === selected.id)
+          ?.rejected?.includes(field.key)
+      )
+        checkbox.checked = false;
       if (selected.source === 'pdf') checkbox.checked = false;
       checkbox.dataset.researchField = field.key;
       label.className = 'research-choice';
       const content = node('span');
       content.append(node('strong', fieldLabels[field.key]), node('span', display(field.value)));
       if (field.conflict) content.append(node('small', `Substituirá: ${display(field.current)}`));
+      const origin = selected.fieldSources?.[field.key];
+      if (origin) {
+        const originLabel = node('small', `${sourceNames[origin.source] || origin.source} · ${origin.language}`);
+        originLabel.dataset.researchOrigin = field.key;
+        content.append(originLabel);
+      }
+      const alternatives = selected.alternatives?.[field.key] || [];
+      if (new Set(alternatives.map((fact) => factSignature(fact.value))).size > 1) {
+        const select = document.createElement('select');
+        select.dataset.researchAlternative = field.key;
+        select.setAttribute('aria-label', `Origem de ${fieldLabels[field.key]}`);
+        alternatives.forEach((fact, i) => {
+          const option = node('option', `${display(fact.value)} · ${sourceNames[fact.source] || fact.source} (${fact.language})`);
+          option.value = String(i);
+          select.append(option);
+        });
+        select.onchange = () => {
+          const fact = alternatives[Number(select.value)];
+          field.value = fact.value;
+          content.children[1].textContent = display(fact.value);
+          const originLabel = content.querySelector('[data-research-origin]');
+          if (originLabel) originLabel.textContent = `${sourceNames[fact.source] || fact.source} · ${fact.language}`;
+          selected.fieldSources[field.key] = fact;
+          const pairKeys = ['minDurationMinutes', 'maxDurationMinutes'].includes(field.key) ? ['minDurationMinutes', 'maxDurationMinutes'] : ['minPlayers', 'maxPlayers'].includes(field.key) ? ['minPlayers', 'maxPlayers'] : [];
+          for (const [other, box] of choices.filter(([other]) => pairKeys.includes(other.key) && other.key !== field.key)) {
+            const options = selected.alternatives[other.key] || [];
+            const at = options.findIndex((option) => option.source === fact.source && option.id === fact.id && option.language === fact.language);
+            if (at >= 0) {
+              other.value = options[at].value;
+              const otherContent = box.closest('label').querySelector(':scope > span');
+              otherContent.children[1].textContent = display(other.value);
+              const otherOrigin = otherContent.querySelector('[data-research-origin]');
+              if (otherOrigin) otherOrigin.textContent = `${sourceNames[fact.source] || fact.source} · ${fact.language}`;
+              selected.fieldSources[other.key] = options[at];
+              const input = review.querySelector(`[data-research-alternative="${other.key}"]`);
+              if (input) input.value = String(at);
+            }
+            box.checked = false;
+          }
+
+          checkbox.checked = false;
+          checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        content.append(select);
+      }
       label.append(checkbox, content);
       const evidence = selected.evidence?.[field.key === 'minPlayers' || field.key === 'maxPlayers' ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(field.key) ? 'duration' : field.key];
       if (evidence) details.append(node('p', `${fieldLabels[field.key]}${evidence.page ? ' · p. ' + evidence.page : ''}: ${evidence.excerpt}`));
@@ -458,6 +759,9 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       const result = await recognizePdfImages(await getPdf(), {
         language: current.language === 'other' ? 'pt-BR' : current.language,
         signal: control.signal,
+        onPage: (page) => {
+          if (!control.signal.aborted && canUse()) onOcrPage(page, current);
+        },
         onProgress: (message) => {
           if (ocrStatus && !control.signal.aborted) ocrStatus.textContent = message;
         },
@@ -473,6 +777,7 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
       }
       ocrCandidate = {
         source: 'pdf',
+        manualHash: current.manual?.sha256 || '',
         id: 'local-ocr',
         url: '',
         fields,
@@ -504,6 +809,8 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
   };
   kind.onchange = () => invalidate();
   function invalidate() {
+    snapshot = queryInput = null;
+    decisions = [];
     cancelWork('Dados da busca alterados. Pesquise novamente.');
     candidates = [];
     statuses.clear();
@@ -513,5 +820,5 @@ export function createResearchPanel({ root, getRepository, getCurrent, getPdf, a
     list.replaceChildren();
     review.hidden = true;
   }
-  return { reset, run, runOcr, cancel: cancelWork, invalidate, isBusy: () => active || ocrActive };
+  return { snapshot: () => snapshot, reset, run, runOcr, cancel: cancelWork, invalidate, isBusy: () => active || ocrActive };
 }

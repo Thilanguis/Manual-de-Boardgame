@@ -1,3 +1,5 @@
+import '../scripts/test-guard.mjs';
+import { enableLocalFixture } from './local-fixture.mjs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
@@ -13,6 +15,7 @@ try {
     page = await context.newPage(),
     errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  await enableLocalFixture(page.context());
   await page.goto(`${process.env.ACERVO_TEST_URL || 'http://localhost:4174'}/?local=1`);
   await page.waitForFunction(() => document.getElementById('account-label').textContent === 'Local');
   assert.equal(await page.locator('.hero').isVisible(), false);

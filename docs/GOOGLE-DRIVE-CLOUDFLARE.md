@@ -71,6 +71,8 @@ Faça build e publique pelo workflow GitHub Pages. Não coloque secrets no objet
 
 Todos os uploads usam OAuth do proprietário, não o Drive do subadministrador. PDFs e capas são criados na mesma pasta e pertencem à conta proprietária, usando seu armazenamento Google One. A API confere pasta, proprietário, projeto, jogo e tipo antes de leitura, substituição ou exclusão.
 
+O limite local para novos uploads é de 50 MiB (52.428.800 bytes) por PDF, tanto no cadastro quanto na substituição e nos documentos adicionais. A leitura de registros antigos maiores permanece disponível. Frontend, Worker e regras Firestore devem ser publicados juntos, após autorização. [Testes e limites de memória](UPLOAD-200-MIB.md).
+
 Uploads são retomáveis em blocos de 8 MiB; a URL da sessão Google fica em ticket criptografado. Reabrir e selecionar o mesmo PDF pode retomar a sessão pendente dentro da validade. O catálogo é salvo antes de remover arquivos substituídos. Exclusões usam marcação e controle de versão antes de apagar arquivos. Falhas podem ser retomadas.
 
 Visitantes leem arquivos públicos pelo proxy, com Range para PDF.js e sem login Google. Não compartilhe a pasta como “qualquer pessoa com o link”. A PWA não armazena todos os PDFs em lote.

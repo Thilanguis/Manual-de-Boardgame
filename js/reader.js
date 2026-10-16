@@ -1,3 +1,5 @@
+import { findDocument, documentGame, primaryDocumentId } from './documents.js';
+import { fileErrorMessage } from './file-errors.js';
 import { loadPdf, loadRemotePdf, pdfLibrary } from './pdf.js';
 
 export function createReader({ repository, getProgress, saveProgress, onError }) {
@@ -69,7 +71,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
         if (token !== generation) return;
         status('');
         updateControls();
-        saveProgress(game.id, { page: pageNumber, total: documentPdf.numPages, lastRead: Date.now() });
+        saveProgress(game.documentId && game.documentId !== 'main' ? `${game.id}:${game.documentId}` : game.id, { page: pageNumber, total: documentPdf.numPages, lastRead: Date.now() });
       })
       .catch((error) => {
         if (error.name !== 'RenderingCancelledException' && error.name !== 'AbortException' && token === generation) {
@@ -103,6 +105,8 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     await previous?.destroy().catch(() => {});
     canvas.width = canvas.height = 0;
     layer.replaceChildren();
+    element('reader-title').textContent = '';
+    element('reader-subtitle').textContent = '';
     if (returnFocus?.isConnected && !returnFocus.closest('dialog') && returnFocus.getClientRects().length) returnFocus.focus({ preventScroll: true });
     else document.getElementById('hero-main').focus({ preventScroll: true });
   }
@@ -148,7 +152,30 @@ export function createReader({ repository, getProgress, saveProgress, onError })
   );
   return {
     close,
-    async open(nextGame, { page } = {}) {
+    revokeMissing(games) {
+      if (game && !games.some((item) => item.id === game.id)) void close();
+      else if (game) {
+        const latest = findDocument(
+          games.find((item) => item.id === game.id),
+          game.documentId,
+        );
+        if (!latest || latest.manual.sha256 !== game.manual.sha256) {
+          void close();
+          onError(Object.assign(new Error('O PDF foi atualizado. Reabra o documento.'), { status: 409 }));
+        }
+      }
+    },
+    async open(nextGame, { page, documentId = primaryDocumentId(nextGame), sourceHash } = {}) {
+      if (!repository.session.canRead) {
+        onError(new Error('Entre com uma conta aprovada.'));
+        return;
+      }
+      const doc = findDocument(nextGame, documentId);
+      if (!doc || (sourceHash && doc.manual.sha256 !== sourceHash)) {
+        onError(new Error('Esta referência pertence a outra versão do PDF.'));
+        return;
+      }
+      nextGame = documentGame(nextGame, doc);
       if (!reader.hidden) await close();
       const sequence = ++openSequence;
       returnFocus = document.activeElement;
@@ -173,13 +200,13 @@ export function createReader({ repository, getProgress, saveProgress, onError })
           return;
         }
         documentPdf = pdf;
-        pageNumber = Math.max(1, Math.min(documentPdf.numPages, Number.isInteger(page) ? page : getProgress(game.id)?.page || 1));
+        pageNumber = Math.max(1, Math.min(documentPdf.numPages, Number.isInteger(page) ? page : getProgress(game.documentId && game.documentId !== 'main' ? `${game.id}:${game.documentId}` : game.id)?.page || 1));
         element('pdf-page').hidden = false;
         updateControls();
         requestRender();
       } catch (error) {
         if (sequence !== openSequence) return;
-        status('Não foi possível abrir o manual. Verifique sua conexão e as permissões da biblioteca.');
+        status(fileErrorMessage(error));
         onError(error);
       }
     },

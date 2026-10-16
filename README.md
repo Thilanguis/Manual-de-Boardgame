@@ -1,6 +1,18 @@
+> **Desenvolvimento isolado:** execute `npm run dev` e abra http://localhost:4173. Login fictício: `proprietario@acervo.test` / `Acervo-teste-123`. O localhost recusa produção e não possui fallback. Veja [DESENVOLVIMENTO.md](docs/DESENVOLVIMENTO.md).
+>
+> Novos PDFs: **50 MiB (52.428.800 bytes)**, com blocos retomáveis de 8 MiB. PDFs antigos maiores continuam legíveis. As alterações desta versão são locais, sem deploy.
+
 # Acervo — Manual de Boardgames
 
 Biblioteca pessoal em HTML, CSS e JavaScript puro, publicada no [GitHub Pages](https://thilanguis.github.io/Manual-de-Boardgame/). Catálogo real, reconhecimento de PDFs com evidências, capas, filtros, favoritos locais, leitor PDF.js e PWA. Não há catálogo fictício nem framework de interface. O Buraco permanece independente.
+
+**Implementação local 1.11.0, ainda não publicada:** ficha com Ler manual, Como jogar e Buscar regras; administração centralizada; conhecimento Gemini com revisão, persistência e controle de cota. [Implementação, testes e configuração da chave](docs/IMPLEMENTACAO-1.11.md). A versão em produção permanece inalterada até autorização.
+
+Biblioteca privada, processamento automático e vários PDFs por jogo foram preservados. [Base da versão 1.10 e transição segura](docs/IMPLEMENTACAO-1.10.md).
+
+Correções locais adicionais: restauração de sessão sem alternar telas, compatibilidade de capas/manuais, preparo e remoção recuperável. [Causas, testes e dependências do backend](docs/CORRECOES-ACESSO-1.10.md).
+
+**Correção local 1.10.1:** salvamento de PDFs grandes, conferência da capacidade do servidor e avisos de conexão em Minha conta. [Correções e teste completo com PDFs de 157,3 e 200 MiB](docs/CORRECOES-UPLOAD-1.10.1.md). Ainda sem publicação.
 
 ## Arquitetura
 
@@ -12,6 +24,8 @@ Biblioteca pessoal em HTML, CSS e JavaScript puro, publicada no [GitHub Pages](h
 Não há dependência de Firebase Hosting, Storage ou Functions, nem token privado GitHub no JavaScript. A API não usa o Drive do subadministrador. Refresh token e client secret ficam em secrets do Worker.
 
 O Drive central está configurado no Worker e em `config/app-config.js`. Consulte [a configuração e reconexão do Drive](docs/GOOGLE-DRIVE-CLOUDFLARE.md) para manutenção das credenciais privadas.
+
+Novos PDFs e substituições aceitam até **50 MiB (52.428.800 bytes)** por arquivo, com blocos retomáveis de 8 MiB. Documentos antigos maiores continuam legíveis. [Ambiente isolado, limite e testes](docs/DESENVOLVIMENTO.md).
 
 ## Contas e cadastro em etapas
 
@@ -29,11 +43,11 @@ O PDF continua como fonte principal. A pesquisa automática usa conectores indep
 
 ## Pessoas e permissões
 
-Visitantes leem conteúdo público sem conta. Novas contas recebem pending/user, sem privilégios. Aprovação as torna usuários comuns. O proprietário pode promover a subadmin, configurar approveUsers/addGames/editGames, rebaixar ou bloquear. Exclusão definitiva é exclusiva do superadmin; subadmins não gerenciam cargos ou configurações. Seu UID está fixado e protegido contra alterações pelo cliente.
+Visitantes veem entrada, cadastro e recuperação de senha. Novas contas recebem pending/user, sem acesso ao conteúdo. Somente o proprietário aprova ou recusa solicitações. Após aprovação, usuários comuns leem documentos autorizados. O proprietário pode promover a subadmin, configurar addGames/editGames, rebaixar ou bloquear. A flag antiga approveUsers não concede aprovação. Exclusão definitiva é exclusiva do superadmin; subadmins não gerenciam cargos ou configurações. Seu UID está fixado e protegido contra alterações pelo cliente.
 
-O painel Gerenciar oferece contador e avisos de solicitações em tempo real, aprovação/recusa, pessoas, permissões e histórico. Regras Firestore e Worker aplicam as permissões; ocultar botões não concede segurança. Mudanças de pessoas/configuração são transações vinculadas a auditoria imutável. Bloqueios revogam autorização administrativa para sessões já existentes.
+O painel Gerenciar oferece contador e avisos de solicitações em tempo real, aprovação/recusa, pessoas, permissões e histórico. Regras Firestore e Worker aplicam as permissões; ocultar botões não concede segurança. Mudanças de pessoas/configuração são transações vinculadas a auditoria imutável. Bloqueios revogam leitura e escrita para sessões já existentes.
 
-A biblioteca começa pública na migração. O proprietário pode alterar a política global; jogos publicados individualmente continuam disponíveis quando ela está desligada. PDFs continuam privados no Drive e são entregues pelo proxy autorizado.
+A autenticação e a aprovação são obrigatórias. A configuração antiga publicRead não libera visitantes. A disponibilidade anterior, global ou por jogo (isPublic), é preservada somente entre contas aprovadas; administradores mantêm acesso de gestão. PDFs e capas são entregues pelo Worker, com verificação atual do perfil a cada solicitação, sem URLs públicas do Drive.
 
 ## Executar e testar
 
@@ -44,7 +58,7 @@ npm ci
 npm start
 ```
 
-Abra http://localhost:4173. O modo real local `?local=1` continua disponível: usa IndexedDB neste navegador, sem sincronização nem migração automática para Drive. Limpar dados do site pode apagar essa biblioteca.
+Abra http://localhost:4173. O parâmetro `?local=1` sozinho não libera acesso. O sandbox IndexedDB exige localhost e allowLocalDevelopment=true explícito, fornecido apenas pelas fixtures de teste. A configuração publicada não habilita esse modo.
 
 ```powershell
 npm run check
@@ -59,7 +73,7 @@ npm --prefix worker run build
 
 O build copia apenas recursos públicos para public/. Scripts locais, JSON OAuth, dependências Node e testes não são publicados. O build Worker é dry-run. O workflow Pages executa testes unitários, testes reais de regras em demo-acervo e build; publica somente public/.
 
-Testes cobrem reconhecimento, PWA/cache, retomada, JWT, tickets, acesso/folder, exclusão concorrente, CSRF e isolamento do assistente OAuth. Emuladores verificam cadastro pending, leitura pública, hierarquia, auditoria, flags e bloqueio da sessão existente. QA de navegador usa dados descartáveis: importação/substituição/leitura de PDF e gerenciamento entre contas distintas em tempo real, inclusive celular/tablet. A integração Drive real e CPU do Workers Free só podem ser validadas após conectar as contas.
+Testes cobrem reconhecimento, PWA/cache, retomada, JWT, tickets, acesso/folder, exclusão concorrente, CSRF e isolamento do assistente OAuth. Emuladores verificam cadastro pending, bloqueio de visitantes/pendentes, aprovação exclusiva do proprietário, índices privados, hierarquia, auditoria, flags e bloqueio da sessão existente. QA de navegador usa dados descartáveis: importação/substituição/leitura de PDF e gerenciamento entre contas distintas em tempo real, inclusive celular/tablet. A integração Drive real e CPU do Workers Free só podem ser validadas após conectar as contas.
 
 Ferramentas de desenvolvimento têm overrides de correção para dependências transitivas, sem alterar os SDKs CDN do frontend; validá-las pelos emuladores faz parte do workflow.
 
@@ -69,7 +83,11 @@ Para o catálogo brasileiro, siga o [cadastro oficial da API Ludopedia e configu
 
 O [guia Firebase](docs/FIREBASE.md) explica bootstrap seguro do UID proprietário, regras, estados, painel e cotas. O [guia Google Drive/Cloudflare](docs/GOOGLE-DRIVE-CLOUDFLARE.md) contém Console Google Cloud, OAuth Web, escopo mínimo, Picker local autorizado, secrets e teste de envio real à pasta existente. Nenhuma nova pasta é criada automaticamente.
 
-BGG é opcional, via Worker com token secreto aprovado; vem desativado. PDFs escaneados recebem OCR local opcional/automático na importação sem texto, limitado às três primeiras páginas e com revisão; campos sem evidência continuam desconhecidos. Favoritos e progresso continuam locais. Manuais interativos e consulta rápida já estão disponíveis.
+BGG é opcional, via Worker com token secreto aprovado; vem desativado. PDFs escaneados recebem OCR local opcional/automático na importação sem texto, limitado no reconhecimento inicial, seguido de processamento automático do documento completo após salvar, com revisão das sugestões; campos sem evidência continuam desconhecidos. Favoritos e progresso continuam locais. Manuais interativos e consulta rápida já estão disponíveis.
+
+A entrega local 1.8.0 acrescenta pesquisa multilíngue consolidada por campo, histórico privado reutilizável por edição e OCR progressivo do manual completo. Veja o [relatório de implementação, testes reais e sequência de publicação](docs/IMPLEMENTACAO-1.8.md). Commit, push e deploy são executados somente por solicitação explícita do proprietário; os comandos de commit são entregues para revisão.
+
+A versão local 1.9.0 completa o OCR em uma execução, reutiliza o índice entre cadastro/guia/consulta e acrescenta tradução local de textos completos, preservando os originais e a revisão. Veja [o que mudou, testes com Resident Evil e Sina e os limites da tradução](docs/IMPLEMENTACAO-1.9.md).
 
 ## Organização
 

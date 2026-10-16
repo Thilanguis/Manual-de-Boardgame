@@ -31,7 +31,7 @@ export async function cleanupGuides(env, identity, id) {
     const response = await fetch(firestoreURL(env, `${collection}/${id}`), { method: 'DELETE', headers: { Authorization: `Bearer ${identity.token}` }, signal: AbortSignal.timeout(15000) });
     if (!response.ok && response.status !== 404) throw new ApiError(503, 'A limpeza do guia não terminou. Repita a exclusão pendente.');
   }
-  return { pending: false, preserved };
+  return { pending: false, preserved, processed: true };
   async function save(data, precondition) {
     const response = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:commit`, {
       method: 'POST',

@@ -11,4 +11,6 @@
     "MAX_PDF_BYTES": "52428800",
   },
   "observability": { "enabled": false },
+  "durable_objects": { "bindings": [{ "name": "GAME_KNOWLEDGE", "class_name": "KnowledgeStore" }] },
+  "migrations": [{ "tag": "v1-knowledge", "new_sqlite_classes": ["KnowledgeStore"] }],
 }

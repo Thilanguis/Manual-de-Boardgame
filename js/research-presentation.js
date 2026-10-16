@@ -1,7 +1,9 @@
 import { durationLabel, playersLabel, synopsisText } from './model.js';
 import { sameWork, selectedFields } from './research-client.js';
+import { portugueseCandidate } from './catalog-language.js';
 
 export function presentCandidate(candidate, others = []) {
+  if (!candidate.members) candidate = portugueseCandidate(candidate);
   const related = others.filter((other) => other !== candidate && sameWork(candidate, other));
   const names = [...(candidate.names || []), ...related.flatMap((other) => other.names || [])];
   const portuguese = names.find((name) => /^pt-br$/i.test(name.language)) || names.find((name) => /^pt$/i.test(name.language));

@@ -43,7 +43,7 @@ export function synopsisText(value) {
 export function displayDescription(game) {
   const evidence = game.sources?.description;
   const language = evidence?.language || '';
-  if (language && language !== 'unknown' && !/^pt(?:-|$)/i.test(language) && !evidence.confirmedAt && !/confirmad|ajustado por você/i.test(evidence.source || '')) return '';
+  if (language && language !== 'unknown' && !/^pt(?:-|$)/i.test(language)) return '';
   return synopsisText(game.description);
 }
 

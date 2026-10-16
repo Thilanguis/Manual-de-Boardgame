@@ -106,6 +106,23 @@ export function catalogIO(source, { signal, token = '', ttl = 300000, interval =
 }
 
 export const text = (value, max = 160) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+export async function catalogPlans(plans, execute) {
+  const results = new Array(plans.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(3, plans.length) }, async () => {
+      while (next < plans.length) {
+        const index = next++;
+        try {
+          results[index] = { status: 'fulfilled', value: await execute(plans[index]) };
+        } catch (reason) {
+          results[index] = { status: 'rejected', reason };
+        }
+      }
+    }),
+  );
+  return results;
+}
 export const positive = (value, max = 1440) => (Number.isInteger(Number(value)) && Number(value) > 0 && Number(value) <= max ? Number(value) : null);
 export function facts(source, id, url, fields, extra = {}) {
   if (fields.durationMinutes && fields.minDurationMinutes == null && fields.maxDurationMinutes == null) fields = { ...fields, minDurationMinutes: fields.durationMinutes, maxDurationMinutes: fields.durationMinutes };

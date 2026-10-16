@@ -1,7 +1,12 @@
+import { lockPrivateCache } from './private-cache.js';
+import { createPreparationQueue } from './preparation-queue.js';
+import { createDocumentPanel } from './document-panel.js';
+import { gameDocuments, findDocument } from './documents.js';
 import { createGameSteps } from './game-steps.js';
 import { titleCandidates } from './recognition.js';
 import { createAccountPanel } from './account-panel.js';
 import { APP_CONFIG } from '../config/app-config.js';
+import { fileErrorMessage } from './file-errors.js';
 import { filterGames, playersLabel, validateGame, normalizeGameDraft, safeImageUrl, durationRange, durationLabel, isTechnicalTitle, displayTitle, displayDescription } from './model.js';
 import { inspectPdf, imageToJpeg } from './pdf.js';
 import { createReader } from './reader.js';
@@ -10,17 +15,29 @@ import { createAdminPanel } from './admin-panel.js';
 import { statusLabel } from './permissions.js';
 import { readableGame, unavailableReason } from './catalog-availability.js';
 import { createGuidePanel } from './guide-panel.js';
+import { createKnowledgePanel } from './knowledge-panel.js';
+import { vocabularyTerm } from './game-vocabulary.js';
+import { portugueseCandidate } from './catalog-language.js';
 import { bggWebsiteSearch } from './bgg-client.js';
 import { createResearchPanel } from './research-panel.js';
 import { RESEARCH_VERSION } from './research-contract.js';
+import { cachedIndex, indexCacheKey } from './index-cache.js';
+import { addOcrPage } from './pdf-knowledge.js';
 
 const $ = (id) => document.getElementById(id);
-const state = { gamesLoading: true, games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
+const state = { gamesLoading: true, games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { resolving: true, canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
 let repository,
   adminPanel,
   guidePanel,
+  knowledgePanel,
+  preparationQueue,
+  preparationSignature = '',
+  documentPanel,
+  additionalFiles = [],
+  additionalTypes = [],
   reader,
   draft = null,
+  registrationOcr = null,
   manualBlob = null,
   draftCoverBlob = null,
   originalPdfCover = null,
@@ -29,7 +46,8 @@ let repository,
   importSequence = 0,
   noticeTimer;
 const gameSteps = createGameSteps({ form: $('game-form'), dialog: $('upload-dialog'), getSession: () => state.session, isBusy: () => state.busy || state.importing });
-const localMode = new URLSearchParams(location.search).get('local') === '1' || !APP_CONFIG.firebase;
+const localMode = APP_CONFIG.allowLocalDevelopment === true && ['localhost', '127.0.0.1'].includes(location.hostname) && new URLSearchParams(location.search).get('local') === '1';
+if (localMode) document.body.classList.add('access-approved');
 function icon(name) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   const use = document.createElementNS(svg.namespaceURI, 'use');
@@ -45,6 +63,7 @@ function node(tag, className, text) {
   return el;
 }
 function errorMessage(error) {
+  if (error.uploadContext === 'large-pdf') return error.message;
   const messages = {
     'auth/user-disabled': 'Esta conta foi desativada. Entre em contato com o administrador.',
     'auth/user-not-found': 'E-mail ou senha incorretos.',
@@ -119,6 +138,7 @@ function showDialog(id) {
   document.body.classList.add('modal-open');
 }
 function closeDialog(id) {
+  if (id === 'login-dialog' && !localMode && !state.session.canRead) return;
   if (id === 'guide-dialog') {
     guidePanel?.close();
     return;
@@ -133,6 +153,7 @@ function closeDialog(id) {
 document.querySelectorAll('[data-close]').forEach((button) => (button.onclick = () => closeDialog(button.dataset.close)));
 document.querySelectorAll('dialog').forEach((dialog) => {
   dialog.addEventListener('cancel', (event) => {
+    if (dialog.id === 'login-dialog' && !localMode && !state.session.canRead) event.preventDefault();
     if (state.busy && ['upload-dialog', 'delete-dialog'].includes(dialog.id)) {
       event.preventDefault();
       showNotice('Aguarde a operação terminar para fechar.');
@@ -141,6 +162,7 @@ document.querySelectorAll('dialog').forEach((dialog) => {
   dialog.addEventListener('close', () => {
     if (!document.querySelector('dialog[open]')) document.body.classList.remove('modal-open');
     if (dialog.id === 'upload-dialog') resetDraft();
+    if (dialog.id === 'detail-dialog' && !$('game-management-dialog').open) documentPanel?.close();
   });
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) {
@@ -156,14 +178,19 @@ async function populateImage(image, game) {
   image.removeAttribute('src');
   try {
     const url = await repository.getCoverURL(game);
-    if (image.dataset.gameId !== id || !url || !image.isConnected) return;
+    if (!state.session.canRead || image.dataset.gameId !== id || !url || !image.isConnected) return;
     image.src = url;
     image.hidden = false;
     image.onerror = () => {
       image.hidden = true;
+      $('cover-warning').hidden = !state.session.canRead;
     };
-  } catch {
-    /* O catálogo permanece utilizável mesmo se uma capa não carregar. */
+  } catch (error) {
+    if (state.session.canRead && image.isConnected && image.dataset.gameId === id) {
+      image.title = fileErrorMessage(error);
+      $('cover-warning').hidden = false;
+      $('cover-warning').title = fileErrorMessage(error);
+    }
   }
 }
 function renderGrid() {
@@ -330,7 +357,12 @@ async function renderHero() {
   try {
     const url = await repository.getCoverURL(game);
     if (token === heroSequence && url) $('hero-backdrop').style.backgroundImage = `url(${JSON.stringify(url)})`;
-  } catch {}
+  } catch (error) {
+    if (token === heroSequence && state.session.canRead) {
+      $('cover-warning').hidden = false;
+      $('cover-warning').title = fileErrorMessage(error);
+    }
+  }
 }
 function renderRecent() {
   if (!repository) return;
@@ -404,8 +436,12 @@ function renderFavorite() {
   $('detail-favorite').setAttribute('aria-label', favorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos');
 }
 function showGame(game) {
+  if (knowledgePanel?.isBusy() && !confirm('Há alterações não salvas no conhecimento. Descartar e abrir este jogo?')) return;
+  knowledgePanel?.close();
   rememberGame(game);
   state.selected = game;
+  if ($('game-management-dialog').open) $('game-management-dialog').close();
+  documentPanel?.open(game);
   $('detail-title').textContent = displayTitle(game);
   $('detail-edition').textContent = game.edition ? 'Edição · ' + game.edition : '';
   $('detail-edition').hidden = !game.edition;
@@ -414,25 +450,24 @@ function showGame(game) {
     ? 'O título original deste cadastro é técnico e precisa de revisão. Use Editar informações para confirmar o nome real.'
     : 'O nome deste jogo está em revisão. O manual continua disponível.';
   const selectedId = game.id;
-  $('detail-guide-status').textContent = 'Verificando o guia interativo…';
+  $('detail-guide-status').textContent = 'Verificando guia…';
   repository
     .getGuide(game)
     .then((guide) => {
       if (state.selected?.id === selectedId)
-        $('detail-guide-status').textContent = guide?.sections?.length
-          ? guide.sourceHash === game.manual.sha256
-            ? 'Guia interativo disponível. O PDF oficial continua acessível.'
-            : 'O guia foi criado para outro PDF e precisa de revisão; consulte o manual completo.'
-          : 'O guia interativo ainda não foi publicado. Você pode abrir o manual completo ou pesquisar o PDF em Consulta rápida.';
+        $('detail-guide-status').textContent = guide?.sections?.length ? (guide.sourceHash === game.manual.sha256 ? 'Guia passo a passo disponível.' : 'As referências do guia precisam de revisão. Consulte o manual.') : 'Guia ainda não publicado.';
     })
     .catch(() => {
-      if (state.selected?.id === selectedId) $('detail-guide-status').textContent = 'Não foi possível conferir o guia agora. O manual completo continua disponível.';
+      if (state.selected?.id === selectedId) $('detail-guide-status').textContent = 'Não foi possível conferir o guia agora.';
     });
   $('detail-description').textContent = displayDescription(game);
   $('detail-description').hidden = !displayDescription(game);
+  $('detail-description').classList.remove('expanded');
+  $('detail-description-toggle').setAttribute('aria-expanded', 'false');
+  $('detail-description-toggle').textContent = 'Ver mais';
   $('detail-cover').alt = `Capa de ${displayTitle(game)}`;
   populateImage($('detail-cover'), game);
-  $('detail-tags').replaceChildren(...[...(game.tags || []), ...(game.mechanics || []), game.gameType].filter(Boolean).map((tag) => node('span', null, tag)));
+  $('detail-tags').replaceChildren(...[...new Set([...(game.tags || []), ...(game.mechanics || []), game.gameType].filter(Boolean).map(vocabularyTerm))].map((tag) => node('span', null, tag)));
   $('detail-stats').replaceChildren();
   for (const [symbol, label, value] of [
     ['users', 'JOGADORES', playersLabel(game)],
@@ -452,6 +487,7 @@ function showGame(game) {
   $('edit-guide').hidden = !state.session.canEdit;
   $('edit-guide').disabled = game.deleting === true;
   $('delete-game').hidden = !state.session.canDelete;
+  $('delete-game').parentElement.hidden = !state.session.canDelete;
   $('edit-game').disabled = game.deleting === true;
   $('read-manual').disabled = !readableGame(game);
   $('delete-game').textContent = game.deleting ? 'Concluir exclusão pendente' : 'Excluir jogo';
@@ -487,15 +523,30 @@ function showGame(game) {
   if (game.bgg?.id) $('detail-source').href = `https://boardgamegeek.com/boardgame/${Number(game.bgg.id)}`;
   renderFavorite();
   showDialog('detail-dialog');
+  requestAnimationFrame(updateDescriptionToggle);
 }
+function updateDescriptionToggle() {
+  const description = $('detail-description');
+  $('detail-description-toggle').hidden = description.hidden || description.scrollHeight <= parseFloat(getComputedStyle(description).lineHeight) * 4 + 2;
+}
+new ResizeObserver(updateDescriptionToggle).observe($('detail-description'));
+$('detail-description-toggle').onclick = () => {
+  const expanded = $('detail-description').classList.toggle('expanded');
+  $('detail-description-toggle').setAttribute('aria-expanded', String(expanded));
+  $('detail-description-toggle').textContent = expanded ? 'Ver menos' : 'Ver mais';
+};
 function updateManualStatus(game) {
-  $('detail-manual').textContent = readableGame(game) ? `${game.manual?.pages || '—'} páginas · ${formatBytes(game.manual?.size)} · ${game.manual?.name || 'Manual PDF'}` : `${unavailableReason(game)}. Você pode corrigir ou remover este cadastro.`;
+  $('detail-manual').textContent = readableGame(game) ? '' : unavailableReason(game);
+  $('detail-manual').hidden = readableGame(game);
 }
 $('detail-favorite').onclick = () => toggleFavorite(state.selected.id);
 $('read-manual').onclick = () => reader.open(state.selected);
 $('learn-game').onclick = () => guidePanel.open(state.selected, 'learn');
 $('quick-rules').onclick = () => guidePanel.open(state.selected, 'quick');
-$('edit-guide').onclick = () => guidePanel.open(state.selected, 'edit');
+$('edit-guide').onclick = () => {
+  if ($('game-management-dialog').open) $('game-management-dialog').close();
+  guidePanel.open(state.selected, 'edit');
+};
 function formatBytes(size = 0) {
   return size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(size / 1024)} KB`;
 }
@@ -508,6 +559,10 @@ function resetDraft() {
   ++importSequence;
   if (draftCoverURL.startsWith('blob:')) URL.revokeObjectURL(draftCoverURL);
   draft = manualBlob = draftCoverBlob = originalPdfCover = null;
+  registrationOcr = null;
+  additionalFiles = [];
+  additionalTypes = [];
+  $('additional-pdfs')?.replaceChildren();
   draftCoverURL = '';
   state.importing = false;
   $('game-form').reset();
@@ -552,7 +607,7 @@ function fillForm() {
     form.elements.namedItem(field).value = data[field] ?? (field === 'language' ? 'other' : '');
   form.elements.namedItem('mechanics').value = (draft.mechanics || []).join(', ');
   form.elements.namedItem('tags').value = (draft.tags || []).join(', ');
-  form.elements.namedItem('isPublic').checked = draft.isPublic === true;
+  form.elements.namedItem('isPublic').checked = !draft.id || draft.isPublic === true;
   form.elements.namedItem('confirmed').checked = false;
   $('file-info').textContent = `${draft.manual.name} · ${formatBytes(draft.manual.size)} · ${draft.manual.pages} páginas`;
   $('upload-picker').hidden = true;
@@ -616,6 +671,14 @@ async function importFile(file) {
     const { coverBlob, candidates, textFound, ...record } = inspected;
     needsOcr = !textFound;
     draft = { ...record };
+    const localized = portugueseCandidate({ fields: record, language: record.language, descriptionLanguage: record.language });
+    const originalFields = {};
+    for (const pending of localized.pendingTranslations) {
+      originalFields[pending.key] = pending.value;
+      draft[pending.key] = Array.isArray(pending.value) ? [] : '';
+    }
+    for (const field of ['tags', 'mechanics', 'gameType']) if (localized.fields[field]) draft[field] = localized.fields[field];
+    if (Object.keys(originalFields).length) draft.sources.pdfOriginalMetadata = { manualHash: record.manual.sha256, language: record.language, fields: originalFields };
     manualBlob = file;
     draftCoverBlob = originalPdfCover = coverBlob;
     $('upload-status').textContent = '';
@@ -653,7 +716,30 @@ async function importFile(file) {
     $('pdf-file').value = '';
   }
 }
-$('pdf-file').onchange = (event) => importFile(event.target.files[0]);
+function importFiles(files) {
+  const selected = [...files].filter((file) => /\.pdf$/i.test(file.name)).slice(0, 12);
+  additionalFiles = selected.slice(1);
+  const list = $('additional-pdfs');
+  list.replaceChildren();
+  if (additionalFiles.length) {
+    list.append(node('p', null, `${additionalFiles.length} PDFs adicionais serão vinculados ao mesmo jogo.`));
+    additionalFiles.forEach((file, i) => {
+      const row = node('label', null, file.name);
+      const select = node('select');
+      select.setAttribute('aria-label', `Tipo de ${file.name}`);
+      for (const [value, label] of Object.entries({ complemento: 'Complemento', referencia: 'Referência', solo: 'Modo solo', faq: 'Perguntas frequentes', errata: 'Errata', expansao: 'Expansão' })) {
+        const option = node('option', null, label);
+        option.value = value;
+        select.append(option);
+      }
+      select.onchange = () => (additionalTypes[i] = select.value);
+      row.append(select);
+      list.append(row);
+    });
+  }
+  return importFile(selected[0]);
+}
+$('pdf-file').onchange = (event) => importFiles(event.target.files);
 for (const type of ['dragenter', 'dragover'])
   $('dropzone').addEventListener(type, (event) => {
     event.preventDefault();
@@ -663,7 +749,7 @@ for (const type of ['dragleave', 'drop'])
   $('dropzone').addEventListener(type, (event) => {
     event.preventDefault();
     $('dropzone').classList.remove('dragover');
-    if (type === 'drop') importFile(event.dataTransfer.files[0]);
+    if (type === 'drop') importFiles(event.dataTransfer.files);
   });
 $('cover-file').onchange = async (event) => {
   const file = event.target.files[0];
@@ -694,6 +780,7 @@ $('replace-pdf-file').onchange = async (event) => {
   const file = event.target.files[0],
     currentDraft = draft;
   if (!file || !draft?.id || !state.session.canEdit || state.busy || state.importing) return;
+  researchPanel.invalidate();
   const token = ++importSequence;
   importAbort?.abort();
   importAbort = new AbortController();
@@ -735,6 +822,11 @@ const researchPanel = createResearchPanel({
   root: $('research-panel'),
   getRepository: () => repository,
   getPdf: () => manualBlob || repository.getManual(draft),
+  onOcrPage(page, current) {
+    if (page.status !== 'done' || !current.manual?.sha256) return;
+    if (registrationOcr?.hash !== current.manual.sha256) registrationOcr = { hash: current.manual.sha256, pages: new Map() };
+    registrationOcr.pages.set(page.page, page);
+  },
   canUse: () => !!draft && !state.busy && !state.importing && $('upload-dialog').open && state.session.canWrite,
   getCurrent() {
     if (!draft) return null;
@@ -755,7 +847,7 @@ const researchPanel = createResearchPanel({
   },
   onApplied(values) {
     $('research-applied').textContent =
-      `Preenchido: ${[...new Set(Object.keys(values).map((key) => ({ description: 'resumo', minDurationMinutes: 'duração', maxDurationMinutes: 'duração', minPlayers: 'jogadores', maxPlayers: 'jogadores', recommendedAge: 'idade', tags: 'categorias', mechanics: 'mecânicas', gameType: 'tipo', title: 'nome', edition: 'edição' })[key] || key))].join(', ')}.`;
+      `Preenchido: ${[...new Set(Object.keys(values).map((key) => ({ description: 'resumo', minDurationMinutes: 'duração', maxDurationMinutes: 'duração', minPlayers: 'jogadores', maxPlayers: 'jogadores', recommendedAge: 'idade', tags: 'categorias', mechanics: 'mecânicas', gameType: 'tipo', title: 'nome', edition: 'edição', language: 'idioma' })[key] || key))].join(', ')}.`;
     $('research-applied').hidden = false;
     return gameSteps.go(2, false);
   },
@@ -775,46 +867,59 @@ const researchPanel = createResearchPanel({
     }
     draft = { ...draft, ...normalized, sources };
     for (const [field, value] of Object.entries(values)) {
+      const origin = candidate.fieldSources?.[field] || candidate;
+      if (origin.source === 'pdf' && candidate.pdfMethod === 'text' && draft.sources.pdfOriginalMetadata?.manualHash === draft.manual.sha256) {
+        const originals = draft.sources.pdfOriginalMetadata;
+        const member = (candidate.members || [candidate]).find((c) => c.source === 'pdf' && c.id === origin.id);
+        if (member?.fieldTranslations?.[field]) originals.translations = { ...originals.translations, [field]: member.fieldTranslations[field] };
+      }
       const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(field) ? 'duration' : field;
       draft.sources[key] = {
         ...(candidate.evidence?.[key] || {}),
         source:
-          candidate.source === 'pdf'
-            ? 'PDF · OCR local · confirmado por você'
-            : candidate.source === 'wikipedia'
+          origin.source === 'pdf'
+            ? candidate.pdfMethod === 'text'
+              ? 'PDF · trecho confirmado por você'
+              : 'PDF · OCR local · confirmado por você'
+            : origin.source === 'wikipedia'
               ? 'Wikipédia · trecho confirmado'
-              : candidate.source === 'ludopedia'
+              : origin.source === 'ludopedia'
                 ? 'Ludopedia · API · confirmado'
-                : candidate.source === 'bgg'
+                : origin.source === 'bgg'
                   ? 'BoardGameGeek · API · confirmado'
                   : 'Wikidata · confirmado',
         excerpt: key === 'players' ? playersLabel(draft) : key === 'duration' ? durationLabel(draft) : Array.isArray(value) ? value.join(', ') : String(value),
-        url: candidate.url,
-        license: candidate.license,
-        ...(candidate.licenseUrl ? { licenseUrl: candidate.licenseUrl, authorsUrl: candidate.authorsUrl, modified: true } : {}),
-        language: candidate.fieldLanguages?.[field] || (field === 'description' ? candidate.descriptionLanguage || 'unknown' : candidate.language),
+        url: origin.url,
+        license: origin.license,
+        ...(origin.licenseUrl ? { licenseUrl: origin.licenseUrl, authorsUrl: origin.authorsUrl, modified: true } : {}),
+        language: origin.language || candidate.fieldLanguages?.[field] || 'unknown',
+        originalLanguage: origin.originalLanguage || origin.language || 'unknown',
+        translationMethod: origin.translationMethod || '',
+        fetchedAt: origin.fetchedAt || Date.now(),
+        originalValue: origin.originalValue ?? value,
         confirmedAt: Date.now(),
         editionConfirmedBy: state.session.user?.uid || 'device',
       };
     }
-    if (candidate.source !== 'pdf') {
+    for (const member of candidate.members || [candidate]) {
+      if (member.source === 'pdf') continue;
       const previous = draft.sources.catalog?.matches || [];
       const match = {
-        source: candidate.source,
-        id: candidate.id,
-        url: candidate.url,
-        identifiers: candidate.identifiers || {},
-        names: candidate.names.slice(0, 20),
+        source: member.source,
+        id: member.id,
+        url: member.url,
+        identifiers: member.identifiers || {},
+        names: member.names.slice(0, 20),
         edition: draft.edition,
-        originalFields: candidate.fields,
-        license: candidate.license,
-        licenseUrl: candidate.licenseUrl || '',
-        authorsUrl: candidate.authorsUrl || '',
+        originalFields: member.fields,
+        license: member.license,
+        licenseUrl: member.licenseUrl || '',
+        authorsUrl: member.authorsUrl || '',
         modified: true,
-        attributionLogo: candidate.attributionLogo || '',
+        attributionLogo: member.attributionLogo || '',
         confirmedAt: Date.now(),
       };
-      draft.sources.catalog = { source: 'Correspondências confirmadas · edição revisada manualmente', excerpt: candidate.url, matches: [...previous.filter((m) => !(m.source === match.source && m.id === match.id)), match].slice(-6) };
+      draft.sources.catalog = { source: 'Correspondências confirmadas · edição revisada manualmente', excerpt: member.url, matches: [...previous.filter((m) => !(m.source === match.source && m.id === match.id)), match].slice(-6) };
     }
     fillForm();
   },
@@ -873,21 +978,66 @@ $('game-form').onsubmit = async (event) => {
       .querySelectorAll('button,input,textarea,select')
       .forEach((el) => (el.disabled = true));
     if (!draft.id) draft.id = repository.reserveGameId ? await repository.reserveGameId(draft.manual.sha256) : crypto.randomUUID();
-    const record = { ...draft, ...normalized, sources };
+    let record = { ...draft, ...normalized, sources };
+    let registrationBlob = manualBlob;
+    if (manualBlob && state.games.some((game) => game.id === record.id)) {
+      const current = await repository.latestGame(state.games.find((game) => game.id === record.id));
+      const principal = findDocument(current);
+      const replaced = await repository.saveDocument(current, { ...principal, manual: record.manual, language: record.language }, manualBlob);
+      record = { ...record, manual: replaced.manual, documents: replaced.documents, primaryDocumentId: replaced.primaryDocumentId, updatedAt: replaced.updatedAt };
+      registrationBlob = null;
+    }
     $('upload-progress').hidden = repository.mode !== 'firebase';
     $('upload-progress').value = 0;
     $('upload-status').textContent = 'Salvando seu jogo…';
     const result = await repository.saveGame(record, {
-      manualBlob,
+      manualBlob: registrationBlob,
       coverBlob: draftCoverBlob,
       onProgress: (percent) => {
         $('upload-progress').value = percent;
         $('upload-status').textContent = `Enviando manual: ${percent}%`;
       },
     });
+    if (registrationOcr?.hash === record.manual.sha256 && registrationOcr.pages.size) {
+      const game = result.game || record;
+      const key = indexCacheKey(APP_CONFIG.firebase?.projectId || 'local', repository.session.user?.uid, game);
+      const old = await cachedIndex(key);
+      const index = old || {
+        schemaVersion: 1,
+        gameId: game.id,
+        sourceHash: game.manual.sha256,
+        pageCount: game.manual.pages,
+        language: game.language,
+        analysisComplete: false,
+        unsavedChanges: true,
+        pages: Array.from({ length: game.manual.pages }, (_, i) => ({ page: i + 1, text: '', extracted: false })),
+        headings: [],
+      };
+      for (const page of registrationOcr.pages.values()) if (!index.pages[page.page - 1]?.text.trim()) addOcrPage(index, page);
+      await cachedIndex(key, index);
+    }
+    let savedGame = result.game || record;
+    if (additionalFiles.length) {
+      const additions = await documentPanel.addFiles(savedGame, additionalFiles, { types: additionalTypes });
+      savedGame = additions.game;
+      if (additions.failures.length) result.warning = 'Jogo salvo. Alguns PDFs adicionais não foram enviados; adicione-os em Manuais e documentos.';
+    }
+    const research = researchPanel.snapshot();
+    if (research) {
+      try {
+        await repository.saveResearch?.(research, result.game || record);
+      } catch {
+        result.warning ||= 'Jogo salvo. Não foi possível guardar o histórico desta pesquisa.';
+      }
+    }
+    void preparationQueue.update([...state.games.filter((game) => game.id !== savedGame.id), savedGame]);
+    if (result.created)
+      void repository.generateKnowledge?.(savedGame).catch(() => {
+        /* O cadastro está salvo; o estado da IA fica em Gerenciar jogo. */
+      });
     state.busy = false;
     closeDialog('upload-dialog');
-    showNotice(result.warning || 'Jogo salvo. Seu manual já está na biblioteca.');
+    showNotice(result.warning || repository.fileWarning || 'Jogo salvo. Seu manual já está na biblioteca.');
     if (repository.mode === 'local') navigator.storage?.persist?.().catch(() => {});
   } catch (error) {
     $('save-error').textContent = errorMessage(error);
@@ -903,6 +1053,7 @@ $('game-form').onsubmit = async (event) => {
   }
 };
 $('edit-game').onclick = () => {
+  if ($('game-management-dialog').open) $('game-management-dialog').close();
   const game = state.selected;
   closeDialog('detail-dialog');
   resetDraft();
@@ -932,7 +1083,23 @@ $('edit-game').onclick = () => {
     .catch(() => {});
   showDialog('upload-dialog');
 };
+function selectManagement(section) {
+  for (const button of document.querySelectorAll('[data-game-management]')) {
+    const active = button.dataset.gameManagement === section;
+    button.setAttribute('aria-pressed', String(active));
+    $(button.dataset.gameManagement).hidden = !active;
+  }
+  if (section === 'manage-information' && state.selected && state.session.canEdit) knowledgePanel?.open(state.selected);
+}
+$('detail-admin').onclick = () => {
+  $('management-title').textContent = displayTitle(state.selected);
+  selectManagement('manage-documents-section');
+  showDialog('game-management-dialog');
+};
+for (const button of document.querySelectorAll('[data-game-management]')) button.onclick = () => selectManagement(button.dataset.gameManagement);
+
 $('delete-game').onclick = () => {
+  if ($('game-management-dialog').open) $('game-management-dialog').close();
   $('delete-message').textContent = `Você vai remover “${state.selected.title}”.`;
   $('delete-error').hidden = true;
   showDialog('delete-dialog');
@@ -978,10 +1145,11 @@ $('account-button').onclick = showLogin;
 function setupContent() {
   $('setup-mode').textContent = localMode
     ? 'Você está usando a biblioteca deste dispositivo. PDFs e dados ficam neste navegador, sem sincronização. Apagar os dados do site remove essa biblioteca.'
-    : 'Consulte os manuais públicos sem conta. Entre para acessar as funções disponíveis para você.';
+    : 'Entre com sua conta aprovada para acessar os manuais.';
   $('setup-technical').textContent = `Versão ${RESEARCH_VERSION} · Firebase Spark · Firestore e Authentication · Google Drive · Cloudflare Workers Free · GitHub Pages.`;
   $('setup-connection').textContent = $('connection-status').textContent;
-  $('switch-mode').textContent = localMode ? 'Abrir biblioteca compartilhada' : 'Usar biblioteca deste dispositivo';
+  $('switch-mode').textContent = 'Abrir biblioteca compartilhada';
+  $('switch-mode').hidden = !localMode;
 }
 $('setup-button').onclick = () => {
   setupContent();
@@ -995,7 +1163,7 @@ $('switch-mode').onclick = () => {
 };
 const install = setupPwa({
   onNotice: showNotice,
-  isBusy: () => state.busy || state.importing || !!draft || accountPanel.isBusy() || adminPanel?.isBusy() || guidePanel?.isBusy(),
+  isBusy: () => state.busy || state.importing || !!draft || accountPanel.isBusy() || adminPanel?.isBusy() || guidePanel?.isBusy() || knowledgePanel?.isBusy(),
   onInstallReady: (ready) => $('install-button').classList.toggle('ready', ready),
 });
 async function installApp() {
@@ -1019,8 +1187,59 @@ window.addEventListener('online', () => {
 });
 function updateSession(session) {
   const previous = state.session;
+  const resolving = session.resolving === true;
+  $('session-loading').hidden = !resolving;
+  document.body.classList.toggle('access-approved', session.canRead === true);
   if (state.session.user?.uid !== session.user?.uid && !$('reader').hidden) reader?.close();
   state.session = session;
+  if (!session.canEdit) knowledgePanel?.close();
+  if (!session.canEdit && !session.canDelete && $('game-management-dialog').open) $('game-management-dialog').close();
+  for (const button of document.querySelectorAll('[data-add]')) button.hidden = !session.canAdd;
+  const preparationIssue = session.canRead && (session.canEdit || session.canAdd) && (session.cacheReady === false || (session.storageStatus && !(session.storageStatus.fileProtocol >= 2)));
+  $('preparation-warning').hidden = !preparationIssue;
+  $('preparation-diagnostic').textContent = preparationIssue
+    ? [
+        session.cacheError,
+        session.storageStatus?.error,
+        session.storageStatus && !(session.storageStatus.fileProtocol >= 2) ? 'O Worker conectado não informa suporte à preparação de múltiplos documentos. É necessário atualizar o backend e as regras, após autorização.' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : '';
+  if (session.canRead && (session.cacheReady !== previous.cacheReady || session.storageStatus !== previous.storageStatus || session.canEdit !== previous.canEdit || session.canAdd !== previous.canAdd)) void preparationQueue?.update(state.games);
+  if (previous.canWrite && !session.canWrite) {
+    preparationQueue?.stop();
+    documentPanel?.close();
+  }
+  if (previous.canReadAll && !session.canReadAll) {
+    guidePanel?.close(true);
+    reader?.close().catch(() => {});
+    documentPanel?.close();
+  }
+  if (!session.canRead) {
+    knowledgePanel?.close();
+    ++importSequence;
+    importAbort?.abort();
+    researchPanel.cancel();
+    preparationQueue?.stop();
+    documentPanel?.close();
+    guidePanel?.close(true);
+    reader?.close().catch(() => {});
+    state.games = [];
+    $('cover-warning').hidden = true;
+    state.selected = null;
+    for (const dialog of document.querySelectorAll('dialog[open]')) if (dialog.id !== 'login-dialog') dialog.close();
+    for (const image of document.querySelectorAll('main img, #detail-dialog img, #upload-dialog img, #guide-dialog img')) {
+      image.removeAttribute('src');
+      delete image.dataset.gameId;
+    }
+    for (const id of ['management-title', 'detail-edition', 'detail-title', 'detail-description', 'detail-tags', 'detail-stats', 'detail-manual', 'hero-title', 'hero-description', 'games-grid', 'recent-list', 'detail-catalog-sources'])
+      $(id)?.replaceChildren();
+    if (resolving && $('login-dialog').open) $('login-dialog').close();
+    if (!resolving && !localMode && repository && !$('login-dialog').open) accountPanel.open();
+  } else if (!previous.canRead && $('login-dialog').open) $('login-dialog').close();
+  $('login-dialog').querySelector('[data-close]').hidden = !session.canRead;
+
   guidePanel?.updateSession(session);
   if (previous.user?.uid === session.user?.uid && previous.profile && session.profile && previous.profile.status !== session.profile.status) showNotice(`${statusLabel(session.profile.status)}. Abra Minha conta para ver seu acesso atualizado.`);
   adminPanel?.updateSession(session);
@@ -1035,9 +1254,7 @@ function updateSession(session) {
   $('account-button').querySelector('.avatar').textContent = session.mode === 'local' ? 'L' : (session.user?.email?.[0] || 'A').toUpperCase();
   $('connection-status').replaceChildren(
     node('span', 'status-dot'),
-    document.createTextNode(
-      session.mode === 'local' ? 'Neste dispositivo · sem sincronização' : session.canRead ? 'Biblioteca conectada · leitura pública' : session.user ? 'Conta conectada · autorização pendente' : 'Acervo privado · entre para acessar',
-    ),
+    document.createTextNode(session.mode === 'local' ? 'Neste dispositivo · sem sincronização' : session.canRead ? 'Biblioteca conectada' : session.user ? 'Conta conectada · autorização pendente' : 'Acervo privado · entre para acessar'),
   );
   $('empty-description').textContent = session.canWrite
     ? 'Adicione seu primeiro manual em PDF.'
@@ -1047,14 +1264,31 @@ function updateSession(session) {
         ? 'Sua conta aguarda aprovação. Você pode acompanhar a situação em Minha conta.'
         : 'Entre com sua conta para acessar esta biblioteca.';
   $('empty-action').querySelector('span').textContent = session.canAdd ? 'Escolher um manual' : session.user ? 'Ver autorização da conta' : 'Entrar na biblioteca';
-  $('empty-note').textContent = session.mode === 'local' ? 'PDF de até 50 MB · Somente neste navegador' : session.canAdd ? 'PDF de até 50 MB' : '';
+  $('empty-note').textContent = session.mode === 'local' ? 'PDF de até 50 MiB · Somente neste navegador' : session.canAdd ? 'PDF de até 50 MiB' : '';
   if (!session.canWrite) $('detail-admin').hidden = true;
   renderGrid();
   renderRecent();
   renderHero();
 }
+window.addEventListener('pagehide', () => {
+  if (localMode) return;
+  document.body.classList.remove('access-approved');
+  preparationQueue?.destroy();
+  repository?.close?.();
+  importAbort?.abort();
+  researchPanel.cancel();
+  documentPanel?.close();
+  guidePanel?.close(true);
+  reader?.close().catch(() => {});
+  lockPrivateCache();
+  $('games-grid').replaceChildren();
+});
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted && !localMode) location.reload();
+});
 async function start() {
   setupContent();
+  $('session-loading').hidden = localMode;
   try {
     repository = localMode ? await (await import('./local-repository.js')).createLocalRepository() : await (await import('./firebase-repository.js')).createFirebaseRepository(APP_CONFIG);
     adminPanel = createAdminPanel({ repository, config: APP_CONFIG, onNotice: showNotice, onError: errorMessage });
@@ -1063,18 +1297,76 @@ async function start() {
       getProgress,
       saveProgress,
       onError: (error) => {
-        if ([403, 404, 410].includes(error.status)) {
-          showNotice('Este manual não está disponível. Conferindo a biblioteca…');
-          reader.close().catch(() => {});
+        if ([404, 410].includes(error.status)) {
           repository.refreshAvailability?.().catch(() => {});
-        } else showNotice(errorMessage(error));
+        }
+        showNotice(fileErrorMessage(error));
+      },
+    });
+    preparationQueue = createPreparationQueue(repository, {
+      scope: APP_CONFIG.firebase?.projectId || 'local',
+      onChange: (jobs) => {
+        documentPanel?.refresh();
+        const signature = jobs
+          .filter((job) => ['ready', 'partial'].includes(job.state))
+          .map((job) => `${job.key}:${job.state}:${job.remoteRevision || job.updatedAt || 0}`)
+          .join('|');
+        if (signature !== preparationSignature) {
+          preparationSignature = signature;
+          void guidePanel?.refreshIndexes();
+        }
+      },
+    });
+    documentPanel = createDocumentPanel({
+      root: $('manage-documents'),
+      readRoot: $('detail-documents'),
+      repository,
+      queue: preparationQueue,
+      openManual: (game, options) => reader.open(game, options),
+      onNotice: showNotice,
+      onSaved: (game) => {
+        if (state.selected?.id === game.id) state.selected = game;
       },
     });
     repository.subscribeSession(updateSession);
-    guidePanel = createGuidePanel({ repository, openManual: (game, options) => reader.open(game, options), onNotice: showNotice, scope: APP_CONFIG.firebase?.projectId || 'local' });
+    guidePanel = createGuidePanel({
+      repository,
+      getPreparation: (game, documentId) => preparationQueue.entries().find((job) => job.gameId === game.id && job.documentId === documentId),
+      openManual: (game, options) => reader.open(game, options),
+      onNotice: showNotice,
+      scope: APP_CONFIG.firebase?.projectId || 'local',
+    });
+    knowledgePanel = createKnowledgePanel({
+      root: $('game-knowledge-admin'),
+      repository,
+      onNotice: showNotice,
+      onUseFields: (fields, knowledge) => {
+        $('edit-game').click();
+        Object.assign(draft, fields);
+        draft.sources ||= {};
+        for (const [key, value] of Object.entries(fields)) {
+          const fact = knowledge.fields?.[key],
+            source = knowledge.sources.find((s) => s.id === fact?.sourceId);
+          draft.sources[key] = {
+            source: fact?.generated ? 'Gemini · fontes públicas, confira antes de salvar' : source?.name || 'Fonte pública · confira a edição',
+            excerpt: String(value),
+            url: source?.url || '',
+            license: source?.license || '',
+            licenseUrl: source?.licenseUrl || '',
+            authorsUrl: source?.authorsUrl || '',
+            language: fact?.language || source?.language || '',
+            confirmedAt: Date.now(),
+          };
+        }
+        fillForm();
+        gameSteps.go(2);
+      },
+    });
     repository.subscribeGames(
       (games, metadata = {}) => {
         state.games = games;
+        reader?.revokeMissing(games);
+        void preparationQueue.update(games).catch((error) => showNotice(errorMessage(error)));
         state.gamesLoading = metadata.loading === true;
         $('library-loading').hidden = !state.gamesLoading;
         $('library-error').hidden = true;
@@ -1088,6 +1380,7 @@ async function start() {
             guidePanel?.invalidate(latest);
             $('read-manual').disabled = !readableGame(latest);
             updateManualStatus(latest);
+            documentPanel?.open(latest);
           }
         }
         if (state.selected && !games.some((game) => game.id === state.selected.id) && !state.busy) {
@@ -1104,11 +1397,35 @@ async function start() {
       },
     );
   } catch (error) {
+    $('session-loading').hidden = true;
+    accountPanel.open();
     $('library-loading').hidden = true;
     $('connection-status').textContent = 'A conexão não ficou pronta';
-    $('library-error').textContent = `${errorMessage(error)} Você pode abrir “Sobre o acervo” e escolher a biblioteca deste dispositivo.`;
+    $('library-error').textContent = errorMessage(error);
+    $('login-error').textContent = `Não foi possível conectar. ${errorMessage(error)}`;
+    $('login-error').hidden = false;
     $('library-error').hidden = false;
     $('empty-description').textContent = 'Não foi possível carregar a biblioteca. Verifique sua conexão e tente novamente.';
   }
 }
+$('retry-covers').onclick = () => {
+  repository?.retryCovers?.();
+  $('cover-warning').hidden = true;
+  renderGrid();
+  renderHero();
+  if (state.selected) void populateImage($('detail-cover'), state.selected);
+};
+$('retry-preparation').onclick = async () => {
+  const button = $('retry-preparation');
+  button.disabled = true;
+  try {
+    await repository?.retryPreparation?.();
+    await preparationQueue?.update(state.games);
+    documentPanel?.refresh();
+  } catch (error) {
+    showNotice(errorMessage(error));
+  } finally {
+    button.disabled = false;
+  }
+};
 start();

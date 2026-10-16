@@ -35,6 +35,17 @@ test('Wikidata fornece nomes PT-BR, aliases verificáveis e apenas fatos sem lic
   assert.equal(wikidataCandidate({ ...entity, claims: { P31: [claim({ id: 'Q7889' })], P2339: [claim('13')] } }), null);
   assert.equal(wikidataCandidate({ ...entity, claims: {} }), null);
 });
+
+test('Wikidata lê mecânicas explícitas, unidade de horas e classe de expansão sem inferir pelo título', () => {
+  const expansion = { ...entity, claims: { ...entity.claims, P31: [claim({ id: 'Q60474521' })], P4151: [claim({ id: 'Q999' })], P2047: [claim({ amount: '+1.5', unit: 'http://www.wikidata.org/entity/Q25235' })] } };
+  const result = wikidataCandidate(expansion, 'pt-BR', { Q999: { labels: { en: { value: 'Worker placement', language: 'en' } } } });
+  assert.equal(result.kind, 'expansion');
+  assert.deepEqual(result.fields.mechanics, ['Worker placement']);
+  assert.equal(result.fields.durationMinutes, 90);
+  assert.equal(result.fieldLanguages.mechanics, 'en');
+  assert.match(result.fieldEvidence.mechanics, /Q999/);
+  assert.equal(wikidataCandidate({ ...expansion, claims: { ...expansion.claims, P4151: [claim({ id: 'Q999' }, { P518: [{}] })] } }, 'pt-BR', { Q999: { labels: { en: { value: 'Worker placement' } } } }).fields.mechanics, undefined);
+});
 test('divergências e qualificadores de edição não são transformados em um número inventado', () => {
   const result = wikidataCandidate({
     ...entity,
@@ -52,7 +63,8 @@ test('busca Wikidata descarta cidades homônimas usando tipo/identificador, entr
     return urls.length === 1 ? { search: [{ id: 'Q17271' }, { id: 'Q123' }] } : { entities: { Q17271: entity, Q123: { id: 'Q123', labels: { en: { value: 'Catan City' } } } } };
   });
   assert.equal(result.length, 1);
-  assert.equal(urls[0].searchParams.get('language'), 'en');
+  assert.equal(urls[0].searchParams.get('language'), 'pt');
+  assert.deepEqual([...new Set(urls.filter((url) => url.searchParams.get('action') === 'wbsearchentities').map((url) => url.searchParams.get('language')))].sort(), ['en', 'fr', 'pt']);
   assert.equal(urls[0].searchParams.get('maxlag'), '5');
   assert.equal(result[0].fields.title, 'Colonizadores de Catan');
 });

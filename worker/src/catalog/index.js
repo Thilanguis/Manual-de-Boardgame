@@ -77,18 +77,19 @@ export function validateQuery(source, raw) {
     alternateTitles: Array.isArray(raw.alternateTitles)
       ? raw.alternateTitles
           .filter((n) => n && typeof n.value === 'string' && n.value.length >= 2 && n.value.length <= 160)
-          .slice(0, 2)
+          .slice(0, 6)
           .map((n) => ({ value: n.value, language: ['pt-BR', 'en', 'fr'].includes(n.language) ? n.language : 'other' }))
       : [],
-    // Endpoint interativo chamado pelo formulário; nenhum robô ou varredura em lote.
+    // Formulário interativo; tarefas internas adotam maxlag e prazo próprios.
     interactive: true,
   };
 }
-export async function queryCatalog(source, raw, env, identity, requestSignal, fetcher = fetch) {
+export async function queryCatalog(source, raw, env, identity, requestSignal, fetcher = fetch, { background = false } = {}) {
   const input = validateQuery(source, raw),
     timeout = AbortSignal.timeout(input.expanded ? 8000 : 3500),
     signal = requestSignal ? AbortSignal.any([timeout, requestSignal]) : timeout;
   const limitedFetch = (url, options = {}) => fetcher(url, { ...options, signal });
+  input.interactive = !background;
   try {
     if (!identity) throw new ApiError(401, 'Entre com uma conta autorizada para pesquisar.');
     const profile = await getDocument(env, `users/${encodeURIComponent(identity.uid)}`, identity.token, limitedFetch);

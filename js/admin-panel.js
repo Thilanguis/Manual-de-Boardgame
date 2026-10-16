@@ -1,5 +1,6 @@
 import { OWNER_UID, roleLabel, statusLabel, defaultSubadminPermissions } from './permissions.js';
 export function createAdminPanel({ repository, config, onNotice, onError }) {
+  const ownerUid = config.ownerUid || OWNER_UID;
   const $ = (id) => document.getElementById(id),
     dialog = $('admin-dialog');
   let session = {},
@@ -37,6 +38,24 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
     if (name === 'settings' && !session.canConfigure) return;
     document.querySelectorAll('[data-admin-section]').forEach((section) => (section.hidden = section.dataset.adminSection !== name));
     document.querySelectorAll('[data-admin-tab]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.adminTab === name)));
+    const needsPeople = ['people', 'history'].includes(name);
+    if (!needsPeople) {
+      stopPeople?.();
+      stopPeople = null;
+    } else if (!stopPeople)
+      stopPeople = repository.subscribePeople((data) => {
+        people = data;
+        renderPeople();
+        renderHistory();
+      }, error);
+    if (name !== 'history') {
+      stopAudit?.();
+      stopAudit = null;
+    } else if (!stopAudit)
+      stopAudit = repository.subscribeAudit((data) => {
+        events = data;
+        renderHistory();
+      }, error);
   }
   function button(text, run, danger = false) {
     const button = el('button', danger ? 'button secondary small danger' : 'button secondary small', text);
@@ -85,8 +104,8 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
         button('Recusar', () => change(person, 'reject'), true),
       );
     }
-    if (session.canManageUsers && person.uid !== OWNER_UID && person.uid !== session.user?.uid) actions.append(button('Gerenciar', () => edit(person)));
-    if (person.uid === OWNER_UID) actions.append(el('span', 'person-meta', 'Proprietário protegido'));
+    if (session.canManageUsers && person.uid !== ownerUid && person.uid !== session.user?.uid) actions.append(button('Gerenciar', () => edit(person)));
+    if (person.uid === ownerUid) actions.append(el('span', 'person-meta', 'Proprietário protegido'));
     row.append(info, actions);
     return row;
   }
@@ -136,17 +155,17 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
     );
   }
   function edit(person) {
-    if (!session.canManageUsers || person.uid === OWNER_UID || person.uid === session.user.uid) return;
+    if (!session.canManageUsers || person.uid === ownerUid || person.uid === session.user.uid) return;
     selected = person;
     $('person-title').textContent = person.name;
     $('person-email').textContent = person.email;
     $('person-status').textContent = `${roleLabel(person.role)} · ${statusLabel(person.status)}`;
     $('person-permissions').hidden = person.status !== 'approved' && person.role !== 'subadmin';
     const permissions = person.role === 'subadmin' ? person.permissions : defaultSubadminPermissions();
-    $('permission-approve').checked = permissions.approveUsers === true;
+    $('permission-approve').checked = false;
     $('permission-add').checked = permissions.addGames === true;
     $('permission-edit').checked = permissions.editGames === true;
-    const readPermissions = () => ({ approveUsers: $('permission-approve').checked, addGames: $('permission-add').checked, editGames: $('permission-edit').checked, deleteGames: false });
+    const readPermissions = () => ({ approveUsers: false, addGames: $('permission-add').checked, editGames: $('permission-edit').checked, deleteGames: false });
     const actions = [];
     if (person.status === 'pending')
       actions.push(
@@ -170,17 +189,6 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
     document.body.classList.add('modal-open');
     $('admin-error').hidden = true;
     tab('requests');
-    stopPeople?.();
-    stopAudit?.();
-    stopPeople = repository.subscribePeople((data) => {
-      people = data;
-      renderPeople();
-      renderHistory();
-    }, error);
-    stopAudit = repository.subscribeAudit((data) => {
-      events = data;
-      renderHistory();
-    }, error);
   }
   function closeSubscriptions() {
     stopPeople?.();
@@ -215,7 +223,11 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
       $('manage-button').hidden = !enabled;
       $('admin-settings-tab').hidden = !next.canConfigure;
       $('library-public').checked = next.publicRead === true;
-      $('admin-storage-status').textContent = config.fileStorage?.apiBase ? `API configurada: ${config.fileStorage.apiBase}. A autorização e o envio real precisam ser validados.` : 'Conexão Drive pendente. A API ainda não foi configurada.';
+      $('admin-storage-status').textContent = config.development
+        ? 'Ambiente local. Arquivos e IA são simulados; dados fictícios.'
+        : config.fileStorage?.apiBase
+          ? `API configurada: ${config.fileStorage.apiBase}. A autorização e o envio real precisam ser validados.`
+          : 'Conexão Drive pendente. A API ainda não foi configurada.';
       const key = `${next.user?.uid || ''}:${enabled}`;
       if (key !== subscriptionKey) {
         subscriptionKey = key;

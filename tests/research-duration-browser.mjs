@@ -1,3 +1,6 @@
+import '../scripts/test-guard.mjs';
+import { openGameManagement } from './game-ui-fixture.mjs';
+import { enableLocalFixture } from './local-fixture.mjs';
 // Formulário, revisão e IndexedDB reais; formatos de resposta de API/OCR simulados, sem dados de produção.
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
@@ -44,6 +47,7 @@ try {
       const page = await context.newPage(),
         errors = [];
       page.on('pageerror', (error) => errors.push(error.message));
+      await enableLocalFixture(page.context());
       await page.goto(`${process.env.ACERVO_TEST_URL || 'http://localhost:4174'}/?local=1`);
       await page.waitForFunction(() => document.getElementById('account-label').textContent === 'Local');
       await page.locator('#empty-action').click();
@@ -103,6 +107,7 @@ try {
       assert(saved.sources.duration.confirmedAt);
       await page.reload();
       await page.locator('.card-main').click();
+      await openGameManagement(page, 'manage-information');
       await page.locator('#edit-game').click();
       await page.locator('#game-next').click();
       assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), String(item.expected[0]));
@@ -113,6 +118,8 @@ try {
           window.durationCase.fields = { durationMinutes: 90 };
         });
         await page.locator('#game-back').click();
+        await page.locator('.research-options').evaluate((element) => (element.open = true));
+        await page.locator('[data-research-refresh]').check();
         await page.locator('[data-research-search]').click();
         page.once('dialog', (dialog) => dialog.dismiss());
         await page.locator('[data-research-use-all]').click();
@@ -130,6 +137,7 @@ try {
         await page.locator('#upload-dialog').waitFor({ state: 'hidden' });
         await page.reload();
         await page.locator('.card-main').click();
+        await openGameManagement(page, 'manage-information');
         await page.locator('#edit-game').click();
         await page.locator('#game-next').click();
         assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '90');

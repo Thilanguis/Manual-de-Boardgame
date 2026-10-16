@@ -2,7 +2,7 @@ import { loadPdf } from './pdf.js';
 import { extractMetadata } from './recognition.js';
 
 // PDF e imagens ficam no dispositivo. Somente código/modelos públicos são baixados.
-export async function recognizePdfImages(blob, { language = 'pt-BR', signal, onProgress = () => {}, pages = [1, 2, 3], timeoutMs = 18000 } = {}) {
+export async function recognizePdfImages(blob, { language = 'pt-BR', signal, onProgress = () => {}, pages = [1, 2, 3], timeoutMs = 18000, onPage = async () => {}, continueOnError = false } = {}) {
   const timeout = AbortSignal.timeout(timeoutMs),
     combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let worker, pdf, renderTask, abort;
@@ -39,8 +39,14 @@ export async function recognizePdfImages(blob, { language = 'pt-BR', signal, onP
           await renderTask.promise;
           const { data } = await worker.recognize(canvas);
           combined.throwIfAborted();
-          if (data.confidence >= 50 && data.text.trim().length >= 40) evidence.push({ page: number, text: data.text.slice(0, 30000), confidence: Math.round(data.confidence) });
+          const usable = data.confidence >= 50 && data.text.trim().length >= 40;
+          if (usable) evidence.push({ page: number, text: data.text.slice(0, 30000), confidence: Math.round(data.confidence) });
+          await onPage({ page: number, text: usable ? data.text.slice(0, 30000) : '', confidence: Math.round(data.confidence), status: usable ? 'done' : 'low-confidence' });
           onProgress(`Página ${number} lida; ${evidence.length} página(s) com texto utilizável.`);
+        } catch (error) {
+          combined.throwIfAborted();
+          if (!continueOnError) throw error;
+          await onPage({ page: number, text: '', status: 'failed', confidence: 0 });
         } finally {
           canvas.width = canvas.height = 0;
         }
@@ -77,7 +83,7 @@ export async function recognizePdfImages(blob, { language = 'pt-BR', signal, onP
       }),
     ]);
   } catch (error) {
-    if (timeout.aborted) throw new Error('A leitura local atingiu o prazo. Nenhum dado foi aplicado; você pode tentar novamente ou preencher pelo PDF.');
+    if (timeout.aborted) throw new Error(continueOnError ? 'A leitura atingiu o prazo. As páginas concluídas foram guardadas; continue para ler as restantes.' : 'A leitura local atingiu o prazo. Nenhum dado foi aplicado; você pode tentar novamente ou preencher pelo PDF.');
     throw error;
   } finally {
     if (abort) combined.removeEventListener('abort', abort);

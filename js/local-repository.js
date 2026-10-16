@@ -1,3 +1,5 @@
+import { createDocumentRepository } from './document-repository.js';
+import { createResearchStore } from './research-store.js';
 import { createLocalGuides } from './guide-repository.js';
 const DATABASE = 'acervo-library-v1';
 
@@ -38,6 +40,7 @@ export async function createLocalRepository() {
   const emit = async () => {
     try {
       const games = await list();
+      repository.games = games;
       for (const listener of listeners) listener(games);
     } catch (error) {
       for (const listener of errors) listener(error);
@@ -129,5 +132,7 @@ export async function createLocalRepository() {
     },
   };
   Object.assign(repository, await createLocalGuides(repository));
+  Object.assign(repository, createResearchStore(repository));
+  Object.assign(repository, createDocumentRepository(repository));
   return repository;
 }

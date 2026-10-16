@@ -1,3 +1,4 @@
+import '../scripts/test-guard.mjs';
 // APIs de catálogo REAIS; identidade/Firestore emulados, PDFs locais, nenhum upload.
 import { createRequire } from 'node:module';
 import { resolve, basename } from 'node:path';
@@ -60,7 +61,7 @@ let currentReport;
 await context.route('**/config/app-config.js', (route) =>
   route.fulfill({
     contentType: 'text/javascript',
-    body: `export const APP_CONFIG=${JSON.stringify({ firebase: { apiKey: 'demo-key', authDomain: 'demo-acervo.firebaseapp.com', projectId: project, appId: '1:000:web:test' }, fileStorage: { provider: 'drive', apiBase: 'https://recognition-test.invalid' }, emulators: { auth: 'http://' + process.env.FIREBASE_AUTH_EMULATOR_HOST, host, port: Number(port) }, maxPdfBytes: 52428800, enableBgg: false })};`,
+    body: `export const APP_CONFIG=${JSON.stringify({ firebase: { apiKey: 'demo-key', authDomain: 'demo-acervo.firebaseapp.com', projectId: project, appId: '1:000:web:test' }, fileStorage: { provider: 'drive', apiBase: 'https://recognition-test.invalid' }, emulators: { auth: 'http://' + process.env.FIREBASE_AUTH_EMULATOR_HOST, host, port: Number(port) }, maxPdfBytes: 209715200, enableBgg: false })};`,
   }),
 );
 await context.route('https://recognition-test.invalid/**', async (route) => {

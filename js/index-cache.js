@@ -1,4 +1,6 @@
+import { privateCacheRequired, privateValue } from './private-cache.js';
 let database;
+export const indexCacheKey = (scope, uid, game) => `${scope}:${uid || 'visitor'}:${game.id}${game.documentId && game.documentId !== 'main' ? ':' + game.documentId : ''}:${game.manual.sha256}`;
 async function db() {
   if (!database)
     database = new Promise((resolve, reject) => {
@@ -13,6 +15,7 @@ async function db() {
   return database;
 }
 export async function cachedIndex(key, value) {
+  if (privateCacheRequired()) return privateValue(`index:${key}`, value);
   try {
     const database = await db();
     return await new Promise((resolve, reject) => {
@@ -25,7 +28,7 @@ export async function cachedIndex(key, value) {
         cursor.onsuccess = () => {
           const c = cursor.result;
           if (!c) return;
-          if (++kept > 3) c.delete();
+          if (++kept > 48) c.delete();
           c.continue();
         };
       }

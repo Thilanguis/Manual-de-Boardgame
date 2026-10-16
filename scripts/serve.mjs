@@ -26,6 +26,11 @@ const types = {
 };
 const server = createServer(async (request, response) => {
   try {
+    if (process.env.ACERVO_DEVELOPMENT === '1')
+      response.setHeader(
+        'Content-Security-Policy',
+        "default-src 'self'; connect-src 'self' http://127.0.0.1:8080 http://127.0.0.1:9099 http://127.0.0.1:8787; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'",
+      );
     if (!['GET', 'HEAD'].includes(request.method)) {
       response.writeHead(405);
       response.end();
@@ -33,6 +38,13 @@ const server = createServer(async (request, response) => {
     }
     const url = new URL(request.url, 'http://localhost');
     let path = decodeURIComponent(url.pathname);
+    if (/^\/__dev\/sdk\/firebase-(app|auth|firestore)\.js$/.test(path)) {
+      const name = path.split('/').at(-1);
+      const content = (await readFile(resolve(root, 'node_modules/firebase', name), 'utf8')).replaceAll('https://www.gstatic.com/firebasejs/13.0.0/', '/__dev/sdk/');
+      response.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store' });
+      response.end(content);
+      return;
+    }
     if (path === '/') path = '/index.html';
     const file = resolve(root, '.' + path),
       rel = relative(root, file);

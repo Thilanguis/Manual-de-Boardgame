@@ -56,7 +56,7 @@ export function createGameSteps({ form, dialog, getSession, isBusy = () => false
       getSession().mode === 'local'
         ? 'Esta biblioteca fica neste navegador; a opção não publica arquivos na internet.'
         : getSession().publicRead
-          ? 'A biblioteca inteira está pública por configuração do administrador. Desmarcar esta opção não torna este jogo privado enquanto essa configuração estiver ativa.'
+          ? 'Todas as contas aprovadas já têm acesso à biblioteca. Esta opção não libera visitantes.'
           : 'Desmarcado: somente a equipe administrativa poderá ler este manual.';
   }
   function go(next, check = true, focus = true) {

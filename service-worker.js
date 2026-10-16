@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.7.5';
+const VERSION = 'acervo-v1.11.0';
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
 const ESSENTIAL = [
@@ -15,6 +15,8 @@ const ESSENTIAL = [
   './js/model.js',
   './js/recognition.js',
   './js/pdf.js',
+  './js/pdf-limits.js',
+  './js/file-errors.js',
   './js/reader.js',
   './js/pwa.js',
   './js/local-repository.js',
@@ -26,6 +28,12 @@ const ESSENTIAL = [
   './js/research-client.js',
   './js/research-duration.js',
   './js/research-panel.js',
+  './js/game-vocabulary.js',
+  './js/research-knowledge.js',
+  './js/research-store.js',
+  './js/pdf-knowledge.js',
+  './js/translation.js',
+  './js/catalog-language.js',
   './js/research-presentation.js',
   './js/research-contract.js',
   './js/game-identities.js',
@@ -33,8 +41,15 @@ const ESSENTIAL = [
   './js/guide-model.js',
   './js/guide-repository.js',
   './js/guide-panel.js',
+  './js/knowledge-panel.js',
+  './js/rule-relevance.js',
   './js/pdf-index.js',
   './js/index-cache.js',
+  './js/private-cache.js',
+  './js/documents.js',
+  './js/document-repository.js',
+  './js/document-panel.js',
+  './js/preparation-queue.js',
   './js/rule-search-worker.js',
   './js/admin-panel.js',
   './assets/icon.svg',
@@ -68,7 +83,7 @@ function unavailable() {
 self.addEventListener('fetch', (event) => {
   const request = event.request,
     url = new URL(request.url);
-  if (request.method !== 'GET' || request.headers.has('range')) return;
+  if (request.method !== 'GET' || request.headers.has('range') || request.headers.has('authorization')) return;
   // Nunca interceptar arquivos do Storage, APIs, PDFs ou capas remotas.
   if (url.origin !== self.location.origin) {
     if (url.origin === 'https://www.gstatic.com' && url.pathname.startsWith('/firebasejs/13.0.0/') && url.pathname.endsWith('.js')) {

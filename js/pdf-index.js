@@ -2,6 +2,7 @@ import { loadPdf } from './pdf.js';
 import { linesFromItems } from './recognition.js';
 import { normalizeText } from './model.js';
 import { ruleCategory } from './guide-model.js';
+import { isPortuguese, translatedValue } from './translation.js';
 const yieldUI = () => new Promise((resolve) => setTimeout(resolve, 0));
 export function detectHeadings(lines, page, outline = []) {
   const heights = lines
@@ -15,17 +16,38 @@ export function detectHeadings(lines, page, outline = []) {
     )
     .map((l) => ({ title: l.text, page, category: ruleCategory(l.text), source: 'Título detectado; conferir no PDF' }));
 }
-export async function analyzePdf(blob, game, { signal, onProgress = () => {} } = {}) {
+export function indexMatches(index, game) {
+  return (
+    index?.schemaVersion === 1 &&
+    index.gameId === game.id &&
+    (!game.documentId || (index.documentId || 'main') === game.documentId) &&
+    index.sourceHash === game.manual.sha256 &&
+    Array.isArray(index.pages) &&
+    Array.isArray(index.headings) &&
+    index.pages.length === index.pageCount &&
+    Number.isInteger(index.pageCount) &&
+    index.pageCount > 0 &&
+    (!game.manual.pages || game.manual.pages === index.pageCount) &&
+    index.pages.every((p, i) => p.page === i + 1 && typeof p.text === 'string') &&
+    index.headings.every((h) => typeof h.title === 'string' && Number.isInteger(h.page) && h.page >= 1 && h.page <= index.pageCount)
+  );
+}
+export async function analyzePdf(blob, game, { signal, onProgress = () => {}, previous, checkpoint = async () => {} } = {}) {
   signal?.throwIfAborted();
   onProgress({ message: 'Conferindo a versão do PDF…', current: 0, total: game.manual.pages });
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), (b) => b.toString(16).padStart(2, '0')).join('');
   signal?.throwIfAborted();
   if (hash !== game.manual.sha256) throw new Error('O PDF mudou durante a análise. Reabra o jogo para usar a versão atual.');
   onProgress({ message: 'Abrindo o documento completo…', current: 0, total: game.manual.pages });
+  const reusable = indexMatches(previous, game);
+  if (reusable && previous.analysisComplete !== false) return previous;
   const pdf = await loadPdf(blob),
-    pages = [],
-    headings = [],
+    pages = reusable ? previous.pages : [],
+    headings = reusable ? [...previous.headings] : [],
     outline = [];
+  const index = reusable ? previous : { schemaVersion: 1, gameId: game.id, documentId: game.documentId || 'main', sourceHash: hash, pageCount: pdf.numPages, language: game.language, pages, headings, analysisComplete: false, revision: 0 };
+  if (!reusable) for (let page = 1; page <= pdf.numPages; page++) pages.push({ page, text: '', extracted: false });
+  index.language ||= game.language;
   const cancel = () => pdf.destroy().catch(() => {});
   signal?.addEventListener('abort', cancel, { once: true });
   try {
@@ -46,17 +68,18 @@ export async function analyzePdf(blob, game, { signal, onProgress = () => {} } =
       }
     }
     await bookmarks(await pdf.getOutline());
-    let textBytes = 0;
+    let textBytes = pages.reduce((total, p) => total + new TextEncoder().encode(p.text).length, 0);
     for (let number = 1; number <= pdf.numPages; number++) {
       signal?.throwIfAborted();
+      if (pages[number - 1].extracted || pages[number - 1].ocrStatus === 'done') continue;
       onProgress({ message: `Analisando página ${number} de ${pdf.numPages}…`, current: number - 1, total: pdf.numPages });
       const page = await pdf.getPage(number),
         content = await page.getTextContent(),
         lines = linesFromItems(content.items),
         text = lines.map((l) => l.text).join('\n');
-      textBytes += new TextEncoder().encode(text).length;
+      textBytes += new TextEncoder().encode(text).length - new TextEncoder().encode(pages[number - 1].text).length;
       if (textBytes > 20000000) throw new Error('O texto ultrapassa o limite de 20 MB desta versão. Nenhum índice parcial será publicado.');
-      pages.push({ page: number, text });
+      pages[number - 1] = { page: number, text, extracted: true, method: 'pdf-text' };
       headings.push(...detectHeadings(lines, number, outline));
       // Sumários impressos só oferecem referências quando a página física é inequívoca.
       for (const l of lines) {
@@ -64,21 +87,31 @@ export async function analyzePdf(blob, game, { signal, onProgress = () => {} } =
         if (match && Number(match[2]) <= pdf.numPages) headings.push({ title: match[1].trim(), page: number, printedPage: Number(match[2]), category: ruleCategory(match[1]), source: 'Sumário impresso; página física a confirmar' });
       }
       page.cleanup();
+      index.headings = [...outline, ...headings];
+      index.revision++;
+      await checkpoint(index);
       await yieldUI();
     }
     signal?.throwIfAborted();
     const seen = new Set(),
       structured = [...outline, ...headings].sort((a, b) => a.page - b.page).filter((h) => !seen.has(`${h.page}:${normalizeText(h.title)}`) && seen.add(`${h.page}:${normalizeText(h.title)}`));
     onProgress({ message: 'Análise concluída.', current: pdf.numPages, total: pdf.numPages });
-    return { schemaVersion: 1, gameId: game.id, sourceHash: game.manual.sha256, pageCount: pdf.numPages, pages, headings: structured, scanned: pages.filter((p) => p.text.trim().length > 40).length < Math.max(1, pdf.numPages * 0.2) };
+    Object.assign(index, { pages, headings: structured, analysisComplete: true, scanned: pages.some((p) => p.text.trim().length < 40) });
+    await checkpoint(index);
+    return index;
   } finally {
     signal?.removeEventListener('abort', cancel);
     await pdf.destroy().catch(() => {});
   }
 }
 export function suggestedSections(index) {
-  return index.headings
-    .filter((h) => !h.printedPage)
+  const headings = index.headings.filter((h) => !h.printedPage);
+  // Páginas sem cabeçalho também podem virar trechos para revisão.
+  for (const page of index.pages) if (page.text.trim().length >= 40 && !headings.some((h) => h.page === page.page)) headings.push({ page: page.page, title: `Página ${page.page}`, source: 'Trecho do PDF; revisar' });
+  const seenForeignPages = new Set();
+  return headings
+    .sort((a, b) => a.page - b.page)
+    .filter((h) => isPortuguese(index.language || 'pt-BR') || (!seenForeignPages.has(h.page) && seenForeignPages.add(h.page)))
     .slice(0, 60)
     .map((h, i, list) => {
       const next = list[i + 1],
@@ -89,7 +122,27 @@ export function suggestedSections(index) {
         .slice(Math.max(0, begin), end >= 0 ? end : undefined)
         .slice(0, 5000)
         .trim();
-      return { id: crypto.randomUUID(), title: h.title, text: excerpt, page: h.page, type: 'texto', reviewed: false, imageId: '', caption: '', source: h.source };
+      const foreign = !isPortuguese(index.language || 'pt-BR');
+      const translated = translatedValue(page.translation, page.text);
+      return {
+        id: crypto.randomUUID(),
+        documentId: index.documentId || 'main',
+        sourceHash: index.sourceHash,
+        title: foreign ? translatedValue(h.translation, h.title) || h.category || `Página ${h.page}` : h.title,
+        text: foreign ? translated.slice(0, 5000) : excerpt,
+        page: h.page,
+        type: 'texto',
+        reviewed: false,
+        imageId: '',
+        caption: '',
+        source: h.source,
+        language: 'pt-BR',
+        originalText: foreign ? page.text.slice(0, 20000) : '',
+        originalTitle: h.title,
+        sourceLanguage: index.language || 'pt-BR',
+        translationPending: foreign && !translated,
+        translationMethod: foreign && translated ? page.translation.method : '',
+      };
     });
 }
 export async function packIndex(index) {
@@ -117,10 +170,13 @@ export async function unpackIndex(blob, game) {
   if (
     data.schemaVersion !== 1 ||
     data.gameId !== game.id ||
+    (game.documentId && (data.documentId || 'main') !== game.documentId) ||
     data.sourceHash !== game.manual.sha256 ||
     !Array.isArray(data.pages) ||
     !Array.isArray(data.headings) ||
     data.pages.length !== data.pageCount ||
+    (Number.isInteger(game.manual.pages) && data.pageCount !== game.manual.pages) ||
+    data.headings.some((heading) => !Number.isInteger(heading.page) || heading.page < 1 || heading.page > data.pageCount || typeof heading.title !== 'string') ||
     data.pages.some((p, i) => p.page !== i + 1 || typeof p.text !== 'string')
   )
     throw new Error('O índice não corresponde ao manual atual. Analise novamente o PDF.');

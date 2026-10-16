@@ -1,3 +1,6 @@
+import '../scripts/test-guard.mjs';
+import { enableLocalFixture } from './local-fixture.mjs';
+import { openGameManagement } from './game-ui-fixture.mjs';
 // Conteúdo e imagens sintéticos exclusivamente para testes; nenhuma gravação em nuvem.
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
@@ -30,6 +33,7 @@ const context = await browser.newContext(),
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('dialog', (d) => d.accept());
 try {
+  await enableLocalFixture(page.context());
   await page.goto(`${process.env.ACERVO_TEST_URL || 'http://localhost:4174'}/?local=1`);
   await page.waitForFunction(() => document.getElementById('connection-status').textContent.includes('Neste dispositivo'));
   await page.locator('#empty-action').click();
@@ -56,10 +60,10 @@ try {
   await page.locator('#save-game').click();
   await page.waitForFunction(() => !document.getElementById('upload-dialog').open && document.querySelectorAll('.game-card').length === 1);
   await page.locator('.card-main').click();
+  await openGameManagement(page, 'manage-guide');
   await page.locator('#edit-guide').click();
   await page.getByRole('button', { name: 'Nova seção', exact: true }).waitFor();
-  await page.locator('#guide-analyze').click();
-  await page.waitForFunction(() => document.getElementById('guide-status').textContent.startsWith('PDF completo analisado'));
+  await page.waitForFunction(() => document.getElementById('guide-analyze').textContent === 'PDF analisado');
   const bookmarkFound = await page.evaluate(async () => {
     const database = await new Promise((resolve) => {
       const r = indexedDB.open('acervo-rule-index-cache-v1');
@@ -73,10 +77,8 @@ try {
     return values.some((v) => v.data.headings.some((h) => h.source === 'Bookmark do PDF' && h.page === 20));
   });
   assert.equal(bookmarkFound, true);
-  // Cancelar uma nova análise não altera o rascunho ou a publicação.
-  await page.locator('#guide-analyze').click();
-  await page.locator('#guide-cancel-analysis').click();
-  await page.waitForFunction(() => document.getElementById('guide-status').textContent.startsWith('Análise cancelada'));
+  // Um índice concluído é reutilizado; não oferece uma análise redundante.
+  assert.equal(await page.locator('#guide-analyze').isDisabled(), true);
   await page.getByRole('button', { name: 'Adicionar sugestões do PDF ao rascunho' }).click();
   assert.ok((await page.locator('.guide-editor-section').count()) >= 20);
   const first = page.locator('.guide-editor-section').first();
@@ -93,19 +95,25 @@ try {
   await first.locator('[name=image]').setInputFiles({ name: 'example.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
   await page.waitForFunction(() => document.getElementById('guide-status').textContent.includes('Imagem enviada'));
   for (const checkbox of await page.locator('.guide-editor-section [name=reviewed]').all()) await checkbox.check();
-  await page.getByRole('button', { name: 'Publicar guia revisado' }).click();
+  await page.getByRole('button', { name: 'Publicar guia', exact: true }).click();
   await page.waitForFunction(() => document.getElementById('guide-status').textContent.startsWith('Guia publicado'));
-  await page.locator('#guide-tab-learn').click();
+  await page.locator('#guide-close').click();
+  await page.locator('.card-main').click();
+  await page.locator('#learn-game').click();
+  await page.locator('.guide-section').first().waitFor();
   assert.equal(await page.locator('.guide-section strong').first().textContent(), 'Explicação revisada');
   await page.waitForFunction(() => document.querySelector('.guide-section img')?.naturalWidth > 0);
   assert.equal(await page.evaluate(() => window.__pwned), undefined);
-  await page.locator('#guide-tab-quick').click();
+  await page.locator('#guide-close').click();
+  await page.locator('.card-main').click();
+  await page.locator('#quick-rules').click();
   await page.locator('#guide-search').fill('inventario especial');
   await page.locator('.rule-result').first().waitFor();
   await page.locator('.rule-result').getByRole('button', { name: 'Ver no manual · p. 20', exact: true }).first().click();
   await page.waitForFunction(() => document.getElementById('reader-subtitle').textContent.startsWith('Página 20') && document.getElementById('reader-status').hidden);
   await page.locator('#reader-close').click();
   await page.locator('.card-main').click();
+  await openGameManagement(page, 'manage-guide');
   await page.locator('#edit-guide').click();
   await page.locator('.guide-editor-section').first().locator('[name=text]').fill('Alteração privada ainda não publicada.');
   await page.getByRole('button', { name: 'Salvar rascunho' }).click();
@@ -126,6 +134,7 @@ try {
   }
   await page.locator('#guide-close').click();
   await page.locator('.card-main').click();
+  await openGameManagement(page, 'manage-information');
   await page.locator('#edit-game').click();
   const replacement = await PDFDocument.create();
   const replacementFont = await replacement.embedFont(StandardFonts.Helvetica);

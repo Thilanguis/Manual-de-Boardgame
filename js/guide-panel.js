@@ -1,7 +1,11 @@
-import { emptyGuide, cleanGuide, SECTION_TYPES } from './guide-model.js';
-import { analyzePdf, suggestedSections, packIndex, unpackIndex } from './pdf-index.js';
+import { gameDocuments, findDocument, primaryDocumentId, documentGame } from './documents.js';
+import { fileErrorMessage } from './file-errors.js';
+import { extendOcrIndex, pendingOcrPages, ocrCoverage } from './pdf-knowledge.js';
+import { emptyGuide, cleanGuide, SECTION_TYPES, staleSection } from './guide-model.js';
+import { analyzePdf, suggestedSections, packIndex, unpackIndex, indexMatches } from './pdf-index.js';
+import { createTextTranslator, translateIndex, translatedValue, isPortuguese } from './translation.js';
 import { imageToJpeg } from './pdf.js';
-import { cachedIndex } from './index-cache.js';
+import { cachedIndex, indexCacheKey } from './index-cache.js';
 const el = (tag, text, className) => {
   const e = document.createElement(tag);
   if (text) e.textContent = text;
@@ -26,7 +30,7 @@ export function formattedText(target, text) {
     target.append(p);
   }
 }
-export function createGuidePanel({ repository, openManual, onNotice, scope }) {
+export function createGuidePanel({ repository, openManual, onNotice, scope, getPreparation = () => null }) {
   const dialog = $('guide-dialog'),
     view = $('guide-content'),
     status = $('guide-status');
@@ -34,20 +38,28 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
     guide,
     published,
     index,
+    indexes = [],
+    knowledge = null,
+    indexNotice = '',
+    selectedDocumentId,
     editor = false,
     busy = false,
     dirty = false,
     sequence = 0,
     controller,
+    translator,
+    indexDirty = false,
     returnFocus,
     sessionUid = repository.session.user?.uid;
   const urls = new Map(),
     receipts = [];
+  let indexLoadSequence = 0;
   const searchWorker = new Worker(new URL('./rule-search-worker.js', import.meta.url), { type: 'module' });
   let searchSequence = 0,
     workerIndex,
     workerGuide,
     workerHash,
+    workerRevision,
     searchTimer;
   searchWorker.onmessage = ({ data }) => {
     if (data.id !== searchSequence || !dialog.open || editor || $('guide-search').hidden) return;
@@ -61,7 +73,29 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
       event.returnValue = '';
     }
   });
-  const cacheKey = () => `${scope}:${repository.session.user?.uid || 'visitor'}:${game.id}:${game.manual.sha256}`;
+  const activeDocument = () => findDocument(game, selectedDocumentId || primaryDocumentId(game));
+  const activeGame = () => documentGame(game, activeDocument());
+  const cacheKey = () => indexCacheKey(scope, repository.session.user?.uid, activeGame());
+  async function loadIndexes() {
+    const token = sequence,
+      load = ++indexLoadSequence;
+    const entries = await Promise.all(
+      gameDocuments(game).map(async (document) => {
+        try {
+          return { document, index: await repository.getTechnicalIndex(game, document) };
+        } catch (error) {
+          return { document, index: null, error };
+        }
+      }),
+    );
+    if (token !== sequence || load !== indexLoadSequence) return;
+    indexes = entries.filter((entry) => indexMatches(entry.index, documentGame(game, entry.document)));
+    const failed = entries.filter((entry) => entry.error);
+    indexNotice = failed.length ? `Não foi possível pesquisar ${failed.length === 1 ? 'um documento' : 'alguns documentos'}. ${fileErrorMessage(failed[0].error)}` : '';
+    const ready = indexes.find((entry) => entry.document.id === selectedDocumentId);
+    if (ready && !indexDirty) index = ready.index;
+    workerIndex = undefined;
+  }
   const progressKey = () => `acervo-guide-progress:${scope}:${repository.session.user?.uid || 'visitor'}:${game.id}`;
   const message = (text) => {
     status.textContent = text;
@@ -72,6 +106,7 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
     dialog.setAttribute('aria-busy', String(value));
     for (const b of dialog.querySelectorAll('[data-mutate], .guide-editor-section input, .guide-editor-section textarea, .guide-editor-section select')) b.disabled = value || b.dataset.limitDisabled === 'true';
     $('guide-cancel-analysis').hidden = !value || !controller;
+    if (!value && game) contextNotice();
   }
   function mutation(text, fn, className) {
     const b = button(text, () => act(fn), className);
@@ -104,6 +139,7 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
     searchWorker.postMessage({ type: 'context', index: null, guide: null, currentHash: '' });
     workerIndex = workerGuide = workerHash = undefined;
     controller?.abort();
+    translator?.destroy();
     controller = null;
     for (const r of receipts.splice(0)) repository.discardGuideAsset(r).catch(() => {});
     release();
@@ -111,6 +147,12 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
     document.body.classList.remove('modal-open');
     returnFocus?.focus();
     busy = dirty = false;
+    view.replaceChildren();
+    $('guide-search').value = '';
+    $('guide-title').textContent = '';
+    message('');
+    game = guide = published = index = knowledge = null;
+    indexes = [];
     return true;
   }
   $('guide-close').onclick = () => close();
@@ -142,23 +184,18 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
     guide = published;
     renderSearch();
   };
-  $('guide-edit').onclick = () =>
-    act(async () => {
-      if (!maySwitch()) return;
-      guide = (await repository.getGuide(game, true)) || emptyGuide(game);
-      editor = true;
-      dirty = false;
-      renderEditor();
-    });
   $('guide-analyze').onclick = () => act(analyze);
+  $('guide-ocr').onclick = () => act(() => analyze(true));
+  $('guide-translate').onclick = () => act(translate);
   function stale(g = guide) {
-    return g && g.sourceHash !== game.manual.sha256;
+    return g?.sections.some((s) => staleSection(game, s, g.sourceHash));
   }
-  function pageButton(page, hash) {
+  function pageButton(page, hash, documentId = selectedDocumentId || primaryDocumentId(game)) {
+    const targetGame = game;
     const b = button(`Ver no manual · p. ${page}`, () => {
-      if (close()) openManual(game, { page });
+      if (close()) openManual(targetGame, { page, documentId, sourceHash: hash });
     });
-    b.disabled = hash !== game.manual.sha256;
+    b.disabled = hash !== findDocument(game, documentId)?.manual.sha256;
     b.title = b.disabled ? 'O PDF foi substituído. Referência aguardando revisão.' : 'Abrir esta página do PDF oficial';
     return b;
   }
@@ -185,12 +222,13 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
   }
   function renderSection(s, parent, hash) {
     const article = el('details', '', `guide-section guide-${s.type}`),
-      summary = el('summary', s.title);
+      summary = el('summary', isPortuguese(s.language || 'pt-BR') ? s.title : 'Seção aguardando tradução');
     article.id = `guide-section-${s.id}`;
     article.open = true;
     article.append(summary);
     const content = el('div', '', 'guide-section-body');
-    if (s.type === 'lista') {
+    if (s.translationPending || !isPortuguese(s.language || 'pt-BR')) content.append(el('p', 'Tradução para português pendente. Consulte o texto original ou o PDF.'));
+    else if (s.type === 'lista') {
       const list = el('ul');
       for (const line of s.text.split('\n').filter(Boolean)) {
         const li = el('li');
@@ -199,8 +237,31 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
       }
       content.append(list);
     } else formattedText(content, s.text);
+    if (s.originalText && !isPortuguese(s.sourceLanguage || 'pt-BR')) {
+      const original = el('details');
+      original.append(el('summary', 'Texto original'), el('p', s.originalText));
+      content.append(original);
+    }
     if (s.imageId) image(s.imageId, content, s.caption);
-    if (s.page) content.append(pageButton(s.page, hash));
+    if (s.page) content.append(pageButton(s.page, s.sourceHash || hash, s.documentId || 'main'));
+    if (s.source) {
+      const origin = el('details');
+      origin.append(el('summary', 'Origem'), el('p', s.source));
+      if (s.sourceLicense) origin.append(el('p', `${s.sourceLicense} · texto adaptado e revisado`));
+      for (const [label, url] of [
+        ['Fonte', s.sourceUrl],
+        ['Autores', s.sourceAuthors],
+        ['Licença', s.sourceLicenseUrl],
+      ])
+        if (url) {
+          const link = el('a', label);
+          link.href = url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          origin.append(link, document.createTextNode(' '));
+        }
+      content.append(origin);
+    }
     article.append(content);
     summary.addEventListener('click', () => {
       if (dialog.open)
@@ -213,7 +274,28 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
   function contextNotice() {
     $('guide-stale').hidden = !stale(published) && !(editor && stale());
     $('guide-stale').textContent = 'O PDF foi substituído. O guia foi preservado, mas as referências de páginas precisam ser revisadas. Os links antigos estão desativados.';
-    $('guide-edit').hidden = !repository.session.canEdit;
+    $('guide-analyze').hidden = !repository.canPrepare(game);
+    $('guide-ocr').hidden = !repository.canPrepare(game);
+    const automatic = ['waiting', 'analyzing', 'ocr', 'translating'].includes(getPreparation(game, selectedDocumentId)?.state);
+    const coverage = index && ocrCoverage(index);
+    $('guide-ocr').hidden = !repository.canPrepare(game) || !index || index.analysisComplete === false || (!coverage.pending && !coverage.failed);
+    if (index) $('guide-ocr').textContent = coverage.pending ? 'Ler páginas escaneadas' : 'Tentar páginas não legíveis';
+    $('guide-analyze').textContent = !index ? 'Analisar PDF completo' : index.analysisComplete === false ? 'Retomar análise do PDF' : 'PDF analisado';
+    $('guide-analyze').dataset.limitDisabled = String(automatic || (!!index && index.analysisComplete !== false));
+    $('guide-ocr').dataset.limitDisabled = String(automatic);
+    $('guide-ocr').disabled = busy || automatic;
+    $('guide-analyze').disabled = busy || $('guide-analyze').dataset.limitDisabled === 'true';
+    $('guide-analyze').title = automatic ? 'Este documento está sendo preparado.' : index && index.analysisComplete !== false ? 'A análise salva já está sendo utilizada.' : '';
+    const foreign = index && !isPortuguese(index.language || game.language);
+    $('guide-translate').hidden = !repository.canPrepare(game) || !foreign || !index.pages.some((p) => p.text.trim() && !translatedValue(p.translation, p.text));
+    $('guide-translate').dataset.limitDisabled = String(automatic || !globalThis.Translator);
+    $('guide-translate').disabled = busy || automatic || !globalThis.Translator;
+    $('guide-translation-note').hidden = !foreign;
+    $('guide-translation-note').textContent = !globalThis.Translator
+      ? 'Tradução local indisponível neste navegador. Você pode escrever a versão em português no rascunho.'
+      : 'A tradução ocorre neste dispositivo e pode baixar um pacote de idioma. Confira as regras no manual.';
+    // Preparação e recuperação ficam exclusivamente em Gerenciar jogo → Documentos.
+    for (const id of ['guide-analyze', 'guide-ocr', 'guide-translate', 'guide-translation-note', 'guide-cancel-analysis']) $(id).hidden = true;
   }
   function renderReader() {
     ++searchSequence;
@@ -221,7 +303,7 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
     view.replaceChildren();
     contextNotice();
     if (!guide?.sections?.length) {
-      view.append(el('p', 'Este jogo ainda não tem um guia publicado. O manual completo e a consulta rápida continuam disponíveis.'));
+      view.append(el('p', 'Este jogo ainda não tem um guia publicado.'));
       return;
     }
     const nav = el('nav', '', 'guide-index');
@@ -252,38 +334,62 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
     view.replaceChildren();
     contextNotice();
     const id = ++searchSequence;
-    if (!index) view.append(el('p', 'Para pesquisar todo o PDF, clique em “Analisar PDF completo”. O processamento ocorre neste dispositivo e pode ser cancelado.'));
+    if (!indexes.length && !index && !knowledge?.sections.length) view.append(el('p', 'Ainda não há conteúdo preparado para pesquisa. O PDF original continua disponível.'));
     if (!$('guide-search').value.trim()) {
-      if (index) {
-        view.append(el('p', `${index.pageCount} páginas analisadas. Pesquise uma palavra ou expressão, ou consulte os assuntos abaixo.`));
-        if (index.scanned) view.append(el('p', 'Pouco texto extraível: este PDF pode ser escaneado. Não há OCR nesta versão.', 'guide-warning'));
-        for (const h of index.headings.slice(0, 160)) {
-          const row = el('div', '', 'guide-topic');
-          row.append(el('strong', h.title), el('small', h.category || h.source), pageButton(h.page, index.sourceHash));
-          view.append(row);
-        }
+      if (index || indexes.length) {
+        view.append(el('p', 'Pesquise uma palavra ou expressão, ou escolha um assunto.'));
+        for (const entry of indexes.length ? indexes : [{ index, document: activeDocument() }])
+          for (const h of entry.index.headings.slice(0, 160)) {
+            const row = el('div', '', 'guide-topic');
+            row.append(el('small', entry.document.name));
+            row.append(el('strong', translatedValue(h.translation, h.title) || (isPortuguese(entry.index.language || 'pt-BR') ? h.title : h.category || `Página ${h.page}`)), pageButton(h.page, entry.index.sourceHash, entry.document.id));
+            view.append(row);
+          }
       }
       return;
     }
-    if (workerIndex !== index || workerGuide !== published || workerHash !== game.manual.sha256) {
-      searchWorker.postMessage({ type: 'context', index, guide: published, currentHash: game.manual.sha256 });
+    if (workerIndex !== index || workerRevision !== index?.revision || workerGuide !== published || workerHash !== game.manual.sha256) {
+      searchWorker.postMessage({ type: 'context', index, indexes, documents: gameDocuments(game), guide: published, knowledge, currentHash: game.manual.sha256 });
       workerIndex = index;
       workerGuide = published;
       workerHash = game.manual.sha256;
+      workerRevision = index?.revision;
     }
     view.append(el('p', 'Pesquisando regras…', 'muted-text'));
     searchWorker.postMessage({ type: 'query', id, query: $('guide-search').value });
   }
   function renderResults(results) {
-    view.replaceChildren(el('p', `${results.length} resultados${results.length === 60 ? ' mais relevantes' : ''}.`));
+    view.replaceChildren(el('p', results.length ? `${results.length} resultados${results.length === 60 ? ' mais relevantes' : ''}.` : 'Não encontramos uma informação sustentada para esta pesquisa.'));
     for (const r of results) {
       const card = el('article', '', 'rule-result');
       card.append(el('h3', r.title), el('small', r.source));
       // Escolhe um trecho próximo da busca sem executar HTML do PDF.
       const at = r.text.toLocaleLowerCase().indexOf($('guide-search').value.toLocaleLowerCase()),
         begin = Math.max(0, at - 100);
-      card.append(el('p', `${begin ? '…' : ''}${r.text.slice(begin, begin + 650)}${r.text.length > begin + 650 ? '…' : ''}`));
-      if (r.page) card.append(pageButton(r.page, game.manual.sha256));
+      card.append(el('p', r.needsTranslation ? 'Tradução pendente. Consulte o texto original ou a página do manual.' : `${begin ? '…' : ''}${r.text.slice(begin, begin + 650)}${r.text.length > begin + 650 ? '…' : ''}`));
+      if (r.translated) card.append(el('small', 'Tradução automática · confira no manual'));
+      if (r.needsTranslation || r.translated) {
+        const original = el('details');
+        original.append(el('summary', 'Texto original'), el('p', r.originalText));
+        card.append(original);
+      }
+      if (r.documentName) card.append(el('small', r.documentName));
+      if (r.editionUnconfirmed) card.append(el('small', 'Informação geral da obra · edição não confirmada'));
+      if (r.sourceUrl) {
+        const link = el('a', `Fonte · ${r.sourceLicense} ↗`);
+        link.href = r.sourceUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        card.append(link);
+        if (r.sourceAuthors) {
+          const authors = el('a', 'Autores e histórico ↗');
+          authors.href = r.sourceAuthors;
+          authors.target = '_blank';
+          authors.rel = 'noopener noreferrer';
+          card.append(authors);
+        }
+      }
+      if (r.page) card.append(pageButton(r.page, r.sourceHash || game.manual.sha256, r.documentId));
       if (r.sectionId)
         card.append(
           button('Abrir seção do guia', () => {
@@ -304,10 +410,16 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
     return wrapper;
   }
   function readEditor() {
-    if (!editor) return;
+    if (!editor || !view.querySelector('.guide-editor-actions')) return;
     guide.sections = [...view.querySelectorAll('.guide-editor-section')].map((row) => {
       const s = { ...guide.sections.find((s) => s.id === row.dataset.id) };
       for (const name of ['title', 'text', 'type', 'page', 'caption']) s[name] = row.querySelector(`[name=${name}]`).value;
+      const previous = guide.sections.find((s) => s.id === row.dataset.id);
+      if (s.text.trim() && s.text !== previous.text) {
+        s.translationPending = false;
+        s.language = 'pt-BR';
+        s.translationMethod = 'manual';
+      }
       s.reviewed = row.querySelector('[name=reviewed]').checked;
       return s;
     });
@@ -321,7 +433,7 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
     actions.append(
       mutation('Nova seção', () => {
         readEditor();
-        guide.sections.push({ id: crypto.randomUUID(), title: 'Nova seção', text: '', type: 'texto', reviewed: false, page: null, imageId: '', caption: '' });
+        guide.sections.push({ id: crypto.randomUUID(), documentId: selectedDocumentId, sourceHash: activeDocument().manual.sha256, title: 'Nova seção', text: '', type: 'texto', reviewed: false, page: null, imageId: '', caption: '' });
         dirty = true;
         renderEditor();
       }),
@@ -332,31 +444,146 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
         view.replaceChildren(button('Voltar ao editor', renderEditor));
         for (const s of clean.sections) renderSection(s, view, clean.sourceHash);
       }),
-      mutation('Publicar guia revisado', publish, 'button primary small'),
+      mutation('Publicar guia', publish, 'button primary small'),
     );
     if (stale())
       actions.append(
         mutation('Revisar referências para o PDF atual', () => {
           readEditor();
           guide.sourceHash = game.manual.sha256;
-          guide.sections.forEach((s) => (s.reviewed = false));
+          guide.sections.forEach((s) => {
+            if (staleSection(game, s, guide.sourceHash)) {
+              const doc = findDocument(game, s.documentId || 'main');
+              if (doc) {
+                s.sourceHash = doc.manual.sha256;
+                s.reviewed = false;
+              }
+            }
+          });
           dirty = true;
           renderEditor();
           message('Confira cada página no PDF atual e marque novamente as seções revisadas.');
         }),
       );
+    const docSelect = el('select');
+    docSelect.setAttribute('aria-label', 'Documento das sugestões');
+    for (const doc of gameDocuments(game)) {
+      const opt = el('option', doc.name);
+      opt.value = doc.id;
+      opt.selected = doc.id === selectedDocumentId;
+      docSelect.append(opt);
+    }
+    docSelect.onchange = async () => {
+      readEditor();
+      selectedDocumentId = docSelect.value;
+      index = indexes.find((entry) => entry.document.id === selectedDocumentId)?.index || (await cachedIndex(cacheKey()));
+      indexDirty = false;
+      renderEditor();
+    };
+    view.append(docSelect);
     view.append(actions, el('p', 'Sugestões são trechos extraídos, não resumos. Edite para ensinar o jogo e confirme cada seção. Formatação: **negrito**, *itálico*. Para listas, use uma linha por item.', 'muted-text'));
-    if (index?.headings?.length)
+    if (knowledge?.sections.some((s) => s.review !== 'rejected'))
+      view.append(
+        mutation('Adicionar sugestões do conhecimento', () => {
+          readEditor();
+          let count = 0;
+          for (const section of knowledge.sections.filter((s) => s.review !== 'rejected')) {
+            const source = knowledge.sources.find((s) => s.id === section.sourceId);
+            if (!source || guide.sections.some((s) => s.originalText === section.text && s.sourceUrl === source.url) || guide.sections.length >= 100) continue;
+            guide.sections.push({
+              id: crypto.randomUUID(),
+              title: section.title,
+              text: section.text,
+              originalText: section.text,
+              type: 'texto',
+              page: null,
+              documentId: selectedDocumentId,
+              sourceHash: '',
+              reviewed: false,
+              language: 'pt-BR',
+              source: 'Síntese Gemini · revisar',
+              sourceUrl: source.url,
+              sourceLicense: source.license,
+              sourceAuthors: source.authorsUrl || '',
+              sourceLicenseUrl: source.licenseUrl || '',
+            });
+            count++;
+          }
+          if (!count) throw new Error('As sugestões disponíveis já estão no rascunho.');
+          dirty = true;
+          renderEditor();
+          message('Sugestões adicionadas. Revise antes de publicar.');
+        }),
+      );
+    if (game.description && game.sources?.description?.confirmedAt)
+      view.append(
+        mutation('Adicionar visão geral revisada', () => {
+          readEditor();
+          if (guide.sections.some((section) => section.title === 'Visão geral')) throw new Error('O guia já tem uma visão geral. Edite a seção existente.');
+          guide.sections.push({
+            id: crypto.randomUUID(),
+            title: 'Visão geral',
+            text: game.description,
+            type: 'texto',
+            reviewed: false,
+            page: null,
+            source: `Informação de catálogo · ${game.sources.description.source}`,
+            sourceUrl: game.sources.description.url || '',
+            sourceLicense: game.sources.description.license || '',
+            sourceAuthors: game.sources.description.authorsUrl || '',
+            sourceLicenseUrl: game.sources.description.licenseUrl || '',
+            imageId: '',
+            caption: '',
+          });
+          dirty = true;
+          renderEditor();
+        }),
+      );
+    if (indexes.length > 1)
+      view.append(
+        mutation('Adicionar sugestões de todos os documentos', () => {
+          readEditor();
+          const existing = new Set(guide.sections.map((s) => `${s.documentId || 'main'}:${s.sourceHash || guide.sourceHash}:${s.page}:${s.originalTitle || s.title}`));
+          for (const entry of indexes)
+            for (const suggestion of suggestedSections(entry.index)) {
+              const id = `${suggestion.documentId}:${suggestion.sourceHash}:${suggestion.page}:${suggestion.originalTitle || suggestion.title}`;
+              if (existing.has(id) || guide.sections.length >= 100) continue;
+              try {
+                cleanGuide({ ...guide, sections: [...guide.sections, suggestion] });
+              } catch {
+                break;
+              }
+              guide.sections.push(suggestion);
+              existing.add(id);
+            }
+          dirty = true;
+          renderEditor();
+          message('Trechos adicionados. Revise as explicações e as referências antes de publicar.');
+        }),
+      );
+    if (index?.pages.some((p) => p.text.trim().length >= 40))
       view.append(
         mutation('Adicionar sugestões do PDF ao rascunho', () => {
           readEditor();
-          const existing = new Set(guide.sections.map((s) => `${s.page}:${s.title}`));
-          const additions = suggestedSections(index).filter((s) => !existing.has(`${s.page}:${s.title}`));
-          if (guide.sections.length + additions.length > 100) throw new Error('Há mais de 100 seções. Organize ou remova as sugestões antes de adicionar outras.');
-          guide.sections.push(...additions);
+          if (stale()) throw new Error('Revise as referências do PDF atual antes de acrescentar sugestões.');
+          const existing = new Set(guide.sections.map((s) => `${s.documentId || 'main'}:${s.sourceHash || guide.sourceHash}:${s.page}:${s.originalTitle || s.title}`));
+          const additions = suggestedSections(index).filter((s) => !existing.has(`${s.documentId || 'main'}:${s.sourceHash || guide.sourceHash}:${s.page}:${s.originalTitle || s.title}`));
+          if (!additions.length) throw new Error('Os trechos disponíveis já estão no rascunho. Suas edições foram preservadas.');
+          let added = 0;
+          for (const suggestion of additions) {
+            if (guide.sections.length >= 100) break;
+            try {
+              cleanGuide({ ...guide, sections: [...guide.sections, suggestion] });
+            } catch {
+              break;
+            }
+            guide.sections.push(suggestion);
+            added++;
+          }
+          if (!added) throw new Error('O rascunho está cheio. Organize as seções antes de acrescentar outras; o índice completo continua na Consulta rápida.');
           dirty = true;
           renderEditor();
-          message('Sugestões adicionadas ao final, sem alterar as explicações existentes. Revise antes de publicar.');
+          message(`${added} sugestões adicionadas. Revise antes de publicar.${added < additions.length ? ' Os demais trechos continuam na Consulta rápida.' : ''}`);
         }),
       );
     for (const [i, s] of guide.sections.entries()) {
@@ -364,6 +591,12 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
       row.dataset.id = s.id;
       row.append(el('legend', `Seção ${i + 1}`));
       row.append(inputField('Título', 'title', s.title), inputField('Texto / resposta', 'text', s.text, 'textarea'));
+      if (s.translationPending) row.append(el('p', 'Escreva a versão em português ou traduza o índice antes de incluir uma nova sugestão.', 'guide-warning'));
+      if (s.originalText) {
+        const original = el('details');
+        original.append(el('summary', 'Trecho original e referência'), el('p', s.originalText));
+        row.append(original);
+      }
       row.querySelector('textarea').rows = 6;
       row.querySelector('[name=title]').maxLength = 160;
       row.querySelector('[name=text]').maxLength = 20000;
@@ -379,7 +612,7 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
       const page = inputField('Página física do PDF (opcional)', 'page', s.page);
       page.querySelector('input').type = 'number';
       page.querySelector('input').min = 1;
-      page.querySelector('input').max = game.manual.pages;
+      page.querySelector('input').max = findDocument(game, s.documentId || 'main')?.manual.pages || game.manual.pages;
       row.append(page);
       const imageInput = inputField('Ilustração (JPEG, PNG ou WebP)', 'image', '', 'input'),
         file = imageInput.querySelector('input');
@@ -459,7 +692,25 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
           renderEditor();
         }),
       );
-      if (s.page) controls.append(pageButton(Number(s.page), guide.sourceHash));
+      if (s.page) controls.append(pageButton(Number(s.page), s.sourceHash || guide.sourceHash, s.documentId || 'main'));
+      const docReference = inputField('Documento da referência', 'documentId', '', 'select');
+      const selector = docReference.querySelector('select');
+      for (const doc of gameDocuments(game)) {
+        const opt = el('option', doc.name);
+        opt.value = doc.id;
+        opt.selected = doc.id === (s.documentId || 'main');
+        selector.append(opt);
+      }
+      selector.onchange = () => {
+        readEditor();
+        const section = guide.sections.find((item) => item.id === s.id);
+        section.documentId = selector.value;
+        section.sourceHash = findDocument(game, selector.value).manual.sha256;
+        section.reviewed = false;
+        dirty = true;
+        renderEditor();
+      };
+      row.append(docReference);
       row.append(controls);
       row.addEventListener('input', (event) => {
         dirty = true;
@@ -470,6 +721,15 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
   }
   async function save() {
     readEditor();
+    cleanGuide(guide);
+    const tokenBeforeUpload = sequence;
+    setBusy(true);
+    try {
+      await persistIndex();
+    } finally {
+      if (tokenBeforeUpload === sequence) setBusy(false);
+    }
+    if (tokenBeforeUpload !== sequence) return false;
     const clean = cleanGuide(guide),
       token = sequence,
       activeGame = game,
@@ -490,7 +750,7 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
       guide = saved;
       dirty = false;
       renderEditor();
-      message('Rascunho salvo. Visitantes continuam vendo a versão publicada anterior.');
+      message('Rascunho salvo. A versão publicada anterior continua disponível.');
       return true;
     } finally {
       if (token === sequence) setBusy(false);
@@ -508,59 +768,145 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
       const next = await repository.publishGuide(game, guide, published?.revision || 0);
       if (token !== sequence) return;
       published = next;
-      message('Guia publicado. As alterações agora estão disponíveis aos visitantes.');
+      message('Guia publicado. As alterações agora estão disponíveis no Acervo.');
       onNotice('Guia publicado.');
     } finally {
       if (token === sequence) setBusy(false);
     }
   }
-  async function analyze() {
-    if (editor) readEditor();
-    const wasEditor = editor,
-      token = sequence,
+  async function persistIndex() {
+    if (!indexDirty || !index || !editor) return;
+    const token = sequence,
       activeGame = game;
-    controller = new AbortController();
-    setBusy(true);
-    message('Baixando o PDF completo para análise…');
-    try {
-      const signal = controller.signal,
-        blob = await repository.getManual(activeGame, { signal });
-      if (token !== sequence) return;
-      controller.signal.throwIfAborted();
-      const result = await analyzePdf(blob, activeGame, {
-        signal: controller.signal,
-        onProgress: (p) => {
-          if (token !== sequence) return;
-          message(p.message);
+    if (repository.saveTechnicalIndex) {
+      await repository.saveTechnicalIndex(game, activeDocument(), index, { state: ocrCoverage(index).failed || ocrCoverage(index).pending ? 'partial' : 'ready' });
+      indexDirty = false;
+      index.unsavedChanges = false;
+      await cachedIndex(cacheKey(), index);
+      await loadIndexes();
+      return;
+    }
+    const packed = await packIndex(index);
+    const receipt = await repository.uploadGuideAsset(activeGame, packed, `${activeGame.title} — índice de regras.json.gz`, (p) => {
+      if (token === sequence) message(`Salvando consulta rápida: ${p}%`);
+    });
+    if (token !== sequence) {
+      await repository.discardGuideAsset(receipt).catch(() => {});
+      return;
+    }
+    receipts.push(receipt);
+    if (guide.indexFileId && guide.indexFileId !== receipt.driveFileId) delete guide.assets[guide.indexFileId];
+    guide.assets[receipt.driveFileId] = { mimeType: 'application/gzip' };
+    guide.indexFileId = receipt.driveFileId;
+    index.savedAssetId = receipt.driveFileId;
+    index.unsavedChanges = false;
+    indexDirty = false;
+    await cachedIndex(cacheKey(), index);
+  }
+  function processingOptions(signal, token, key) {
+    return {
+      signal,
+      checkpoint: async (partial) => {
+        if (token !== sequence) return;
+        index = partial;
+        indexDirty = true;
+        index.unsavedChanges = true;
+        await cachedIndex(key, partial);
+        workerRevision = undefined;
+      },
+      onProgress: (p) => {
+        if (token !== sequence) return;
+        message(typeof p === 'string' ? p : p.message);
+        if (typeof p !== 'string') {
           $('guide-progress').hidden = false;
           $('guide-progress').value = p.current;
           $('guide-progress').max = p.total || 1;
-        },
-      });
-      if (token !== sequence || activeGame.manual.sha256 !== game.manual.sha256) return;
+        }
+      },
+    };
+  }
+  async function translate() {
+    if (!index || busy) return;
+    if (editor) readEditor();
+    const token = sequence;
+    controller = new AbortController();
+    const options = processingOptions(controller.signal, token, cacheKey());
+    setBusy(true);
+    try {
+      await translator.prepare(index.language || game.language, { allowDownload: true, signal: controller.signal, onProgress: message });
+      await translateIndex(index, translator, options);
+      if (token !== sequence) return;
+      if (repository.canPrepare(game)) await repository.saveTechnicalIndex(game, activeDocument(), index, { state: ocrCoverage(index).failed ? 'partial' : 'ready', signal: controller.signal });
+      await loadIndexes();
+      if (editor) {
+        // Só completa sugestões intocadas e ainda pendentes; preserva texto editado.
+        const suggestions = suggestedSections(index);
+        for (const s of guide.sections) {
+          const next = suggestions.find((n) => n.documentId === (s.documentId || 'main') && n.sourceHash === (s.sourceHash || guide.sourceHash) && n.page === Number(s.page) && n.originalTitle === s.originalTitle);
+          if (s.translationPending && !s.text.trim() && next && !next.translationPending) Object.assign(s, { text: next.text, translationPending: false, translationMethod: next.translationMethod, reviewed: false });
+        }
+        dirty ||= guide.sections.length > 0;
+        renderEditor();
+      } else renderSearch();
+      message('Tradução concluída. Confira o português brasileiro e as regras antes de publicar.');
+    } catch (error) {
+      if (token === sequence) message(controller?.signal.aborted ? 'Tradução pausada. As páginas concluídas foram guardadas.' : error.message);
+    } finally {
+      if (token === sequence) {
+        controller = null;
+        setBusy(false);
+        $('guide-progress').hidden = true;
+      }
+    }
+  }
+  async function analyze(ocr = false) {
+    if (!index) await loadIndexes();
+    if (['waiting', 'analyzing', 'ocr', 'translating'].includes(getPreparation(game, selectedDocumentId)?.state)) {
+      message('Este documento está sendo preparado. Você pode continuar navegando.');
+      return;
+    }
+    if (editor) readEditor();
+    const wasEditor = editor,
+      token = sequence,
+      sourceGame = activeGame();
+    controller = new AbortController();
+    setBusy(true);
+    if (!ocr && indexMatches(index, sourceGame) && index.analysisComplete !== false) {
+      setBusy(false);
+      controller = null;
+      message('A análise salva já está disponível.');
+      return;
+    }
+    message(ocr ? 'Preparando leitura das páginas escaneadas…' : 'Abrindo o manual…');
+    try {
+      const signal = controller.signal,
+        blob = await repository.getManual(sourceGame, { signal });
+      if (token !== sequence) return;
+      controller.signal.throwIfAborted();
+      const options = processingOptions(signal, token, cacheKey());
+      const result = ocr ? await extendOcrIndex(blob, sourceGame, index, { ...options, retry: !pendingOcrPages(index).length }) : await analyzePdf(blob, sourceGame, { ...options, previous: index });
+      if (token !== sequence || sourceGame.manual.sha256 !== activeGame().manual.sha256) return;
       index = result;
       await cachedIndex(cacheKey(), index);
       if (token !== sequence) return;
-      if (wasEditor) {
-        controller = null;
-        setBusy(true);
-        const packed = await packIndex(index),
-          receipt = await repository.uploadGuideAsset(activeGame, packed, `${activeGame.title} — índice de regras.json.gz`, (p) => {
-            if (token === sequence) message(`Salvando consulta rápida: ${p}%`);
-          });
-        if (token !== sequence) {
-          await repository.discardGuideAsset(receipt).catch(() => {});
-          return;
-        }
-        receipts.push(receipt);
-        guide.assets[receipt.driveFileId] = { mimeType: 'application/gzip' };
-        guide.indexFileId = receipt.driveFileId;
-        dirty = true;
-        renderEditor();
-      } else renderSearch();
-      message(index.scanned ? 'Análise concluída com pouco texto extraível. Para PDFs escaneados, preencha o guia manualmente; não há OCR.' : 'PDF completo analisado. Os títulos e trechos são sugestões para revisão.');
+      if (repository.canPrepare(game)) await repository.saveTechnicalIndex(game, activeDocument(), index, { state: ocrCoverage(index).failed || ocrCoverage(index).pending ? 'partial' : 'ready', signal });
+      await loadIndexes();
+      if (wasEditor) renderEditor();
+      else renderSearch();
+      const coverage = ocrCoverage(index);
+      message(
+        ocr
+          ? `Páginas lidas: ${coverage.readable} de ${coverage.total} com texto.${coverage.failed ? ` ${coverage.failed} não legíveis; você pode tentar essas páginas novamente.` : ''} Confira os trechos antes de publicar.`
+          : coverage.pending
+            ? 'Há páginas escaneadas. Inicie a leitura de imagens para analisar todas.'
+            : 'PDF analisado. Os trechos estão prontos para revisão.',
+      );
     } catch (error) {
-      if (token === sequence) message(controller?.signal.aborted ? 'Análise cancelada. O guia e a publicação foram preservados.' : error.message);
+      if (token === sequence) {
+        if (wasEditor) renderEditor();
+        else renderSearch();
+        message(controller?.signal.aborted ? 'Análise pausada. As páginas concluídas foram guardadas; você pode continuar depois.' : error.message);
+      }
     } finally {
       if (token === sequence) {
         controller = null;
@@ -571,8 +917,16 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
   }
   return {
     isBusy: () => busy || dirty,
+    async refreshIndexes() {
+      if (!dialog.open || busy || dirty || !repository.session.canRead) return;
+      await loadIndexes();
+      if (!dialog.open || busy || dirty || !repository.session.canRead) return;
+      if (editor) renderEditor();
+      else if (!$('guide-search').hidden) renderSearch();
+      contextNotice();
+    },
     updateSession(session) {
-      if (sessionUid !== session.user?.uid || (!session.canEdit && editor)) close(true);
+      if (!session.canRead || sessionUid !== session.user?.uid || (!session.canEdit && editor)) close(true);
       sessionUid = session.user?.uid;
       if (game) contextNotice();
     },
@@ -582,11 +936,16 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
         close(true);
         return;
       }
-      if (game.manual.sha256 === next.manual.sha256) return;
+      if (JSON.stringify(gameDocuments(game)) === JSON.stringify(gameDocuments(next))) return;
       controller?.abort();
       if (editor) readEditor();
       game = next;
+      if (!findDocument(game, selectedDocumentId)) selectedDocumentId = primaryDocumentId(game);
       index = null;
+      indexes = [];
+      void loadIndexes().then(() => {
+        if (dialog.open && !editor && !$('guide-search').hidden) renderSearch();
+      });
       if (dialog.open) {
         if (editor) renderEditor();
         else if ($('guide-search').hidden) renderReader();
@@ -597,39 +956,72 @@ export function createGuidePanel({ repository, openManual, onNotice, scope }) {
     async open(nextGame, mode = 'learn') {
       close(true);
       returnFocus = document.activeElement;
+      if (!repository.session.canRead) return;
       game = nextGame;
-      published = guide = index = null;
+      selectedDocumentId = primaryDocumentId(game);
+      indexes = [];
+      published = guide = index = knowledge = null;
+      indexDirty = false;
+      translator = createTextTranslator({ scope: cacheKey() });
       editor = false;
       dirty = false;
       const token = ++sequence;
       $('guide-title').textContent = game.title;
+      $('guide-mode').textContent = mode === 'edit' ? 'EDITAR GUIA' : mode === 'quick' ? 'BUSCAR REGRAS' : 'COMO JOGAR';
       $('guide-search').value = '';
       view.replaceChildren();
       message('Carregando conteúdo…');
       document.querySelectorAll('dialog[open]').forEach((d) => d.close());
       document.body.classList.add('modal-open');
       dialog.showModal();
+      let loadingNotice = '';
       try {
         const loaded = await repository.getGuide(game);
         if (token !== sequence) return;
         published = guide = loaded;
-        index = await cachedIndex(cacheKey());
-        if (!index && loaded?.indexFileId && !stale(loaded)) {
-          try {
-            index = await unpackIndex(await repository.getGuideAsset(game, loaded.indexFileId), game);
-            await cachedIndex(cacheKey(), index);
-          } catch {
-            message('O índice publicado está indisponível. Você pode analisar novamente o PDF neste dispositivo.');
-          }
+        if (mode === 'learn') {
+          renderReader();
+          message('');
+          return;
+        }
+        try {
+          knowledge = (await repository.getKnowledge?.(game))?.knowledge || null;
+        } catch {
+          loadingNotice = 'O conhecimento do jogo está indisponível. A pesquisa dos PDFs continua disponível.';
         }
         if (token !== sequence) return;
         if (mode === 'edit' && repository.session.canEdit) {
           guide = (await repository.getGuide(game, true)) || emptyGuide(game);
           editor = true;
+        }
+        if (token !== sequence) return;
+        index = await cachedIndex(cacheKey());
+        if (!indexMatches(index, activeGame())) index = null;
+        if (index) {
+          index.language ||= game.language;
+          indexDirty = index.unsavedChanges === true || (!index.savedAssetId && !index.sharedFileId);
+        }
+        const indexedGuide = editor && guide?.indexFileId ? guide : loaded;
+        if (indexedGuide?.indexFileId && !stale(indexedGuide) && (!index || (!index.unsavedChanges && index.savedAssetId && index.savedAssetId !== indexedGuide.indexFileId))) {
+          try {
+            index = await unpackIndex(await repository.getGuideAsset(game, indexedGuide.indexFileId), game);
+            index.language ||= game.language;
+            index.savedAssetId = indexedGuide.indexFileId;
+            index.unsavedChanges = false;
+            indexDirty = false;
+            await cachedIndex(cacheKey(), index);
+          } catch {
+            loadingNotice = 'O índice salvo está indisponível. Você pode analisar o PDF neste dispositivo.';
+          }
+        }
+        await loadIndexes();
+        if (token !== sequence) return;
+        if (editor) {
+          guide.sourceHash = game.manual.sha256;
           renderEditor();
         } else if (mode === 'quick') renderSearch();
         else renderReader();
-        message('');
+        message(loadingNotice || indexNotice);
       } catch (error) {
         if (token === sequence) message(error.message);
       }
