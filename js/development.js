@@ -18,6 +18,7 @@ export function assertIsolatedConfiguration(config, hostname) {
     if (config.emulators || config.development) throw new Error('O ambiente de desenvolvimento só funciona neste computador.');
     return;
   }
+  if (!config.development && !config.emulators && config.firebase?.projectId === 'manual-de-boardgame') return;
   const local = (value) => {
     try {
       const url = new URL(value);

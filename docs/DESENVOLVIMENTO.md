@@ -121,9 +121,15 @@ npm run build --prefix worker  # somente dry-run
 
 Para testar as regras com a suíte independente, encerre primeiro `npm run dev:stop` e execute `npm run test:rules`. Ela usa o projeto demo e o UID provisionado nos fixtures da suíte, sem alterar produção. Depois, `npm run dev` restaura a configuração do proprietário fictício do ambiente.
 
+## Acesso habitual à conta real no localhost
+
+O Live Server em `http://127.0.0.1:5500` usa a conta e o Firebase reais, sem parâmetros adicionais. `npm run serve` também serve essa configuração. Esse uso consome a cota normal conforme as ações realizadas; as regras e permissões continuam valendo.
+
+O ambiente iniciado por `npm run dev` permanece isolado: seu servidor entrega a configuração fictícia e aplica uma política de rede local. A seleção é feita pelo servidor de testes, sem mudar a URL habitual do usuário. Os comandos de teste continuam bloqueando requisições externas.
+
 ## Integrações reais futuras
 
-Este ambiente não possui modo automático de integração real. Deploy do frontend/Worker/regras, migração, uso de Drive/Firebase reais e configuração/uso da chave Gemini real continuam dependendo de autorização explícita. Nenhum comando de teste habilita esses acessos. A configuração de produção é mantida separada, sem executar suas operações.
+Este ambiente não possui modo automático de integração real. Deploy do frontend/Worker/regras, migração e configuração/uso da chave Gemini real continuam dependendo de autorização explícita. O acesso manual ao Drive/Firebase reais está disponível no servidor estático habitual descrito acima. Nenhum comando de teste habilita esses acessos.
 
 ## Resultado da validação local
 

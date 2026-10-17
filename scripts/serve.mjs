@@ -58,7 +58,13 @@ const server = createServer(async (request, response) => {
       response.end();
       return;
     }
-    const content = await readFile(file);
+    let content = await readFile(file);
+    if (process.env.ACERVO_DEVELOPMENT === '1' && rel === `config${sep}app-config.js`) {
+      const source = content.toString('utf8');
+      const selection = 'export const APP_CONFIG = HOSTED_CONFIG;';
+      if (!source.includes(selection)) throw new Error('Seleção do ambiente de testes não encontrada.');
+      content = Buffer.from(source.replace(selection, 'export const APP_CONFIG = DEV_CONFIG;'));
+    }
     response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' });
     response.end(request.method === 'HEAD' ? undefined : content);
   } catch {
@@ -70,4 +76,4 @@ server.on('error', (error) => {
   console.error(error.message);
   process.exitCode = 1;
 });
-server.listen(port, host, () => console.log(`Acervo: http://localhost:${port}${host === '0.0.0.0' ? ' (acesso na rede local habilitado; PWA exige HTTPS fora do localhost)' : ''}`));
+server.listen(port, host, () => console.log(`Acervo: http://localhost:${server.address().port}${host === '0.0.0.0' ? ' (acesso na rede local habilitado; PWA exige HTTPS fora do localhost)' : ''}`));

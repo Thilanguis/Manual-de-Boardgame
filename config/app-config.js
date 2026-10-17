@@ -20,4 +20,5 @@ const HOSTED_CONFIG = {
   allowPasswordLogin: true,
   maxPdfBytes: MAX_PDF_BYTES,
 };
-export const APP_CONFIG = typeof location !== 'undefined' && location.hostname !== 'thilanguis.github.io' ? DEV_CONFIG : HOSTED_CONFIG;
+// O servidor de testes substitui somente esta seleção pela configuração fictícia.
+export const APP_CONFIG = HOSTED_CONFIG;
