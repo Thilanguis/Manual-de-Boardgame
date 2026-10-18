@@ -1,7 +1,3 @@
-import { consolidateMetadata, storedCatalogCandidates, emptyValue, metadataKeys } from './metadata-consolidation.js';
-import { pdfMetadataCandidate } from './catalog-language.js';
-import { savedKnowledgeCandidate } from './research-enrichment.js';
-import { fieldLabels } from './research-client.js';
 import { knowledgeSummary, verifiedKnowledgeFields } from './knowledge-model.js';
 import { observeKnowledge } from './knowledge-observer.js';
 const el = (tag, text = '') => {
@@ -57,19 +53,6 @@ export function createKnowledgePanel({ root, repository, onNotice, openManual })
   function render() {
     root.replaceChildren();
     if (!game || !repository.session.canEdit || !repository.session.canRead) return;
-    const model = consolidateMetadata(game, [pdfMetadataCandidate(game), savedKnowledgeCandidate(record, game), ...storedCatalogCandidates(game)].filter(Boolean));
-    const sheet = el('dl');
-    sheet.className = 'game-summary consolidated-information';
-    for (const key of metadataKeys) {
-      const value = emptyValue(game[key]) ? model.fields[key] : game[key];
-      if (emptyValue(value)) continue;
-      const row = el('div');
-      row.append(el('dt', fieldLabels[key]), el('dd', Array.isArray(value) ? value.join(', ') : String(value)));
-      if (emptyValue(game[key])) row.append(el('small', 'Sugestão · confira em Editar informações'));
-      if (model.consistency[key] === 'conflict') row.append(el('small', 'Valores diferentes · confira na ficha'));
-      sheet.append(row);
-    }
-    root.append(sheet);
     const summary = knowledgeSummary(record, game);
     const label = el('p', record?.message || (summary.sections.length ? 'Conhecimento disponível.' : 'Aguardando a análise dos manuais.'));
     label.className = 'knowledge-status';

@@ -28,10 +28,17 @@ export function candidateFacts(candidate) {
 }
 
 export function resultSummary(candidates, sources, statuses) {
+  const members = candidates.flatMap((c) => c.members || [c]);
+  const external = members.filter((c) => !['pdf', 'gemini'].includes(c.source));
   const works = [];
-  for (const candidate of candidates) if (!works.some((work) => (work.source === candidate.source && work.id === candidate.id) || sameWork(work, candidate))) works.push(candidate);
+  for (const candidate of external) if (!works.some((work) => (work.source === candidate.source && work.id === candidate.id) || sameWork(work, candidate))) works.push(candidate);
   const loading = [...statuses.values()].some((result) => result.status === 'loading');
   const failed = [...statuses.values()].some((result) => result.status === 'error' || result.diagnostics?.complete === false);
   const count = works.length;
-  return `${count ? `${count} ${count === 1 ? 'jogo encontrado' : 'jogos encontrados'}.` : loading ? 'Pesquisando…' : sources.some((source) => source.enabled) ? 'Nenhum jogo encontrado nas fontes disponíveis.' : 'Pesquisa externa indisponível.'}${count && loading ? ' Buscando mais resultados…' : ''}${failed ? ' Algumas fontes não responderam.' : ''}`;
+  const useful = new Set(external.filter((c) => selectedFields(portugueseCandidate({ ...c, fields: c.fields || {} }), {}).some((f) => !['title', 'edition'].includes(f.key))).map((c) => c.source));
+  const possible = candidates.flatMap((c) => c.ambiguous || []).length;
+  const prefix = count
+    ? `${count} ${count === 1 ? 'jogo encontrado nas fontes' : 'jogos encontrados nas fontes'}.${useful.size ? ` ${useful.size} ${useful.size === 1 ? 'fonte com dados aproveitáveis' : 'fontes com dados aproveitáveis'}.` : ' Sem informações adicionais aproveitáveis.'}`
+    : `${members.some((c) => c.source === 'pdf') ? 'Identificado pelo PDF. ' : ''}${loading ? 'Pesquisando…' : possible ? 'Confira qual jogo corresponde ao manual.' : sources.some((s) => s.enabled) ? 'Nenhuma correspondência externa confirmada nas fontes disponíveis.' : 'Pesquisa externa indisponível.'}`;
+  return `${prefix}${count && loading ? ' Buscando mais resultados…' : ''}${failed ? ' Algumas fontes não responderam.' : ''}`;
 }

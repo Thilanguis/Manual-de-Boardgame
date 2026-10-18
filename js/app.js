@@ -25,6 +25,11 @@ import { createResearchPanel } from './research-panel.js';
 import { RESEARCH_VERSION } from './research-contract.js';
 import { cachedIndex, indexCacheKey } from './index-cache.js';
 import { addOcrPage } from './pdf-knowledge.js';
+import { createDraftProfile } from './draft-profile.js';
+import { createInformationFlow } from './information-flow.js';
+import { pdfIndexCandidate } from './pdf-profile.js';
+import { metadataKeys, emptyValue } from './metadata-consolidation.js';
+import { fieldLabels } from './research-client.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { gamesLoading: true, games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { resolving: true, canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
@@ -48,8 +53,25 @@ let repository,
   importSequence = 0,
   noticeTimer,
   metadataForm,
+  draftProfile,
+  informationFlow,
   consolidatedDraft = null;
-const gameSteps = createGameSteps({ form: $('game-form'), dialog: $('upload-dialog'), getSession: () => state.session, getDocuments: () => [...gameDocuments(draft), ...additionalFiles], isBusy: () => state.busy || state.importing });
+const gameSteps = createGameSteps({
+  form: $('game-form'),
+  dialog: $('upload-dialog'),
+  getSession: () => state.session,
+  getDocuments: () => [...gameDocuments(draft), ...additionalFiles],
+  isBusy: () => state.busy || state.importing || researchPanel.isBusy() || informationFlow?.isBusy(),
+  onEnter: (step) => {
+    if (step === 2) {
+      void informationFlow?.load();
+      void researchPanel.loadExisting();
+    } else if (step === 3) {
+      researchPanel.cancel();
+      informationFlow?.stop();
+    }
+  },
+});
 const localMode = APP_CONFIG.allowLocalDevelopment === true && ['localhost', '127.0.0.1'].includes(location.hostname) && new URLSearchParams(location.search).get('local') === '1';
 if (localMode) document.body.classList.add('access-approved');
 function icon(name) {
@@ -128,6 +150,11 @@ function saveProgress(id, progress) {
   const reading = readPreferences('reading');
   reading[id] = progress;
   writePreferences('reading', reading);
+  const dismissed = readPreferences('reading-dismissed');
+  if (dismissed[id]) {
+    delete dismissed[id];
+    writePreferences('reading-dismissed', dismissed);
+  }
   renderRecent();
 }
 function toggleFavorite(id) {
@@ -151,7 +178,11 @@ function closeDialog(id) {
     showNotice('Aguarde a operação terminar para fechar.');
     return;
   }
-  if (id === 'upload-dialog') researchPanel.cancel();
+  if (id === 'upload-dialog') {
+    researchPanel.cancel();
+    draftProfile?.cancel();
+    informationFlow?.stop();
+  }
   $(id).close();
 }
 document.querySelectorAll('[data-close]').forEach((button) => (button.onclick = () => closeDialog(button.dataset.close)));
@@ -379,14 +410,16 @@ async function renderHero() {
 function renderRecent() {
   if (!repository) return;
   const reading = readPreferences('reading');
+  const dismissed = readPreferences('reading-dismissed');
   const games = state.games
-    .filter((game) => reading[game.id] && readableGame(game))
+    .filter((game) => reading[game.id] && !dismissed[game.id] && readableGame(game))
     .sort((a, b) => reading[b.id].lastRead - reading[a.id].lastRead)
     .slice(0, 6);
   $('recent-section').hidden = !games.length;
   $('recent-row').replaceChildren();
   for (const game of games) {
     const progress = reading[game.id],
+      entry = node('div', 'recent-entry'),
       card = node('button', 'recent-card'),
       image = node('img');
     image.alt = '';
@@ -402,7 +435,17 @@ function renderRecent() {
       rememberGame(game);
       return reader.open(game);
     };
-    $('recent-row').append(card);
+    const remove = node('button', 'recent-remove', '×');
+    remove.type = 'button';
+    remove.title = 'Remover de Continue de onde parou';
+    remove.setAttribute('aria-label', `Remover ${displayTitle(game)} de Continue de onde parou`);
+    remove.onclick = () => {
+      writePreferences('reading-dismissed', { ...readPreferences('reading-dismissed'), [game.id]: true });
+      entry.remove();
+      $('recent-section').hidden = !$('recent-row').children.length;
+    };
+    entry.append(card, remove);
+    $('recent-row').append(entry);
     populateImage(image, game);
   }
 }
@@ -493,7 +536,7 @@ function showGame(game) {
   const catalogLinks = $('detail-catalog-sources');
   catalogLinks.replaceChildren();
   const attributions = new Map();
-  for (const item of Object.values(game.sources || {})) if (item.url && /^https:\/\//.test(item.url)) attributions.set(item.url, item.source);
+  for (const item of Object.values(game.sources || {})) if (item?.url && /^https:\/\//.test(item.url)) attributions.set(item.url, item.source);
   for (const match of game.sources?.catalog?.matches || [])
     attributions.set(match.url, match.source === 'ludopedia' ? 'Ludopedia' : match.source === 'bgg' ? 'Powered by BoardGameGeek' : match.source === 'wikipedia' ? 'Autores da Wikipédia' : 'Wikidata');
   for (const [url, label] of attributions) {
@@ -545,6 +588,7 @@ function formatBytes(size = 0) {
   return size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(size / 1024)} KB`;
 }
 function resetDraft() {
+  informationFlow?.stop();
   researchPanel.reset();
   metadataForm?.reset();
   $('research-applied').hidden = true;
@@ -629,6 +673,7 @@ function renderEvidence() {
   $('source-evidence').replaceChildren();
   const labels = { title: 'Nome', players: 'Jogadores', duration: 'Duração', description: 'Descrição', cover: 'Capa', recommendedAge: 'Idade', gameType: 'Tipo', edition: 'Edição', mechanics: 'Mecânicas', tags: 'Categorias', language: 'Idioma' };
   for (const [key, value] of Object.entries(draft.sources || {})) {
+    if (!value || typeof value !== 'object') continue;
     const paragraph = node('p');
     paragraph.append(node('strong', null, `${labels[key] || key}: ${value.source}${value.page ? ' · p. ' + value.page : ''}`), document.createElement('br'), document.createTextNode(value.excerpt || 'Sem trecho disponível.'));
     if (value.url && /^https:\/\//.test(value.url)) {
@@ -643,6 +688,8 @@ function renderEvidence() {
   if (!$('source-evidence').children.length) $('source-evidence').append(node('p', null, 'Não foi possível extrair informações. Preencha apenas os dados que você conhece.'));
 }
 async function importFile(file) {
+  informationFlow?.stop();
+  draftProfile?.cancel();
   let needsOcr = false;
   if (!file || state.busy || state.importing) return;
   if (!state.session.canAdd) {
@@ -671,7 +718,11 @@ async function importFile(file) {
     needsOcr = !textFound;
     draft = { ...record };
     const localized = portugueseCandidate({ fields: record, language: record.language, descriptionLanguage: record.language });
-    const originalFields = Object.fromEntries(['title', 'edition', 'description', 'minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'recommendedAge', 'tags', 'mechanics', 'gameType'].filter((key) => record[key] != null && record[key] !== '' && (!Array.isArray(record[key]) || record[key].length)).map((key) => [key, record[key]]));
+    const originalFields = Object.fromEntries(
+      ['title', 'edition', 'description', 'minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'recommendedAge', 'tags', 'mechanics', 'gameType']
+        .filter((key) => record[key] != null && record[key] !== '' && (!Array.isArray(record[key]) || record[key].length))
+        .map((key) => [key, record[key]]),
+    );
     for (const pending of localized.pendingTranslations) {
       originalFields[pending.key] = pending.value;
       draft[pending.key] = Array.isArray(pending.value) ? [] : '';
@@ -696,7 +747,6 @@ async function importFile(file) {
         $('title-warning').hidden = true;
         renderEvidence();
         researchPanel.invalidate();
-        void researchPanel.run();
       };
       $('title-suggestions').append(button);
     }
@@ -728,27 +778,58 @@ function renderRegistrationPdfs() {
     const row = node('div', 'registration-pdf-row');
     row.dataset.registrationDocument = item.id;
     row.append(node('small', null, `${item.file.name} · ${formatBytes(item.file.size)}${item.manual ? ` · ${item.manual.pages} páginas` : ' · Não preparado'}`));
-    const label = node('label', null, 'Nome do documento'), name = node('input');
-    name.type = 'text'; name.value = item.name; name.maxLength = 160;
+    const label = node('label', null, 'Nome do documento'),
+      name = node('input');
+    name.type = 'text';
+    name.value = item.name;
+    name.maxLength = 160;
     name.setAttribute('aria-label', `Nome de ${item.file.name}`);
-    name.oninput = () => { item.name = name.value; };
-    label.append(name); row.append(label);
+    name.oninput = () => {
+      item.name = name.value;
+    };
+    label.append(name);
+    row.append(label);
     const fields = node('div', 'form-row');
     for (const [key, title, options] of [
       ['documentType', 'Tipo', Object.entries(DOCUMENT_TYPES).filter(([value]) => value !== 'principal')],
-      ['language', 'Idioma', [['pt-BR', 'Português'], ['en', 'Inglês'], ['fr', 'Francês'], ['other', 'Outro / não identificado']]],
+      [
+        'language',
+        'Idioma',
+        [
+          ['pt-BR', 'Português'],
+          ['en', 'Inglês'],
+          ['fr', 'Francês'],
+          ['other', 'Outro / não identificado'],
+        ],
+      ],
     ]) {
-      const label = node('label', null, title), select = node('select');
+      const label = node('label', null, title),
+        select = node('select');
       select.setAttribute('aria-label', `${title} de ${item.file.name}`);
-      for (const [value, text] of options) { const option = node('option', null, text); option.value = value; select.append(option); }
+      for (const [value, text] of options) {
+        const option = node('option', null, text);
+        option.value = value;
+        select.append(option);
+      }
       select.value = item[key] === 'pt' ? 'pt-BR' : item[key];
-      select.onchange = () => { item[key] = select.value; };
-      label.append(select); fields.append(label);
+      select.onchange = () => {
+        item[key] = select.value;
+      };
+      label.append(select);
+      fields.append(label);
     }
-    const remove = node('button', 'text-button', 'Retirar'); remove.type = 'button';
+    const remove = node('button', 'text-button', 'Retirar');
+    remove.type = 'button';
     remove.setAttribute('aria-label', `Retirar ${item.file.name}`);
-    remove.onclick = () => { if (state.busy || state.importing) return; additionalFiles = additionalFiles.filter((entry) => entry !== item); renderRegistrationPdfs(); };
-    fields.append(remove); row.append(fields);
+    remove.onclick = () => {
+      if (state.busy || state.importing) return;
+      additionalFiles = additionalFiles.filter((entry) => entry !== item);
+      informationFlow.stop();
+      researchPanel.invalidate();
+      renderRegistrationPdfs();
+    };
+    fields.append(remove);
+    row.append(fields);
     if (item.error) row.append(node('p', 'inline-error', item.error));
     list.append(row);
   }
@@ -758,9 +839,17 @@ async function appendRegistrationPdfs(files) {
   const selected = [...files];
   if (!selected.length) return;
   const count = gameDocuments(draft).length + additionalFiles.length;
-  if (count + selected.length > 12) { $('save-error').textContent = 'Use até 12 PDFs por jogo. Nenhum arquivo desta seleção foi acrescentado.'; $('save-error').hidden = false; return; }
-  const token = importSequence, currentHash = draft.manual.sha256, errors = [];
-  state.importing = true; $('registration-pdfs').disabled = true; $('save-game').disabled = true;
+  if (count + selected.length > 12) {
+    $('save-error').textContent = 'Use até 12 PDFs por jogo. Nenhum arquivo desta seleção foi acrescentado.';
+    $('save-error').hidden = false;
+    return;
+  }
+  const token = importSequence,
+    currentHash = draft.manual.sha256,
+    errors = [];
+  state.importing = true;
+  $('registration-pdfs').disabled = true;
+  $('save-game').disabled = true;
   $('save-error').hidden = true;
   try {
     for (const file of selected) {
@@ -769,37 +858,51 @@ async function appendRegistrationPdfs(files) {
         const info = await inspectPdf(file, { maxBytes: APP_CONFIG.maxPdfBytes, signal: importAbort?.signal });
         if (token !== importSequence || draft?.manual.sha256 !== currentHash || !$('upload-dialog').open) return;
         if ([...gameDocuments(draft), ...additionalFiles].some((item) => item.manual?.sha256 === info.manual.sha256)) throw Object.assign(new Error('Este PDF já está na lista deste jogo.'), { code: 'registration/duplicate' });
+        informationFlow.stop();
         additionalFiles.push({ id: crypto.randomUUID(), file, name: file.name.replace(/\.pdf$/i, '').slice(0, 160), documentType: 'complemento', language: info.language || 'other', edition: info.edition || '', manual: info.manual });
       } catch (error) {
         if (token !== importSequence || error.name === 'AbortError') return;
-        if (error.code !== 'registration/duplicate') additionalFiles.push({ id: crypto.randomUUID(), file, name: file.name.replace(/\.pdf$/i, '').slice(0, 160), documentType: 'complemento', language: 'other', edition: '', manual: null, error: errorMessage(error) });
+        if (error.code !== 'registration/duplicate')
+          additionalFiles.push({ id: crypto.randomUUID(), file, name: file.name.replace(/\.pdf$/i, '').slice(0, 160), documentType: 'complemento', language: 'other', edition: '', manual: null, error: errorMessage(error) });
         errors.push(`${file.name}: ${errorMessage(error)}`);
       }
     }
   } finally {
     if (token === importSequence) {
-      state.importing = false; $('registration-pdfs').disabled = false; $('save-game').disabled = false;
+      state.importing = false;
+      $('registration-pdfs').disabled = false;
+      $('save-game').disabled = false;
       $('upload-status').textContent = '';
       renderRegistrationPdfs();
-      if (errors.length) { $('save-error').textContent = errors.join(' '); $('save-error').hidden = false; }
+      researchPanel.invalidate();
+      if (errors.length) {
+        $('save-error').textContent = errors.join(' ');
+        $('save-error').hidden = false;
+      }
     }
   }
 }
 async function importFiles(files) {
   if (state.busy || state.importing) return;
   const selected = [...files];
-  if (selected.length > 12) { $('upload-status').textContent = 'Selecione até 12 PDFs do mesmo jogo.'; return; }
+  if (selected.length > 12) {
+    $('upload-status').textContent = 'Selecione até 12 PDFs do mesmo jogo.';
+    return;
+  }
   const result = await importFile(selected[0]);
   const token = importSequence;
   if (draft && $('upload-dialog').open) {
     await appendRegistrationPdfs(selected.slice(1));
     if (token !== importSequence || !$('upload-dialog').open) return;
-    void researchPanel.run();
-    if (result?.needsOcr) void researchPanel.runOcr();
+    // A importação só identifica; completar a ficha é uma ação da etapa 2.
   }
 }
 $('pdf-file').onchange = (event) => importFiles(event.target.files);
-$('additional-pdf-file').onchange = async (event) => { const files = [...event.target.files]; event.target.value = ''; await appendRegistrationPdfs(files); };
+$('additional-pdf-file').onchange = async (event) => {
+  const files = [...event.target.files];
+  event.target.value = '';
+  await appendRegistrationPdfs(files);
+};
 for (const type of ['dragenter', 'dragover'])
   $('dropzone').addEventListener(type, (event) => {
     event.preventDefault();
@@ -866,6 +969,8 @@ $('replace-pdf-file').onchange = async (event) => {
       draft.sources.cover = { source: 'Primeira página do novo PDF', excerpt: file.name };
     }
     fillForm();
+    informationFlow.stop();
+    researchPanel.invalidate();
     $('review-notice-text').textContent = 'O novo PDF está preparado. Confira a edição e as informações do jogo antes de salvar a substituição.';
     $('upload-status').textContent = '';
   } catch (error) {
@@ -881,6 +986,10 @@ $('replace-pdf-file').onchange = async (event) => {
 const researchPanel = createResearchPanel({
   root: $('research-panel'),
   getRepository: () => repository,
+  getDocuments: () => [...gameDocuments(draft), ...additionalFiles],
+  onPrepareDraft: () => informationFlow.complete(),
+  onCancel: () => informationFlow.stop(),
+  onInvalidate: () => informationFlow?.invalidate(),
   getPdf: () => manualBlob || repository.getManual(draft),
   onOcrPage(page, current) {
     if (page.status !== 'done' || !current.manual?.sha256) return;
@@ -901,10 +1010,9 @@ const researchPanel = createResearchPanel({
   },
   readPreference: () => readPreferences('recognition').language,
   writePreference: (language) => writePreferences('recognition', { language }),
-  onConsolidated(model) { consolidatedDraft = model; metadataForm?.update(model); },
-  onSuggestions(count) {
-    $('research-pending').hidden = true;
-    $('research-pending-text').textContent = 'Há sugestões para revisar antes de preencher estes campos.';
+  onConsolidated(model) {
+    consolidatedDraft = model;
+    metadataForm?.update(model);
   },
   onApplied() {
     $('research-applied').hidden = true;
@@ -915,27 +1023,57 @@ function currentMetadata() {
   const values = Object.fromEntries(new FormData($('game-form')).entries());
   return draft ? { ...draft, ...normalizeGameDraft(values) } : null;
 }
-function applyMetadataValues(values, model, { automatic = false } = {}) {
+function applyMetadataValues(values, model, { automatic = false, retract = false } = {}) {
   if (!draft || !$('upload-dialog').open || !state.session.canWrite || state.busy) return;
   const normalized = normalizeGameDraft({ ...currentMetadata(), ...values });
+  if (automatic && Object.keys(values).length) $('game-form').elements.namedItem('confirmed').checked = false;
   draft = { ...draft, ...normalized, sources: { ...draft.sources } };
   for (const [key, value] of Object.entries(values)) {
     const input = $('game-form').elements.namedItem(key);
     if (input) input.value = Array.isArray(value) ? value.join(', ') : String(value ?? '');
+    if (retract) {
+      delete draft.sources[sourceField(key)];
+      continue;
+    }
     const origin = model.fieldSources?.[key] || model;
     draft.sources[sourceField(key)] = {
       ...(origin.evidence || {}),
       source: automatic ? (origin.source === 'gemini' ? 'Gemini · sugestão do manual' : 'Sugestão · ' + origin.source) : 'Conferido e ajustado por você',
-      excerpt: String(value), url: origin.url || '', license: origin.license || '',
+      excerpt: origin.evidence?.excerpt || String(value),
+      url: origin.url || '',
+      license: origin.license || '',
       ...(origin.licenseUrl ? { licenseUrl: origin.licenseUrl, authorsUrl: origin.authorsUrl || '', modified: true } : {}),
-      language: origin.language || 'unknown', originalLanguage: origin.originalLanguage || origin.language || 'unknown',
-      originalValue: origin.originalValue ?? value, fetchedAt: origin.fetchedAt || Date.now(),
+      language: origin.language || 'unknown',
+      originalLanguage: origin.originalLanguage || origin.language || 'unknown',
+      originalValue: origin.originalValue ?? value,
+      fetchedAt: origin.fetchedAt || Date.now(),
       ...(automatic ? {} : { confirmedAt: Date.now() }),
     };
   }
   const previous = draft.sources.catalog?.matches || [];
   const members = (model.members || []).filter((m) => !['pdf', 'gemini'].includes(m.source));
-  const matches = members.map((m) => ({ source: m.source, id: m.id, url: m.url || '', identifiers: m.identifiers || {}, names: m.names || [], edition: m.edition || '', language: m.language || 'unknown', kind: m.kind || 'unknown', originalFields: m.fields, fieldTranslations: m.fieldTranslations || {}, license: m.license || '', licenseUrl: m.licenseUrl || '', authorsUrl: m.authorsUrl || '', manualHash: draft.manual.sha256, fetchedAt: m.fetchedAt || Date.now() }));
+  const matches = members.map((m) => ({
+    source: m.source,
+    id: m.id,
+    url: m.url || '',
+    identifiers: m.identifiers || {},
+    names: m.names || [],
+    edition: m.edition || '',
+    language: m.language || 'unknown',
+    kind: m.kind || 'unknown',
+    originalFields: m.fields,
+    sourceFamily: m.sourceFamily || '',
+    derivedFrom: m.derivedFrom || '',
+    independenceKey: m.independenceKey || '',
+    independenceVerified: m.independenceVerified === true,
+    quality: m.quality || 'catalog',
+    fieldTranslations: m.fieldTranslations || {},
+    license: m.license || '',
+    licenseUrl: m.licenseUrl || '',
+    authorsUrl: m.authorsUrl || '',
+    manualHash: draft.manual.sha256,
+    fetchedAt: m.fetchedAt || Date.now(),
+  }));
   if (matches.length) draft.sources.catalog = { source: 'Fontes reunidas · confira na ficha', excerpt: '', matches: [...previous.filter((old) => !matches.some((m) => m.source === old.source && m.id === old.id)), ...matches].slice(-6) };
   // As escolhas e suas evidências acompanham o salvamento normal do cadastro.
   draft.sources.metadata = { source: 'Ficha consolidada', excerpt: '', manualHash: draft.manual.sha256, fields: model.fields, origins: model.fieldSources, alternatives: model.alternatives, consistency: model.consistency };
@@ -943,32 +1081,62 @@ function applyMetadataValues(values, model, { automatic = false } = {}) {
   gameSteps.refresh();
 }
 metadataForm = createMetadataForm({
-  form: $('game-form'), getCurrent: currentMetadata, apply: applyMetadataValues,
+  form: $('game-form'),
+  getCurrent: currentMetadata,
+  apply: applyMetadataValues,
   onManualEdit(key, value) {
     if (!draft) return;
     draft.sources ||= {};
     draft.sources[sourceField(key)] = { source: 'Conferido e ajustado por você', excerpt: value };
   },
 });
-$('review-pending-suggestions').onclick = () => {
-  gameSteps.go(1);
-  const target = $('research-panel').querySelector('[data-research-review]:not([hidden]) input, .research-card button');
-  target?.focus();
-};
+draftProfile = createDraftProfile({
+  getRepository: () => repository,
+  getCurrent: currentMetadata,
+  getDocuments: () => (draft && manualBlob ? [{ id: 'main', name: draft.manual.name, language: draft.language, manual: draft.manual, blob: manualBlob }, ...additionalFiles.map((d) => ({ ...d, blob: d.file }))] : []),
+  onRecord: (record, game) => researchPanel.acceptKnowledge(record, game),
+  onIndex(index, document) {
+    if (document.id !== 'main' || !draft) return;
+    const candidate = pdfIndexCandidate(index, { ...currentMetadata(), id: index.gameId }, document);
+    if (candidate) researchPanel.acceptPdf(candidate);
+  },
+  onStatus: (message) => {
+    if ($('upload-dialog').open) researchPanel.setKnowledgeStatus(message);
+  },
+});
+informationFlow = createInformationFlow({
+  getRepository: () => repository,
+  getCurrent: currentMetadata,
+  draftProfile,
+  scope: APP_CONFIG.firebase?.projectId || 'local',
+  getDocuments: () => [...gameDocuments(draft), ...additionalFiles],
+  onPdf: (candidate) => researchPanel.acceptPdf(candidate),
+  canUse: () => !!draft && $('upload-dialog').open && gameSteps.current === 2 && state.session.canWrite && !state.busy,
+  onRecord: (record, game) => researchPanel.acceptKnowledge(record, game),
+  onStatus: (message) => researchPanel.setKnowledgeStatus(message),
+});
 $('game-title').addEventListener('input', () => {
   $('bgg-web-search').href = bggWebsiteSearch($('game-title').value);
   $('title-warning').hidden = !isTechnicalTitle($('game-title').value);
-  researchPanel.invalidate();
+  queueMicrotask(() => researchPanel.invalidate());
 });
 $('bgg-web-search').addEventListener('click', () => {
   $('bgg-web-search').href = bggWebsiteSearch($('game-title').value);
 });
 $('game-form')
   .elements.namedItem('language')
-  .addEventListener('change', () => researchPanel.invalidate());
+  .addEventListener('change', () => {
+    const value = $('game-form').elements.namedItem('language').value;
+    if (value === draft?.language) return;
+    if (draft) draft.language = value;
+    researchPanel.invalidate({ identityChanged: false });
+  });
 $('game-form')
   .elements.namedItem('edition')
-  .addEventListener('input', () => researchPanel.invalidate());
+  .addEventListener('input', () => {
+    informationFlow.stop();
+    queueMicrotask(() => researchPanel.invalidate());
+  });
 $('game-form').onsubmit = async (event) => {
   event.preventDefault();
   if (!draft || state.busy || state.importing) return;
@@ -979,9 +1147,24 @@ $('game-form').onsubmit = async (event) => {
   $('save-error').hidden = true;
   try {
     if (!$('game-form').elements.namedItem('confirmed').checked) throw new Error('Confira os dados e marque a confirmação antes de salvar.');
+    if (!draft || state.busy || !$('upload-dialog').open || !state.session.canWrite) return;
+    if (!$('game-form').elements.namedItem('confirmed').checked) {
+      gameSteps.go(2, false);
+      throw new Error('A ficha recebeu informações novas. Confira os dados antes de salvar.');
+    }
+    if (metadataForm.unresolved().length) {
+      gameSteps.go(2, false);
+      throw new Error('Confira as divergências indicadas antes de salvar.');
+    }
     const expectedDocuments = [...additionalFiles].map((item) => ({ id: item.id, hash: item.manual?.sha256, item }));
-    if (additionalFiles.some((item) => !item.manual)) { gameSteps.go(1, false); throw new Error('Há PDFs que não puderam ser preparados. Retire os arquivos indicados ou selecione cópias válidas antes de salvar.'); }
-    if (additionalFiles.some((item) => !item.name.trim())) { gameSteps.go(1, false); throw new Error('Informe o nome de cada PDF adicional.'); }
+    if (additionalFiles.some((item) => !item.manual)) {
+      gameSteps.go(1, false);
+      throw new Error('Há PDFs que não puderam ser preparados. Retire os arquivos indicados ou selecione cópias válidas antes de salvar.');
+    }
+    if (additionalFiles.some((item) => !item.name.trim())) {
+      gameSteps.go(1, false);
+      throw new Error('Informe o nome de cada PDF adicional.');
+    }
     if (consolidatedDraft) applyMetadataValues({}, consolidatedDraft, { automatic: true });
     const values = Object.fromEntries(new FormData($('game-form')).entries());
     const normalized = validateGame(values);
@@ -1081,7 +1264,10 @@ $('game-form').onsubmit = async (event) => {
     savedGame = await repository.latestGame(savedGame);
     const missing = expectedDocuments.filter(({ id, hash }) => findDocument(savedGame, id)?.manual.sha256 !== hash);
     if (missing.length) {
-      for (const { item } of missing) { item.error = 'O vínculo deste PDF não foi confirmado no cadastro.'; if (!additionalFiles.includes(item)) additionalFiles.push(item); }
+      for (const { item } of missing) {
+        item.error = 'O vínculo deste PDF não foi confirmado no cadastro.';
+        if (!additionalFiles.includes(item)) additionalFiles.push(item);
+      }
       draft = savedGame;
       renderRegistrationPdfs();
       gameSteps.go(1, false);
@@ -1097,6 +1283,7 @@ $('game-form').onsubmit = async (event) => {
         result.warning ||= 'Jogo salvo. Não foi possível guardar o histórico desta pesquisa.';
       }
     }
+    await draftProfile.seedIndexes(savedGame);
     registrationSavingId = null;
     void preparationQueue.update([...state.games.filter((game) => game.id !== savedGame.id), savedGame]);
     state.busy = false;
@@ -1150,7 +1337,7 @@ $('edit-game').onclick = () => {
     })
     .catch(() => {});
   showDialog('upload-dialog');
-  void researchPanel.loadExisting();
+  gameSteps.go(2, false);
 };
 function selectManagement(section) {
   for (const button of document.querySelectorAll('[data-game-management]')) {
@@ -1158,7 +1345,20 @@ function selectManagement(section) {
     button.setAttribute('aria-pressed', String(active));
     $(button.dataset.gameManagement).hidden = !active;
   }
-  if (section === 'manage-information' && state.selected && state.session.canEdit) knowledgePanel?.open(state.selected);
+  if (section === 'manage-information' && state.selected) {
+    const sheet = node('dl', 'game-summary');
+    for (const key of [...metadataKeys, 'language']) {
+      const row = node('div');
+      const value = state.selected[key];
+      row.append(
+        node('dt', '', fieldLabels[key] || 'Idioma do manual'),
+        node('dd', '', emptyValue(value) ? 'Não informado' : Array.isArray(value) ? value.join(', ') : key === 'language' ? { 'pt-BR': 'Português', en: 'Inglês', fr: 'Francês' }[value] || value : String(value)),
+      );
+      sheet.append(row);
+    }
+    $('saved-game-information').replaceChildren(sheet);
+  }
+  if (section === 'manage-rules' && state.selected && state.session.canEdit) knowledgePanel?.open(state.selected);
   else knowledgePanel?.suspend();
 }
 $('detail-admin').onclick = () => {
@@ -1262,6 +1462,7 @@ function updateSession(session) {
   document.body.classList.toggle('access-approved', session.canRead === true);
   if (state.session.user?.uid !== session.user?.uid && !$('reader').hidden) reader?.close();
   state.session = session;
+
   if (!session.canEdit) knowledgePanel?.close();
   if (!session.canEdit && !session.canDelete && $('game-management-dialog').open) $('game-management-dialog').close();
   for (const button of document.querySelectorAll('[data-add]')) button.hidden = !session.canAdd;
@@ -1276,8 +1477,14 @@ function updateSession(session) {
         .filter(Boolean)
         .join(' ')
     : '';
-  if (session.canRead && (session.cacheReady !== previous.cacheReady || session.storageStatus !== previous.storageStatus || session.canEdit !== previous.canEdit || session.canAdd !== previous.canAdd)) void preparationQueue?.update(state.games.filter((game) => game.id !== registrationSavingId), { loading: state.gamesLoading });
+  if (session.canRead && (session.cacheReady !== previous.cacheReady || session.storageStatus !== previous.storageStatus || session.canEdit !== previous.canEdit || session.canAdd !== previous.canAdd))
+    void preparationQueue?.update(
+      state.games.filter((game) => game.id !== registrationSavingId),
+      { loading: state.gamesLoading },
+    );
   if (previous.canWrite && !session.canWrite) {
+    informationFlow?.stop();
+    draftProfile?.cancel();
     preparationQueue?.stop();
     documentPanel?.close();
   }
@@ -1287,6 +1494,8 @@ function updateSession(session) {
     documentPanel?.close();
   }
   if (!session.canRead) {
+    informationFlow?.stop();
+    draftProfile?.cancel();
     knowledgePanel?.close();
     ++importSequence;
     importAbort?.abort();
@@ -1390,6 +1599,7 @@ async function start() {
           preparationSignature = signature;
           void guidePanel?.refreshIndexes();
           void knowledgePanel?.refresh();
+          void informationFlow?.prepared();
         }
       },
     });
@@ -1422,7 +1632,12 @@ async function start() {
       (games, metadata = {}) => {
         state.games = games;
         reader?.revokeMissing(games);
-        void preparationQueue.update(games.filter((game) => game.id !== registrationSavingId), { loading: metadata.loading === true }).catch((error) => showNotice(errorMessage(error)));
+        void preparationQueue
+          .update(
+            games.filter((game) => game.id !== registrationSavingId),
+            { loading: metadata.loading === true },
+          )
+          .catch((error) => showNotice(errorMessage(error)));
         state.gamesLoading = metadata.loading === true;
         $('library-loading').hidden = !state.gamesLoading;
         $('library-error').hidden = true;

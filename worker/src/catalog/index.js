@@ -4,9 +4,9 @@ import { catalogIO } from './io.js';
 import { wikidata } from './wikidata.js';
 import { ludopedia } from './ludopedia.js';
 import { bgg } from './bgg.js';
-import { RESEARCH_PROTOCOL, RESEARCH_VERSION } from '../../../js/research-contract.js';
+import { RESEARCH_PROTOCOL, RESEARCH_VERSION, RESEARCH_QUERY_VERSION } from '../../../js/research-contract.js';
 import { wikipedia } from './wikipedia.js';
-export const researchCapabilities = (env) => ({ protocol: RESEARCH_PROTOCOL, apiVersion: RESEARCH_VERSION, sources: sourceStatus(env) });
+export const researchCapabilities = (env) => ({ protocol: RESEARCH_PROTOCOL, apiVersion: RESEARCH_VERSION, queryStrategyVersion: RESEARCH_QUERY_VERSION, sources: sourceStatus(env) });
 
 export const validBggLogo = (env) => /^https:\/\/thilanguis\.github\.io\/Manual-de-Boardgame\/assets\/powered-by-bgg\.(?:png|svg|webp)$/.test(env.BGG_LOGO_URL || '');
 export const sourceStatus = (env) => [

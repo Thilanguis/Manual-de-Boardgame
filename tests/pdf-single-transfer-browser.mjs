@@ -47,15 +47,32 @@ try {
     globalThis.testReader = createReader({ repository, getProgress: () => null, saveProgress: () => {}, onError: (e) => globalThis.testErrors.push(e.message) });
   });
   const ready = () => page.waitForFunction(() => !document.querySelector('#reader').hidden && document.querySelector('#reader-status').hidden && document.querySelector('#pdf-canvas').width > 0);
+  const assertFits = async () => {
+    const size = await page.evaluate(() => {
+      const stage = document.querySelector('#reader-stage'),
+        page = document.querySelector('#pdf-page'),
+        padding = getComputedStyle(stage);
+      return {
+        width: page.offsetWidth,
+        height: page.offsetHeight,
+        availableWidth: stage.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight),
+        availableHeight: stage.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom),
+      };
+    });
+    assert(size.width <= size.availableWidth + 1 && size.height <= size.availableHeight + 1, 'página inteira cabe no espaço disponível');
+    assert.equal(await page.locator('#zoom-fit').getAttribute('aria-pressed'), 'true');
+  };
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     const before = requests.length;
     await page.evaluate(() => testReader.open(testGame));
     await ready();
+    await assertFits();
     for (const number of [11, 22]) {
       await page.locator('#page-number').fill(String(number));
       await page.locator('#page-number').dispatchEvent('change');
       await ready();
+      await assertFits();
     }
     await page.locator('#zoom-in').click();
     await ready();
@@ -65,6 +82,13 @@ try {
     });
     await page.locator('#zoom-out').click();
     await ready();
+    await page.locator('#zoom-fit').click();
+    await ready();
+    await assertFits();
+    await page.setViewportSize({ width, height: 700 });
+    await page.waitForTimeout(350);
+    await ready();
+    await assertFits();
     assert.equal(requests.length - before, 1, 'páginas, zoom e rolagem usam a transferência já recebida');
     await page.locator('#reader-document').selectOption('extra');
     await ready();

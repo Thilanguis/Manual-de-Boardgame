@@ -1,12 +1,14 @@
 import { consolidateMetadata, storedCatalogCandidates } from './metadata-consolidation.js';
 import { consolidateCandidates, researchSnapshot } from './research-knowledge.js';
 import { parallelResearch, normalizedQuery, sourceNames, manualSources, selectedFields, fieldLabels, researchSummary } from './research-client.js';
-import { RESEARCH_PROTOCOL, RESEARCH_VERSION } from './research-contract.js';
+import { RESEARCH_PROTOCOL, RESEARCH_VERSION, RESEARCH_QUERY_VERSION } from './research-contract.js';
 import { recognizePdfImages } from './pdf-ocr.js';
 import { resultSummary } from './research-presentation.js';
 import { createTextTranslator } from './translation.js';
 import { portugueseCandidate, translateCatalogCandidate, pdfMetadataCandidate } from './catalog-language.js';
 import { savedKnowledgeCandidate } from './research-enrichment.js';
+import { informationIdentity, knowledgeMatchesIdentity } from './information-identity.js';
+import { gameDocuments } from './documents.js';
 
 const node = (tag, text = '') => {
   const el = document.createElement(tag);
@@ -30,6 +32,7 @@ export function createResearchPanel({
   root,
   getRepository,
   getCurrent,
+  getDocuments = gameDocuments,
   getPdf,
   canUse,
   readPreference,
@@ -38,6 +41,9 @@ export function createResearchPanel({
   onSuggestions = () => {},
   onConsolidated = () => {},
   onOcrPage = () => {},
+  onPrepareDraft = () => {},
+  onCancel = () => {},
+  onInvalidate = () => {},
 }) {
   let controller,
     detailController,
@@ -46,7 +52,10 @@ export function createResearchPanel({
     candidates = [],
     statuses = new Map(),
     active = false;
+  let knowledgeMessage = '';
+  let serverNotice = '';
   let chosenIdentity = null;
+  let draftKnowledgeCandidate = null;
   const pendingDetails = new Map();
   let sourcesUntil = 0;
   let detailActive = false;
@@ -70,7 +79,6 @@ export function createResearchPanel({
     review = root.querySelector('[data-research-review]'),
     sourceList = root.querySelector('[data-research-sources]');
   const search = root.querySelector('[data-research-search]'),
-    expand = root.querySelector('[data-research-expand]'),
     cancel = root.querySelector('[data-research-cancel]');
   const ocrButton = root.querySelector('[data-research-ocr]'),
     ocrStatus = root.querySelector('[data-research-ocr-status]');
@@ -85,13 +93,15 @@ export function createResearchPanel({
     detailActive = false;
     active = false;
     cancel.hidden = true;
-    search.disabled = expand.disabled = false;
+    search.disabled = false;
     search.removeAttribute('aria-busy');
     if (message) status.textContent = message;
   }
   function reset() {
     cancelWork();
+    knowledgeMessage = '';
     candidates = [];
+    draftKnowledgeCandidate = null;
     sourceFailure = '';
     chosenIdentity = null;
     pendingDetails.clear();
@@ -129,11 +139,13 @@ export function createResearchPanel({
       const version = root.querySelector('[data-research-version]');
       if (version) version.textContent = `Site ${RESEARCH_VERSION} · API ${response.apiVersion} · protocolo compatível`;
       sources = response.sources;
+      serverNotice = response.queryStrategyVersion >= RESEARCH_QUERY_VERSION ? '' : 'A pesquisa do servidor precisa ser atualizada.';
       sourceFailure = '';
       sourcesUntil = Date.now() + 60000;
     } catch (error) {
       if (signal?.aborted) return;
       sources = [];
+      serverNotice = '';
       sourceFailure = getRepository().mode === 'local' ? 'Modo local: conectores externos exigem o acervo conectado e uma conta autorizada.' : 'Fontes externas não consultadas: ' + error.message;
       if (!signal?.aborted) status.textContent = getRepository().mode === 'local' ? 'Neste dispositivo, a identificação usa o PDF. Fontes externas ficam disponíveis no acervo conectado.' : `Fontes externas indisponíveis: ${error.message}`;
     }
@@ -178,37 +190,29 @@ export function createResearchPanel({
       }
     }
     list.replaceChildren();
-    const all = [...(ocrCandidate ? [ocrCandidate] : []), ...candidates];
+    const all = [...(ocrCandidate ? [ocrCandidate] : []), ...candidates, ...(draftKnowledgeCandidate && draftKnowledgeCandidate.manualHash === getCurrent()?.manual?.sha256 ? [draftKnowledgeCandidate] : [])];
     const model = consolidateMetadata({ ...getCurrent(), kind: kind.value }, all, chosenIdentity);
     onConsolidated(model);
-    for (const member of model.members.filter((m) => m.needsDetail)) void enrichDetail(member);
-    const results = model.members.length ? [model] : [];
-    if (model.members.length) {
-      const card = node('article');
-      card.className = 'research-card';
-      card.append(node('h4', 'Informações reunidas'), node('p', Object.keys(model.fields).length + ' campos disponíveis. Confira e ajuste na etapa 2.'));
-      const action = node('button', 'Conferir informações');
-      action.type = 'button';
-      action.className = 'button secondary small';
-      action.onclick = () => onApplied({});
-      card.append(action);
-      if (model.pendingTranslations.length) {
-        const details = disclosure('Textos aguardando tradução');
-        for (const pending of model.pendingTranslations) details.append(node('p', fieldLabels[pending.key] + ' · ' + pending.language + ': ' + display(pending.value)));
-        if (globalThis.Translator) {
-          const translate = node('button', 'Traduzir para português');
-          translate.type = 'button';
-          translate.onclick = () => void translateSuggestion({ members: model.members });
-          details.append(translate);
-        }
-        card.append(details);
+    if (active) for (const member of model.members.filter((m) => m.needsDetail)) void enrichDetail(member);
+    const results = [model];
+    const extras = root.querySelector('[data-research-extras]');
+    extras?.replaceChildren();
+    if (model.pendingTranslations.length) {
+      const details = disclosure('Textos aguardando tradução');
+      for (const pending of model.pendingTranslations) details.append(node('p', fieldLabels[pending.key] + ' · ' + pending.language + ': ' + display(pending.value)));
+      if (globalThis.Translator) {
+        const translate = node('button', 'Traduzir para português');
+        translate.type = 'button';
+        translate.onclick = () => void translateSuggestion({ members: model.members });
+        details.append(translate);
       }
-      list.append(card);
+      (extras || list).append(details);
     }
     if (model.ambiguous.length) {
       const options = disclosure('Conferir qual jogo corresponde ao PDF');
+      options.open = true;
       for (const group of model.ambiguous) {
-        const action = node('button', (group.fields.title || group.names[0]?.value) + ' · ' + (group.edition || 'edição não confirmada'));
+        const action = node('button', (group.fields.title || group.names[0]?.value) + ' · ' + (group.publicationYear || group.edition || 'edição não confirmada'));
         action.type = 'button';
         action.className = 'button secondary small';
         action.onclick = () => void select(group);
@@ -217,39 +221,24 @@ export function createResearchPanel({
       list.append(options);
     }
     const diagnostics = root.querySelector('[data-research-diagnostics]');
-    if (diagnostics) diagnostics.textContent = sourceFailure || researchSummary(sources, statuses);
+    if (diagnostics) {
+      diagnostics.replaceChildren(node('p', sourceFailure || researchSummary(sources, statuses)));
+      for (const source of sources.filter((s) => s.enabled)) {
+        const returned = candidates.filter((c) => c.source === source.id), accepted = model.members.filter((c) => c.source === source.id);
+        const fields = [...new Set(accepted.flatMap((c) => selectedFields(portugueseCandidate(c), {}).map((f) => f.key)).filter((k) => k !== 'title'))];
+        diagnostics.append(node('p', `${sourceNames[source.id] || source.name}: ${returned.length} candidato(s), ${accepted.length} correspondência(s) confirmada(s); ${fields.length ? fields.map((k) => fieldLabels[k]).join(', ') : 'sem metadados adicionais aplicáveis'}.`));
+        for (const candidate of accepted) for (const [key, reason] of Object.entries(candidate.fieldReasons || {})) if (reason) diagnostics.append(node('small', `${fieldLabels[key] || key}: ${reason} `));
+      }
+    }
     status.textContent = sourceFailure
-      ? results.length
+      ? model.members.length
         ? 'Sugestões disponíveis. Não foi possível consultar as fontes externas.'
         : getRepository().mode === 'local'
           ? sourceFailure
           : 'Não foi possível pesquisar agora. Tente novamente.'
       : resultSummary(results, sources, statuses);
-  }
-  async function loadSavedKnowledge(current, signal, n) {
-    if (!current.id || !current.manual?.sha256 || !getRepository().getKnowledge) return;
-    const timeout = AbortSignal.any([signal, AbortSignal.timeout(1500)]);
-    let abort;
-    try {
-      const record = await Promise.race([
-        getRepository().getKnowledge(current),
-        new Promise((resolve) => {
-          abort = () => resolve(null);
-          if (timeout.aborted) abort();
-          else timeout.addEventListener('abort', abort, { once: true });
-        }),
-      ]);
-      if (timeout.aborted || n !== sequence) return;
-      const suggestion = savedKnowledgeCandidate(record, current);
-      if (suggestion) {
-        candidates.push(suggestion);
-        render();
-      }
-    } catch (error) {
-      if (!timeout.aborted && n === sequence) statuses.set('gemini', { status: 'error', error: error.message });
-    } finally {
-      if (abort) timeout.removeEventListener('abort', abort);
-    }
+    if (knowledgeMessage) status.textContent += (status.textContent ? ' ' : '') + knowledgeMessage;
+    if (serverNotice) status.textContent += (status.textContent ? ' ' : '') + serverNotice;
   }
   async function enrichDetail(member) {
     const key = member.source + ':' + member.id;
@@ -288,11 +277,10 @@ export function createResearchPanel({
     render();
     const input = { query: normalizedQuery(current.title), manualHash: current.manual?.sha256 || '', edition: current.edition || '', kind: 'unknown', preferredLanguage: 'pt-BR' };
     await Promise.allSettled([
-      loadSavedKnowledge(current, signal, n),
       (async () => {
         const cached = await getRepository().findResearch?.(input, { signal: AbortSignal.timeout(1500) });
         if (n !== sequence || !canUse()) return;
-        for (const candidate of cached?.candidates || []) if (!candidates.some((c) => c.source === candidate.source && c.id === candidate.id)) candidates.push(candidate);
+        for (const candidate of (cached?.candidates || []).filter((c) => c.source !== 'gemini')) if (!candidates.some((c) => c.source === candidate.source && c.id === candidate.id)) candidates.push(candidate);
         render();
       })(),
     ]);
@@ -356,7 +344,7 @@ export function createResearchPanel({
     const n = ++sequence;
     controller = new AbortController();
     const signal = controller.signal;
-    candidates = [];
+    candidates = storedCatalogCandidates(current);
     pendingDetails.clear();
     if (ocrCandidate?.manualHash !== current.manual?.sha256 || ocrCandidate?.pdfMethod === 'text') ocrCandidate = null;
     const extracted = pdfMetadataCandidate(current);
@@ -368,11 +356,16 @@ export function createResearchPanel({
     list.replaceChildren();
     active = true;
     cancel.hidden = false;
-    search.disabled = expand.disabled = true;
+    search.disabled = true;
     search.setAttribute('aria-busy', 'true');
     status.textContent = 'Pesquisando…';
     const budget = AbortSignal.any([signal, AbortSignal.timeout(expanded ? 10000 : 7000)]);
-    const knowledgeTask = loadSavedKnowledge(current, budget, n);
+    knowledgeMessage = '';
+    const knowledgeTask = Promise.resolve()
+      .then(() => onPrepareDraft())
+      .catch((error) => {
+        if (n === sequence) knowledgeMessage = error.message;
+      });
     try {
       const input = { action: 'search', query: normalizedQuery(current.title), pdfLanguage: current.language, preferredLanguage: language.value, kind: kind.value, expanded, fetchedAt: Date.now() };
       input.alternateTitles = current.sources?.originalTitle ? [{ value: current.sources.originalTitle.excerpt, language: 'other' }] : [];
@@ -408,13 +401,14 @@ export function createResearchPanel({
       if (cached) {
         queryInput = { ...input, fetchedAt: cached.fetchedAt };
         snapshot = cached;
-        candidates = [...candidates.filter((candidate) => candidate.source === 'gemini'), ...cached.candidates];
+        candidates = cached.candidates.filter((candidate) => candidate.source !== 'gemini');
         decisions = (cached.decisions || []).map((decision) => ({ ...decision, manualHash: decision.manualHash ?? cached.manualHash, edition: decision.edition ?? cached.edition }));
-        await knowledgeTask;
-        if (signal.aborted || n !== sequence) return;
         render();
-        status.textContent = `Informações recuperadas · ${new Date(cached.fetchedAt).toLocaleDateString('pt-BR')}.`;
-        return;
+        if (cached.queryStrategyVersion >= RESEARCH_QUERY_VERSION) {
+          await knowledgeTask;
+          if (signal.aborted || n !== sequence) return;
+          return;
+        }
       }
       await loadSources(budget);
       if (signal.aborted || n !== sequence) return;
@@ -438,7 +432,7 @@ export function createResearchPanel({
         signal: budget,
         onUpdate: collect,
       });
-      const names = candidates
+      const names = consolidateMetadata({ ...current, kind: kind.value }, candidates, chosenIdentity).members
         .flatMap((c) => c.names || [])
         .filter((name) => ['pt', 'pt-BR', 'en', 'fr'].includes(name.language) && name.value !== input.query)
         .slice(0, 6);
@@ -460,7 +454,7 @@ export function createResearchPanel({
         try {
           snapshot = researchSnapshot(input, candidates, decisions);
           void getRepository()
-            .saveResearch?.(snapshot, current.id ? current : null)
+            .saveResearch?.(snapshot)
             ?.catch(() => {
               if (n === sequence && !signal.aborted) status.textContent += ' Não foi possível guardar a pesquisa para outros dispositivos.';
             });
@@ -470,10 +464,12 @@ export function createResearchPanel({
       }
       if (!sources.some((s) => s.enabled)) render();
     } finally {
+      await knowledgeTask;
       if (n === sequence) {
+        render();
         active = false;
         cancel.hidden = detailActive || ocrActive ? false : true;
-        search.disabled = expand.disabled = false;
+        search.disabled = false;
         search.removeAttribute('aria-busy');
       }
     }
@@ -494,9 +490,17 @@ export function createResearchPanel({
     queryInput = { ...queryInput, edition: current.edition || '' };
     snapshot = researchSnapshot(queryInput, candidates, decisions);
   }
-  search.onclick = () => void run(false);
-  expand.onclick = () => void run(true);
-  cancel.onclick = () => cancelWork('Pesquisa cancelada.');
+  search.onclick = () => {
+    if (!active)
+      void run(false).catch((error) => {
+        sourceFailure = error.message;
+        render();
+      });
+  };
+  cancel.onclick = () => {
+    cancelWork('Operação cancelada.');
+    onCancel();
+  };
   async function runOcr() {
     if (!canUse() || !getPdf || ocrActive) return;
     const current = getCurrent();
@@ -555,21 +559,66 @@ export function createResearchPanel({
   if (ocrButton) ocrButton.onclick = () => void runOcr();
   language.onchange = () => {
     writePreference(language.value);
-    invalidate();
+    invalidate({ identityChanged: false });
   };
-  kind.onchange = () => invalidate();
-  function invalidate() {
+  kind.onchange = () => invalidate({ identityChanged: false });
+  function invalidate({ identityChanged = true } = {}) {
+    onInvalidate();
     snapshot = queryInput = null;
     decisions = [];
     chosenIdentity = null;
-    onConsolidated(null);
     cancelWork('Dados da busca alterados. Pesquise novamente.');
-    candidates = [];
+    if (identityChanged) candidates = [];
+    if (identityChanged) {
+      draftKnowledgeCandidate = null;
+      knowledgeMessage = '';
+    }
+    ocrCandidate = pdfMetadataCandidate(getCurrent());
     statuses.clear();
     appliedCandidates.clear();
     notifySuggestions();
     list.replaceChildren();
     review.hidden = true;
+    render();
   }
-  return { snapshot: () => snapshot, confirmFields, reset, run, loadExisting, runOcr, cancel: cancelWork, invalidate, isBusy: () => active || ocrActive };
+  return {
+    snapshot: () => snapshot,
+    confirmFields,
+    reset,
+    run,
+    loadExisting,
+    runOcr,
+    cancel: cancelWork,
+    setKnowledgeStatus(message) {
+      knowledgeMessage = message;
+      if (canUse()) {
+        render();
+        cancel.hidden = !active && !/Analisando|andamento|Lendo|Reconhecendo|Completando/.test(message);
+      }
+    },
+    invalidate,
+    acceptPdf(candidate) {
+      if (canUse()) {
+        ocrCandidate = candidate;
+        render();
+      }
+    },
+    acceptKnowledge(record, game) {
+      if (!canUse()) return;
+      const current = getCurrent();
+      const target = {
+        ...current,
+        documents: Object.fromEntries(
+          getDocuments(current)
+            .filter((d) => d.manual)
+            .map((d) => [d.id, d]),
+        ),
+      };
+      const candidate = informationIdentity(game) === informationIdentity(current, '', getDocuments(current)) && knowledgeMatchesIdentity(record?.knowledge, target) ? savedKnowledgeCandidate(record, target) : null;
+      draftKnowledgeCandidate = candidate;
+      candidates = candidates.filter((c) => c.source !== 'gemini');
+      render();
+    },
+    isBusy: () => active || ocrActive,
+  };
 }

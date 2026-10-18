@@ -1,6 +1,7 @@
 import { normalizeText } from './model.js';
 import { sameWork, selectedFields } from './research-client.js';
 import { portugueseCandidate } from './catalog-language.js';
+import { RESEARCH_QUERY_VERSION } from './research-contract.js';
 
 export const RESEARCH_SCHEMA = 1;
 export const factSignature = (value) => JSON.stringify(Array.isArray(value) ? [...value].sort((a, b) => String(a).localeCompare(String(b))) : value);
@@ -53,6 +54,7 @@ export function consolidateCandidates(input) {
           evidenceGroup: ['pdf', 'gemini'].includes(candidate.source) ? `manual:${candidate.evidence?.[field.key]?.sourceHash || candidate.manualHash || ''}` : `${candidate.source}:${candidate.id}`,
           ...(candidate.source === 'gemini' ? { generated: true } : {}),
           ...(candidate.evidence?.[field.key] ? { evidence: candidate.evidence[field.key] } : {}),
+          ...(candidate.fieldEvidence?.[field.key] ? { claim: candidate.fieldEvidence[field.key] } : {}),
         };
         const fact = { value: field.value, ...provenance };
         alternatives[field.key] ||= [];
@@ -144,6 +146,7 @@ export function researchSnapshot(input, candidates, decisions = []) {
   const snapshot = JSON.parse(
     JSON.stringify({
       schemaVersion: RESEARCH_SCHEMA,
+      queryStrategyVersion: RESEARCH_QUERY_VERSION,
       query: input.query,
       aliases: [...new Set([input.query, ...(input.alternateTitles || []).map((n) => n.value), ...safe.flatMap((c) => (c.names || []).map((n) => n.value))].map(researchName))].filter(Boolean).slice(0, 32),
       hints: (input.alternateTitles || []).slice(0, 6),

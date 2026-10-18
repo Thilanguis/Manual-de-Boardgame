@@ -1155,6 +1155,11 @@ label,
   display: none;
 }
 
+.metadata-review:empty { display: none; }
+.metadata-review { margin: 0 0 1.25rem; }
+.metadata-review > p { color: var(--muted, #aaa); font-size: .875rem; }
+.metadata-review .metadata-conflict { border-left: 2px solid var(--accent, #e51d48); padding-left: .75rem; margin-top: .75rem; }
+
 @media (max-width: 600px) {
   #upload-dialog[data-step='2'] .review-aside,
   #upload-dialog[data-step='3'] .review-aside {

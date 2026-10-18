@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectManualKnowledge, synthesisSources, manualPassages } from '../src/manual-knowledge.js';
-import { synthesizePublicKnowledge, validateSynthesis, knowledgeKey } from '../src/game-knowledge.js';
+import { knowledgeEndpoint, synthesizePublicKnowledge, validateSynthesis, knowledgeKey } from '../src/game-knowledge.js';
 import { packIndex } from '../../js/pdf-index.js';
 import { searchKnowledge } from '../../js/rule-relevance.js';
 import { knowledgeFixture } from '../../tests/knowledge-fixture.mjs';
@@ -125,4 +125,71 @@ test('aguardar índice não consome quota nem impede a geração após ficar pro
   assert.equal(await storage.get('quota'), undefined);
   assert.equal((await call('/claim', { requestId: crypto.randomUUID() })).claimed, true);
   assert.equal((await storage.get('quota')).count, 1);
+});
+
+test('preparação automática só reutiliza conhecimento e nunca inicia Gemini ou cota', async () => {
+  const model = knowledgeFixture(),
+    transport = await fixture(),
+    original = globalThis.fetch;
+  const encode = (v) => (typeof v === 'string' ? { stringValue: v } : typeof v === 'number' ? { integerValue: String(v) } : { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, value]) => [k, encode(value)])) } });
+  globalThis.fetch = async (url, options) => (String(url).endsWith('/games/' + game.id) ? Response.json({ fields: Object.fromEntries(Object.entries(game).map(([k, v]) => [k, encode(v)])) }) : transport(url, options));
+  try {
+    const response = await knowledgeEndpoint(
+      new Request('https://worker.test/knowledge', { method: 'POST' }),
+      { ...env, ...model.env, OWNER_UID: 'owner', KNOWLEDGE_FROM_MANUAL: 'true', ALLOW_MANUAL_AI: 'true' },
+      { uid: 'owner', token: 'fixture-jwt', profile: { uid: 'owner', role: 'superadmin', status: 'approved' } },
+      game.id,
+      { reuseOnly: true, requestId: crypto.randomUUID() },
+    );
+    assert.equal((await response.json()).status, 'not_started');
+    assert.equal(model.calls.length, 0);
+    assert.equal(await model.storage.get('quota'), undefined);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('atualização explícita da ficha legada preserva correção de regra e gasta uma única cota', async () => {
+  const model = knowledgeFixture(),
+    original = globalThis.fetch;
+  const index = { ...baseIndex, pages: [{ page: 1, text: 'Prepare a partida para 2 a 4 jogadores. Duração: 30 a 60 minutos. Idade: 14 anos.' }, baseIndex.pages[1]] };
+  const transport = await fixture({ index });
+  const key = await knowledgeKey(game, true);
+  const corrected = { id: 'corrected', sourceId: 'manual-old', sourceHash: game.manual.sha256, documentId: 'main', topic: 'acoes', page: 2, quote: text, text: 'Minha correção de ataque permanece.', review: 'manual' };
+  await model.storage.put(`job:${key}`, {
+    status: 'ready',
+    revision: 1,
+    knowledge: { title: game.title, edition: game.edition, sources: [{ id: 'manual-old', documentId: 'main', sourceHash: game.manual.sha256, pages: index.pages }], sections: [corrected] },
+  });
+  const encode = (v) => (typeof v === 'string' ? { stringValue: v } : typeof v === 'number' ? { integerValue: String(v) } : { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, value]) => [k, encode(value)])) } });
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith('/games/' + game.id)) return Response.json({ fields: Object.fromEntries(Object.entries(game).map(([k, v]) => [k, encode(v)])) });
+    if (String(url).endsWith('/users/owner')) return Response.json({ fields: { uid: { stringValue: 'owner' }, role: { stringValue: 'superadmin' }, status: { stringValue: 'approved' } } });
+    return (await model.fetch(url, options)) || transport(url, options);
+  };
+  model.faults.metadata = (p) => ({ recommendedAge: { value: 14, sourceId: p.sources[0].id, page: 1, evidenceId: p.sources[0].pages[0].passages[0].id } });
+  const requestId = crypto.randomUUID();
+  try {
+    const args = [
+      new Request('https://worker.test/knowledge', { method: 'POST' }),
+      { ...env, ...model.env, OWNER_UID: 'owner', KNOWLEDGE_FROM_MANUAL: 'true', ALLOW_MANUAL_AI: 'true' },
+      { uid: 'owner', token: 'fixture-jwt', profile: { uid: 'owner', role: 'superadmin', status: 'approved' } },
+      game.id,
+      { force: true, requestId, expectedIdentity: { title: game.title, edition: game.edition, manualHash: game.manual.sha256, documents: [['main', game.manual.sha256]] } },
+    ];
+    await knowledgeEndpoint(...args);
+    const saved = await model.storage.get(`job:${key}`);
+    assert.equal(saved.status, 'ready');
+    assert.equal(saved.knowledge.profile.recommendedAge.value, 14);
+    assert(saved.knowledge.sections.some((s) => s.review === 'manual' && s.text === corrected.text));
+    await knowledgeEndpoint(...args);
+    assert.equal(model.calls.length, 1);
+    assert.equal((await model.storage.get('quota')).count, 1);
+    args[4] = { ...args[4], requestId: crypto.randomUUID(), expectedIdentity: { ...args[4].expectedIdentity, title: 'Outro jogo' } };
+    await assert.rejects(knowledgeEndpoint(...args), (e) => e.status === 409);
+    assert.equal(model.calls.length, 1);
+    assert.equal((await model.storage.get('quota')).count, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
 });

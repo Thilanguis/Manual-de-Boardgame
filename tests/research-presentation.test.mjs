@@ -50,7 +50,7 @@ test('resumo conta obras e não conectores; falhas continuam visíveis sem diagn
   const a = { source: 'wikidata', id: '1', kind: 'base', identifiers: { bgg: '436217' } };
   const b = { ...a, source: 'wikipedia' };
   const sources = [{ enabled: true }, { enabled: false }];
-  assert.equal(resultSummary([a, b], sources, new Map()), '1 jogo encontrado.');
+  assert.equal(resultSummary([a, b], sources, new Map()), '1 jogo encontrado nas fontes. Sem informações adicionais aproveitáveis.');
   assert.match(resultSummary([], sources, new Map([['a', { status: 'error' }]])), /fontes disponíveis.*não responderam/);
   assert.equal(resultSummary([], [{ enabled: false }], new Map()), 'Pesquisa externa indisponível.');
 });

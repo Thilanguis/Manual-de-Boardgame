@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.11.0-firestore-lifecycle-1';
+const VERSION = 'acervo-v1.11.0-research-real-2';
 const LOCAL_DEVELOPMENT = ['localhost', '127.0.0.1', '[::1]'].includes(self.location.hostname);
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
@@ -33,6 +33,13 @@ const ESSENTIAL = [
   './js/research-knowledge.js',
   './js/research-enrichment.js',
   './js/metadata-consolidation.js',
+  './js/metadata-consensus.js',
+  './js/profile-facts.js',
+  './js/draft-profile.js',
+  './js/information-flow.js',
+  './js/profile-availability.js',
+  './js/information-identity.js',
+  './js/pdf-profile.js',
   './js/metadata-form.js',
   './js/firestore-data.js',
   './js/research-store.js',
@@ -80,11 +87,13 @@ self.addEventListener('install', (event) => {
 });
 self.addEventListener('activate', (event) => {
   if (LOCAL_DEVELOPMENT) {
-    event.waitUntil((async () => {
-      const keys = await caches.keys();
-      await Promise.all(keys.filter((key) => /^acervo-.*-shell$/.test(key) || key === SDK).map((key) => caches.delete(key)));
-      await self.registration.unregister();
-    })());
+    event.waitUntil(
+      (async () => {
+        const keys = await caches.keys();
+        await Promise.all(keys.filter((key) => /^acervo-.*-shell$/.test(key) || key === SDK).map((key) => caches.delete(key)));
+        await self.registration.unregister();
+      })(),
+    );
     return;
   }
   event.waitUntil(

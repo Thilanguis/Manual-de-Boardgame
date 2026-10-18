@@ -23,6 +23,21 @@ export const reviewedIdentities = [
   },
 ];
 const key = (value) => normalizeText(value).replace(/^(?:o|a|os|as|the|le|les) /, '');
+// Pistas de descoberta, nunca equivalências de identidade. Um prefixo de franquia
+// ou nome próprio pode localizar títulos traduzidos, mas não autoriza aplicá-los.
+export function discoveryQueries(value) {
+  const title = String(value || '').replace(/[™®]/g, '').trim();
+  const prefix = title.split(/[:：]/)[0].trim();
+  const last = title.match(/[\p{L}\d]{5,}$/u)?.[0];
+  const generic = /^(?:jogo|game|board|manual|regras|rules|edition|edicao|expansion|expansao|dark|escuridao|sociedade|fellowship)$/;
+  return [...new Set([...(prefix !== title && normalizeText(prefix).length >= 4 ? [prefix] : []), ...(prefix === title && last ? [last] : [])])]
+    .filter((q) => !generic.test(normalizeText(q)) && normalizeText(q) !== normalizeText(title)).slice(0, 1);
+}
+
+export function titleMatches(candidate, input) {
+  const terms = [input.query, ...(input.alternateTitles || []).map((n) => n.value)].map(normalizeText).filter(Boolean);
+  return (candidate.names || []).some((n) => terms.includes(normalizeText(n.value)));
+}
 export function reviewedIdentity(title, metadata = '') {
   const candidate = key(title);
   return reviewedIdentities.find((item) => item.names.some((name) => key(name.value) === candidate) || item.codes.some((code) => new RegExp(`\\b${code}(?:_|\\b)`, 'i').test(metadata))) || null;

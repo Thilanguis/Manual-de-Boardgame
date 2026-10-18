@@ -51,7 +51,7 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
     await persist();
     if (token !== sequence || user !== account || !repository.session.canRead) return;
     try {
-      const result = await repository.generateKnowledge(game);
+      const result = await repository.generateKnowledge(game, { reuseOnly: true });
       if (token !== sequence || user !== account || !repository.session.canRead) return;
       ready.forEach((job) => {
         job.knowledgeStatus = result?.status || 'requested';

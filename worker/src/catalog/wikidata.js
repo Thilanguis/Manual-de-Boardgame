@@ -1,5 +1,5 @@
 import { facts, positive, text, catalogPlans } from './io.js';
-import { queryVariants, reviewedIdentity } from '../../../js/game-identities.js';
+import { queryVariants, reviewedIdentity, discoveryQueries, titleMatches } from '../../../js/game-identities.js';
 import { normalizeText } from '../../../js/model.js';
 
 const api = (input, interactive = false) => {
@@ -105,10 +105,16 @@ export function wikidataCandidate(entity, language = 'pt-BR', classesData = {}, 
     gameType: cooperative ? '' : 'A entidade não declara um tipo de partida específico utilizável.',
   };
   result.fieldEvidence = {
+    minPlayers: result.fields.minPlayers ? 'P1872 → ' + min : '',
+    maxPlayers: result.fields.maxPlayers ? 'P1873 → ' + max : '',
+    recommendedAge: result.fields.recommendedAge ? 'P2899 → ' + result.fields.recommendedAge : '',
+    minDurationMinutes: result.fields.durationMinutes ? 'P2047 → ' + result.fields.durationMinutes + ' min' : '',
+    maxDurationMinutes: result.fields.durationMinutes ? 'P2047 → ' + result.fields.durationMinutes + ' min' : '',
     mechanics: mechanics.map((value) => value.id + ' → ' + value.label.value).join('; '),
     gameType: cooperative ? 'P31 → Q1783817 (cooperative board game)' : '',
     tags: genres.map((v) => v.id + ' → ' + v.label.value).join('; '),
   };
+  result.publicationYear = claims(entity, 'P577').map((c) => c.mainsnak.datavalue?.value?.time?.match(/^\+(\d{4})-/)?.[1]).find(Boolean) || '';
   result.fieldLanguages = {
     mechanics: [...new Set(mechanics.map((value) => value.label.language))].join(', ') || language,
     title: title.language,
@@ -169,7 +175,21 @@ export async function wikidata(input, io) {
     }
     if (identity) diagnostics.identityResolution = { method: 'alias editorial revisado', references: identity.references, editionConfirmed: false };
   }
-  const candidates = await wikidataEntities(ids, input, io);
+  let candidates = await wikidataEntities(ids, input, io);
+  if (input.action !== 'detail' && !candidates.some((c) => titleMatches(c, input) || c.id === identity?.wikidata)) {
+    for (const term of discoveryQueries(input.query)) {
+      try {
+        // O filtro usa um identificador de catálogo, não tipos de videogame ou
+        // uma tradução presumida. Cada obra continua com seu próprio QID/BGG.
+        const result = await io(api({ action: 'query', list: 'search', srnamespace: '0', srsearch: `${term} haswbstatement:P2339`, srlimit: '8', formatversion: '2' }, input.interactive));
+        const found = (result.query?.search || []).map((h) => h.title).filter((id) => /^Q[1-9]\d{0,10}$/.test(id));
+        diagnostics.queries.push({ query: term, reason: 'descoberta por nome parcial; exige confirmar identidade', status: 'ok', rawCount: found.length });
+        const extra = await wikidataEntities(found.filter((id) => !ids.includes(id)), input, io);
+        candidates.push(...extra.map((c) => ({ ...c, discoveryOnly: !titleMatches(c, input) })));
+      } catch (error) { diagnostics.failures.push({ stage: 'descoberta por nome parcial', error: error.message }); }
+    }
+  }
+  candidates = candidates.map((c) => ({ ...c, discoveryOnly: !titleMatches(c, input) }));
   for (const candidate of candidates)
     if (identity?.wikidata === candidate.id && candidate.identifiers.bgg === identity.bgg) {
       candidate.names.push(...identity.names.map((n) => ({ ...n, origin: 'alias editorial revisado' })));

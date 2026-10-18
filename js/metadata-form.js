@@ -14,6 +14,13 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
   let model = null,
     automatic = {},
     dirty = new Set();
+  const protectedField = (key) => {
+    const current = getCurrent(),
+      field = ['minPlayers', 'maxPlayers'].includes(key) ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(key) ? 'duration' : key;
+    const origin = current?.sources?.[field];
+    return dirty.has(key) || origin?.confirmedAt || /conferido|corrigido|ajustado por voc/i.test(origin?.source || '');
+  };
+  const unresolved = () => metadataKeys.filter((key) => model?.consistency[key] === 'conflict' && !protectedField(key));
   form.addEventListener('input', (event) => {
     if (event.target.matches('[data-metadata-title]')) {
       form.elements.namedItem('title').value = event.target.value;
@@ -28,9 +35,25 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
   });
   function render() {
     form.querySelectorAll('[data-metadata-field]').forEach((el) => el.remove());
+    form.querySelector('[data-metadata-review]')?.remove();
     const current = getCurrent();
     if (current) for (const mirror of form.querySelectorAll('[data-metadata-title]')) mirror.value = current.title;
     if (!model || !current) return;
+    const needed = unresolved(),
+      grouped = needed.filter((key) => !(key === 'maxPlayers' && needed.includes('minPlayers')) && !(key === 'maxDurationMinutes' && needed.includes('minDurationMinutes')));
+    const review = text('section', '');
+    review.dataset.metadataReview = '';
+    review.className = 'metadata-review';
+    const count = Object.keys(automatic).filter((key) => factSignature(current[key]) === factSignature(automatic[key])).length;
+    if (count || grouped.length)
+      review.append(
+        text(
+          'p',
+          `${count} ${count === 1 ? 'informação preenchida' : 'informações preenchidas'} automaticamente.${grouped.length ? ` ${grouped.length} ${grouped.length === 1 ? 'divergência precisa' : 'divergências precisam'} de sua confirmação.` : ''}`,
+        ),
+      );
+    const target = form.querySelector('[data-game-step="2"] h3') || form.querySelector('[data-game-step="2"]');
+    if (target) target.after(review);
     for (const key of metadataKeys) {
       const input = key === 'title' ? form.querySelector('[data-metadata-title]') || form.elements.namedItem(key) : form.elements.namedItem(key),
         facts = model.alternatives[key];
@@ -39,21 +62,25 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
       helper.dataset.metadataField = key;
       helper.className = 'metadata-origin';
       const conflict = model.consistency[key] === 'conflict';
+      const requiresDecision = needed.includes(key);
+      if (requiresDecision && !grouped.includes(key)) continue;
       helper.classList.toggle('metadata-conflict', conflict);
       const origin = model.fieldSources[key];
       const same = factSignature(current[key]) === factSignature(model.fields[key]);
       helper.append(
         text(
           'summary',
-          conflict
-            ? 'Valores diferentes · conferir'
+          requiresDecision
+            ? `${fieldLabels[key]} · escolha o valor`
             : dirty.has(key)
               ? 'Sua edição foi preservada · ver fontes'
-              : model.consistency[key] === 'consistent'
-                ? 'Fontes concordam'
-                : !same
-                  ? 'Sugestão disponível · ver origem'
-                  : `Origem: ${origin.origins?.length > 1 ? 'fontes reunidas' : sourceNames[origin.source] || origin.source}`,
+              : ['consistent', 'consensus'].includes(model.consistency[key])
+                ? 'Fontes concordam · ver alternativas'
+                : model.consistency[key] === 'manual-preferred'
+                  ? 'Manual desta edição · ver alternativas'
+                  : !same
+                    ? 'Sugestão disponível · ver origem'
+                    : `Origem: ${origin.origins?.length > 1 ? 'fontes reunidas' : sourceNames[origin.source] || origin.source}`,
         ),
       );
       const unique = facts.filter((f, i) => facts.findIndex((other) => factSignature(f.value) === factSignature(other.value)) === i);
@@ -81,7 +108,7 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
           link.rel = 'noopener noreferrer';
           row.append(link);
         }
-        if (factSignature(current[key]) !== factSignature(fact.value)) {
+        if (requiresDecision || factSignature(current[key]) !== factSignature(fact.value)) {
           const button = text('button', 'Usar este valor');
           button.type = 'button';
           button.className = 'text-button';
@@ -102,7 +129,7 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
               }
             }
             const latest = getCurrent();
-            if (Object.keys(values).some((k) => latest[k] != null && latest[k] !== '' && display(latest[k]) !== display(values[k])) && !confirm('Substituir esses valores no formulário?')) return;
+            if (Object.keys(values).some((k) => protectedField(k) && display(latest[k]) !== display(values[k])) && !confirm('Substituir os valores que você já conferiu?')) return;
             for (const k of Object.keys(values)) dirty.add(k);
             apply(values, { ...model, fieldSources }, { automatic: false });
             render();
@@ -110,6 +137,11 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
           row.append(button);
         }
         helper.append(row);
+      }
+      if (requiresDecision) {
+        helper.open = true;
+        review.append(helper);
+        continue;
       }
       // Não colocar controles interativos dentro de labels de inputs.
       const label = input.closest('label');
@@ -124,8 +156,19 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
     }
   }
   return {
+    unresolved,
     update(next) {
       model = next;
+      const current = getCurrent();
+      if (current) {
+        const removed = {};
+        for (const [key, value] of Object.entries(automatic)) {
+          if (Object.hasOwn(next?.fields || {}, key) && next.consistency?.[key] !== 'conflict') continue;
+          if (!protectedField(key) && factSignature(current[key]) === factSignature(value)) removed[key] = ['tags', 'mechanics'].includes(key) ? [] : ['title', 'description', 'edition', 'gameType'].includes(key) ? '' : null;
+          delete automatic[key];
+        }
+        if (Object.keys(removed).length) apply(removed, next || { fields: {}, fieldSources: {}, alternatives: {}, consistency: {} }, { automatic: true, retract: true });
+      }
       if (!next || !getCurrent()) {
         render();
         return;

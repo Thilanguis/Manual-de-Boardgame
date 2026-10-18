@@ -14,7 +14,7 @@ test('PDF, internet e IA completam uma ficha; PDF vence, listas se unem e IA nã
   const m = consolidateMetadata(game, [ai, web, pdf]);
   assert.equal(m.fields.minPlayers, 3);
   assert.equal(m.consistency.minPlayers, 'conflict');
-  assert.equal(m.consistency.maxPlayers, 'consistent');
+  assert.equal(m.consistency.maxPlayers, 'conflict', 'a faixa inteira exige uma decisão, não somente seu mínimo');
   assert.equal(m.consistency.recommendedAge, 'single-source');
   assert.equal(m.fieldSources.description.source, 'gemini');
   assert.equal(m.fields.maxDurationMinutes, 90);
@@ -23,7 +23,7 @@ test('PDF, internet e IA completam uma ficha; PDF vence, listas se unem e IA nã
 });
 
 test('correções, campos confirmados e apagamentos manuais vencem respostas progressivas', () => {
-  const m = consolidateMetadata(game, [candidate('wikipedia', { minPlayers: 3, description: 'Construa povoados e troque recursos com os outros jogadores.', tags: ['Estratégia'] })]);
+  const m = consolidateMetadata(game, [candidate('wikipedia', { minPlayers: 3, maxPlayers: 4, description: 'Construa povoados e troque recursos com os outros jogadores.', tags: ['Estratégia'] })]);
   assert.equal(metadataUpdates(m, game).minPlayers, 3);
   assert.equal(metadataUpdates(m, { ...game, minPlayers: 2 }).minPlayers, undefined);
   assert.equal(metadataUpdates(m, { ...game, minPlayers: null }, new Set(['minPlayers'])).minPlayers, undefined);
@@ -70,6 +70,6 @@ test('PDF português atual e histórico legado fornecem fatos sem transformar co
   assert.equal(pdf.evidence.minPlayers.page, 2);
   assert.equal(pdf.fields.description, undefined);
   const m = consolidateMetadata(old, [pdf, candidate('wikipedia', { minPlayers: 2, maxPlayers: 4 })]);
-  assert.equal(m.consistency.minPlayers, 'conflict');
+  assert.equal(m.consistency.minPlayers, 'manual-preferred');
   assert.equal(m.fields.minPlayers, 3);
 });

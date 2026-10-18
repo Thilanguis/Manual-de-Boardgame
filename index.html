@@ -317,7 +317,7 @@
           <li>
             <button type="button" data-step-target="2">
               <span>2</span>
-              Conferir dados
+              Conferir informações
             </button>
           </li>
           <li>
@@ -365,7 +365,7 @@
                 <h3 id="identify-heading" tabindex="-1">Qual jogo vai para a estante?</h3>
                 <div class="review-notice">
                   <svg><use href="#i-info" /></svg>
-                  <p id="review-notice-text">Confira o título e a capa. Sugestões só serão aplicadas com sua confirmação.</p>
+                  <p id="review-notice-text">Confira o título e a capa. Você poderá ajustar os dados na próxima etapa.</p>
                 </div>
                 <label>
                   Nome do jogo
@@ -383,41 +383,13 @@
                   <p id="registration-pdf-permission" hidden>Sua conta não tem permissão para acrescentar documentos.</p>
                   <div id="additional-pdfs" aria-live="polite"></div>
                 </fieldset>
+              </section>
+              <section class="game-step" data-game-step="2" aria-labelledby="information-heading" hidden>
+                <h3 id="information-heading" tabindex="-1">Confira as informações</h3>
+                <p class="step-intro">Confira os dados reunidos e ajuste o que precisar.</p>
                 <section id="research-panel" class="research-panel" aria-label="Pesquisa de jogos em múltiplas fontes">
-                  <h3>Completar informações</h3>
-                  <details class="research-options">
-                    <summary>Opções da pesquisa</summary>
-                    <div class="form-row">
-                      <label>
-                        Prioridade da pesquisa
-                        <select data-research-language>
-                          <option value="pt-BR">Português brasileiro</option>
-                          <option value="fr">Francês</option>
-                          <option value="en">Inglês</option>
-                        </select>
-                      </label>
-                      <label>
-                        Tipo do manual
-                        <select data-research-kind>
-                          <option value="unknown">Ainda não confirmado</option>
-                          <option value="base">Jogo base</option>
-                          <option value="expansion">Expansão</option>
-                        </select>
-                      </label>
-                    </div>
-                    <label>
-                      Nomes alternativos
-                      <textarea data-research-aliases rows="2" maxlength="1000" placeholder="Um por linha. Opcional: en: título ou fr: título"></textarea>
-                    </label>
-                    <label class="research-choice">
-                      <input type="checkbox" data-research-refresh />
-                      Consultar novamente as fontes
-                    </label>
-                    <button type="button" class="text-button" data-research-ocr>Ler texto das primeiras páginas</button>
-                  </details>
                   <div class="research-actions">
-                    <button type="button" class="button secondary small" data-research-search>Pesquisar fontes</button>
-                    <button type="button" class="text-button" data-research-expand>Ampliar pesquisa</button>
+                    <button type="button" class="button secondary small" data-research-search>Completar informações</button>
                     <button type="button" class="text-button" data-research-cancel hidden>Cancelar pesquisa</button>
                   </div>
                   <p data-research-status role="status" aria-live="polite"></p>
@@ -426,35 +398,58 @@
                   <div data-research-review class="research-review" hidden></div>
                   <details>
                     <summary>Detalhes da pesquisa</summary>
+                    <details class="research-options">
+                      <summary>Opções da pesquisa</summary>
+                      <div class="form-row">
+                        <label>
+                          Prioridade da pesquisa
+                          <select data-research-language>
+                            <option value="pt-BR">Português brasileiro</option>
+                            <option value="fr">Francês</option>
+                            <option value="en">Inglês</option>
+                          </select>
+                        </label>
+                        <label>
+                          Tipo do manual
+                          <select data-research-kind>
+                            <option value="unknown">Ainda não confirmado</option>
+                            <option value="base">Jogo base</option>
+                            <option value="expansion">Expansão</option>
+                          </select>
+                        </label>
+                      </div>
+                      <label>
+                        Nomes alternativos
+                        <textarea data-research-aliases rows="2" maxlength="1000" placeholder="Um por linha. Opcional: en: título ou fr: título"></textarea>
+                      </label>
+                      <label class="research-choice">
+                        <input type="checkbox" data-research-refresh />
+                        Consultar novamente as fontes
+                      </label>
+                    </details>
                     <p data-research-diagnostics></p>
                     <div data-research-availability class="research-availability"></div>
                     <p data-research-version></p>
                     <div data-research-sources></div>
+                    <div data-research-extras></div>
+                    <details class="manual-reference">
+                      <summary>Consultar BoardGameGeek manualmente</summary>
+                      <div class="bgg-search">
+                        <button class="button secondary small" type="button" id="bgg-search" aria-describedby="bgg-status">
+                          <svg><use href="#i-search" /></svg>
+                          Identificar no BoardGameGeek
+                        </button>
+                        <a class="button secondary small" id="bgg-web-search" target="_blank" rel="noopener noreferrer" href="https://boardgamegeek.com/geeksearch.php?action=search&amp;objecttype=boardgame" hidden>Pesquisar no site do BGG ↗</a>
+                        <span id="bgg-status" role="status"></span>
+                      </div>
+                      <div id="bgg-results" class="bgg-results"></div>
+                    </details>
                   </details>
                 </section>
-                <details class="manual-reference">
-                  <summary>Consultar BoardGameGeek manualmente</summary>
-                  <div class="bgg-search">
-                    <button class="button secondary small" type="button" id="bgg-search" aria-describedby="bgg-status">
-                      <svg><use href="#i-search" /></svg>
-                      Identificar no BoardGameGeek
-                    </button>
-                    <a class="button secondary small" id="bgg-web-search" target="_blank" rel="noopener noreferrer" href="https://boardgamegeek.com/geeksearch.php?action=search&amp;objecttype=boardgame" hidden>Pesquisar no site do BGG ↗</a>
-                    <span id="bgg-status" role="status"></span>
-                  </div>
-                  <div id="bgg-results" class="bgg-results"></div>
-                </details>
-              </section>
-              <section class="game-step" data-game-step="2" aria-labelledby="information-heading" hidden>
-                <h3 id="information-heading" tabindex="-1">Confira as informações</h3>
-                <p class="step-intro">Confira os dados reunidos e ajuste o que precisar.</p>
-                <label>Nome do jogo
+                <label>
+                  Nome do jogo
                   <input data-metadata-title maxlength="160" />
                 </label>
-                <div id="research-pending" class="review-notice" hidden>
-                  <p id="research-pending-text" role="status"></p>
-                  <button id="review-pending-suggestions" type="button" class="button secondary small">Revisar sugestões encontradas</button>
-                </div>
                 <p id="research-applied" class="step-intro" role="status" hidden></p>
                 <label>
                   Sobre o jogo
@@ -613,6 +608,7 @@
         <nav class="management-tabs" aria-label="Gerenciar jogo">
           <button class="button secondary" data-game-management="manage-documents-section">PDFs</button>
           <button class="button secondary" data-game-management="manage-information">Informações</button>
+          <button class="button secondary" data-game-management="manage-rules">Regras</button>
         </nav>
         <section id="manage-documents-section">
           <h3>PDFs do jogo</h3>
@@ -624,6 +620,10 @@
             <svg><use href="#i-edit" /></svg>
             Editar informações
           </button>
+          <div id="saved-game-information"></div>
+        </section>
+        <section id="manage-rules" hidden>
+          <h3>Manutenção das regras</h3>
           <div id="game-knowledge-admin"></div>
         </section>
       </div>
@@ -917,7 +917,7 @@
         </div>
         <div class="reader-zoom">
           <button class="icon-button" id="zoom-out" aria-label="Diminuir zoom">−</button>
-          <button class="text-button" id="zoom-fit" title="Ajustar à largura">100%</button>
+          <button class="text-button" id="zoom-fit" title="Ajustar página inteira" aria-label="Ajustar página inteira" aria-pressed="true">Ajustar</button>
           <button class="icon-button" id="zoom-in" aria-label="Ampliar zoom">+</button>
         </div>
       </header>

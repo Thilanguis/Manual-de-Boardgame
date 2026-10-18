@@ -49,17 +49,20 @@ export function extractMetadata(text) {
   const playerPatterns = [
     /(?:jogadores|players|joueurs)\s*[:：]?\s*(\d{1,2})\s*(?:a|à|to|até|e|-|–)\s*(\d{1,2})\b/i,
     /\b(\d{1,2})\s*(?:a|à|to|até|e|-|–)\s*(\d{1,2})\s*(?:jogadores|players|joueurs)\b/i,
+    /\b(um|uma|one|un|une|dois|two|deux|três|three|trois|quatro|four|quatre|cinco|five|cinq|seis|six)\s+(?:a|à|to|até|e|-)\s+(um|uma|one|un|une|dois|two|deux|três|three|trois|quatro|four|quatre|cinco|five|cinq|seis|six)\s+(?:jogadores|players|joueurs)\b/i,
     /(?:jogadores|players|joueurs)\s*[:：]\s*(\d{1,2})\b/i,
     /\b(\d{1,2})\s*(?:jogadores|players|joueurs)\b/i,
   ];
   // Múltiplas faixas podem pertencer a expansões/cenários; não escolher a primeira.
   const matchesFor = (patterns) => patterns.flatMap((pattern) => [...normalized.matchAll(new RegExp(pattern.source, 'gi'))]);
-  const ranges = matchesFor(playerPatterns.slice(0, 2));
-  const playerMatches = ranges.length ? ranges : matchesFor(playerPatterns.slice(2));
-  const uniquePlayers = new Map(playerMatches.map((m) => [m[1] + ':' + (m[2] || m[1]), m]));
+  const numberWords = { um: 1, uma: 1, one: 1, un: 1, une: 1, dois: 2, two: 2, deux: 2, tres: 3, three: 3, trois: 3, quatro: 4, four: 4, quatre: 4, cinco: 5, five: 5, cinq: 5, seis: 6, six: 6 };
+  const playerNumber = (v) => numberWords[normalizeText(v)] || Number(v);
+  const ranges = matchesFor(playerPatterns.slice(0, 3));
+  const playerMatches = ranges.length ? ranges : matchesFor(playerPatterns.slice(3));
+  const uniquePlayers = new Map(playerMatches.map((m) => [playerNumber(m[1]) + ':' + playerNumber(m[2] || m[1]), m]));
   const playerMatch = uniquePlayers.size === 1 ? [...uniquePlayers.values()][0] : null;
-  let minPlayers = playerMatch ? Number(playerMatch[1]) : null;
-  let maxPlayers = playerMatch ? Number(playerMatch[2] || playerMatch[1]) : null;
+  let minPlayers = playerMatch ? playerNumber(playerMatch[1]) : null;
+  let maxPlayers = playerMatch ? playerNumber(playerMatch[2] || playerMatch[1]) : null;
   if (minPlayers < 1 || maxPlayers > 100 || minPlayers > maxPlayers) minPlayers = maxPlayers = null;
   const labeledTime =
     /(?:dura[cç][aã]o(?: da partida| do jogo)?|tempo (?:de jogo|de partida)|playing time|playtime|game length|durée(?: du jeu)?|temps de jeu)\s*[:：]?\s*(?:de |from |entre )?(\d{1,3})(?:\s*(?:a|à|to|e|-|até)\s*(\d{1,3}))?\s*(minutos?|minutes?|min\b|horas?|hours?|heures?)/i;

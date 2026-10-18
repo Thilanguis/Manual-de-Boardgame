@@ -69,13 +69,17 @@ export async function createFirebaseRepository(config) {
   const repository = {
     mode: 'firebase',
     fileProvider: 'drive',
+    draftKnowledge(input, options) {
+      requireWrite();
+      return files.draftKnowledge(input, options);
+    },
     getKnowledge(game, options) {
       requireRead();
       return files.knowledge(game, undefined, options);
     },
-    generateKnowledge(game, { force = false, requestId = crypto.randomUUID() } = {}) {
+    generateKnowledge(game, { force = false, reuseOnly = false, expectedIdentity, requestId = crypto.randomUUID() } = {}) {
       requireWrite(force ? 'edit' : undefined);
-      return files.knowledge(game, { force, requestId });
+      return files.knowledge(game, { force, reuseOnly, requestId, ...(expectedIdentity ? { expectedIdentity } : {}) });
     },
     reviewKnowledge(game, revision, sections) {
       requireWrite('edit');

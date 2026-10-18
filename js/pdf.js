@@ -152,6 +152,7 @@ export async function inspectPdf(file, { maxBytes, onProgress = () => {}, signal
     canvas.width = canvas.height = 0;
     const candidates = titleCandidates({ metadataTitle: metadata.info?.Title, filename: file.name, lines: firstLines });
     const fields = extractMetadata(text);
+    if (fields.sources.originalTitle) fields.sources.originalTitle.sourceHash = Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, '0')).join('');
     if (fields.language === 'other' && /(?:^|[_\s\[])pt[-_ ]?br(?:\b|_)/i.test(metadata.info?.Title + ' ' + file.name)) {
       fields.language = 'pt-BR';
       fields.sources.language = { source: 'PDF · idioma explícito no nome/metadados; confirmar', excerpt: file.name };

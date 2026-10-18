@@ -1,11 +1,14 @@
 import { consolidateCandidates, factSignature, researchName } from './research-knowledge.js';
 import { sameWork } from './research-client.js';
 import { reviewedIdentity } from './game-identities.js';
+import { resolveMetadataConsensus, independenceFor } from './metadata-consensus.js';
 
 export const metadataKeys = ['title', 'edition', 'description', 'minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'recommendedAge', 'tags', 'mechanics', 'gameType'];
 export const sourceField = (key) => (['minPlayers', 'maxPlayers'].includes(key) ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(key) ? 'duration' : key);
 export const emptyValue = (value) => value == null || value === '' || (Array.isArray(value) && !value.length);
-const compatible = (a, b) => (!a.edition || !b.edition || researchName(a.edition) === researchName(b.edition)) && !(a.kind && b.kind && a.kind !== 'unknown' && b.kind !== 'unknown' && a.kind !== b.kind);
+const kindOf = (v) =>
+  v.kind && v.kind !== 'unknown' ? v.kind : /expansao|expansion/.test(researchName(v.gameType || v.fields?.gameType)) ? 'expansion' : /jogo base|base game/.test(researchName(v.gameType || v.fields?.gameType)) ? 'base' : 'unknown';
+const compatible = (a, b) => (!a.edition || !b.edition || researchName(a.edition) === researchName(b.edition)) && !(kindOf(a) !== 'unknown' && kindOf(b) !== 'unknown' && kindOf(a) !== kindOf(b));
 const equal = (a, b) => factSignature(a) === factSignature(b);
 const signature = (value) => (Array.isArray(value) ? JSON.stringify([...new Set(value.map(researchName))].sort()) : typeof value === 'string' ? researchName(value) : factSignature(value));
 
@@ -30,7 +33,9 @@ export function consolidateMetadata(game, input, chosen = null) {
   const identity = reviewedIdentity(game.title);
   const known = [...(game.sources?.catalog?.matches || []), ...(identity ? [{ identifiers: { wikidata: identity.wikidata, bgg: identity.bgg }, kind: 'unknown' }] : [])];
   const matching = groups.filter((group) => known.some((item) => sameWork({ kind: 'unknown', ...item }, group)));
-  const named = groups.filter((group) => group.names.some((name) => researchName(name.value) === researchName(game.title)));
+  const originalTitle = game.sources?.originalTitle;
+  const titles = [game.title, hash && originalTitle?.sourceHash === hash && /^PDF/i.test(originalTitle.source || '') && originalTitle.excerpt].filter(Boolean).map(researchName);
+  const named = groups.filter((group) => group.names.some((name) => titles.includes(researchName(name.value))));
   const eligible = matching.length ? matching : named.filter((group) => !known.some((item) => Object.entries(item.identifiers || {}).some(([key, id]) => id && group.identifiers?.[key] && id !== group.identifiers[key])));
   const selected = chosen ? groups.find((group) => group.members.some((member) => `${member.source}:${member.id}` === chosen)) : eligible.length === 1 ? eligible[0] : null;
   const members = [...manual, ...(selected?.members || [])];
@@ -45,7 +50,16 @@ export function consolidateMetadata(game, input, chosen = null) {
     for (const key of metadataKeys) {
       if (!(key in single.fields)) continue;
       const origin = single.fieldSources[key];
-      const fact = { ...origin, value: single.fields[key], manualHash: member.manualHash || '', edition: member.edition || '', editionUnconfirmed: !['pdf', 'gemini'].includes(member.source) && !!game.edition && !member.edition };
+      const fact = {
+        ...origin,
+        value: single.fields[key],
+        independenceKey: independenceFor(member, key),
+        independenceVerified: member.independenceVerified === true || !!member.sourceFamily || !!member.derivedFrom,
+        quality: member.quality || 'catalog',
+        manualHash: member.manualHash || '',
+        edition: member.edition || '',
+        editionUnconfirmed: !['pdf', 'gemini'].includes(member.source) && (!game.edition || !member.edition || !!member.requiresEditionReview),
+      };
       (alternatives[key] ||= []).push(fact);
       if (!(key in fields)) {
         fields[key] = fact.value;
@@ -81,7 +95,8 @@ export function consolidateMetadata(game, input, chosen = null) {
       }
     }
   }
-  return { fields, fieldSources, alternatives, consistency, members, ambiguous: !selected && groups.length > 0 ? groups : [], pendingTranslations: members.flatMap((c) => consolidateCandidates([c])[0].pendingTranslations || []) };
+  const resolutions = resolveMetadataConsensus(alternatives, fields, fieldSources, consistency);
+  return { fields, fieldSources, alternatives, consistency, resolutions, members, ambiguous: !selected && groups.length > 0 ? groups : [], pendingTranslations: members.flatMap((c) => consolidateCandidates([c])[0].pendingTranslations || []) };
 }
 
 // Uma resposta progressiva pode atualizar sugestões automáticas anteriores,
@@ -90,8 +105,11 @@ export function metadataUpdates(model, game, dirty = new Set(), automatic = {}) 
   const values = {};
   for (const [key, value] of Object.entries(model.fields)) {
     const origin = game.sources?.[sourceField(key)];
-    if (dirty.has(key) || origin?.confirmedAt || /conferido|corrigido|ajustado por voc/i.test(origin?.source || '')) continue;
-    if (emptyValue(game[key]) || (key in automatic && equal(game[key], automatic[key]))) values[key] = value;
+    if (model.consistency?.[key] === 'conflict' || dirty.has(key) || origin?.confirmedAt || /conferido|corrigido|ajustado por voc/i.test(origin?.source || '')) continue;
+    // Classificações extraídas automaticamente do PDF podem ser completadas,
+    // sem remover nenhum termo existente nem tocar em listas editadas/conferidas.
+    const extendsPdfList = ['tags', 'mechanics'].includes(key) && /^PDF/i.test(origin?.source || '') && Array.isArray(game[key]) && Array.isArray(value) && game[key].every((item) => value.some((v) => researchName(item) === researchName(v)));
+    if (!equal(game[key], value) && (emptyValue(game[key]) || extendsPdfList || (key in automatic && equal(game[key], automatic[key])))) values[key] = value;
   }
   // Não completar metade de uma faixa com outro valor sem conferência.
   for (const pair of [

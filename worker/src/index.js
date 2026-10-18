@@ -7,8 +7,9 @@ import { XMLParser } from 'fast-xml-parser';
 import { parseSearch, parseThing } from '../../backend/bgg-parser.js';
 import { cleanupGuides } from './guide-assets.js';
 import { queryCatalog, researchCapabilities } from './catalog/index.js';
-import { RESEARCH_VERSION, RESEARCH_PROTOCOL } from '../../js/research-contract.js';
+import { RESEARCH_VERSION, RESEARCH_PROTOCOL, RESEARCH_QUERY_VERSION } from '../../js/research-contract.js';
 import { knowledgeEndpoint } from './game-knowledge.js';
+import { draftKnowledgeEndpoint } from './draft-knowledge.js';
 export { KnowledgeStore } from './game-knowledge.js';
 
 const CHUNK_LIMIT = 8 * 1024 * 1024,
@@ -17,7 +18,7 @@ const xmlParser = new XMLParser({ ignoreAttributes: false, processEntities: true
 const bggCache = new Map();
 const gameIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
-async function readJSON(request) {
+async function readJSON(request, limit = JSON_LIMIT) {
   if (!request.body) throw new ApiError(400, 'Envie os dados da operação.');
   const reader = request.body.getReader();
   let size = 0,
@@ -26,7 +27,7 @@ async function readJSON(request) {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.length;
-    if (size > JSON_LIMIT) {
+    if (size > limit) {
       await reader.cancel();
       throw new ApiError(413, 'Dados da operação muito grandes.');
     }
@@ -411,12 +412,16 @@ export async function handleRequest(request, env, ctx) {
         ok: true,
         apiVersion: RESEARCH_VERSION,
         researchProtocol: RESEARCH_PROTOCOL,
+        researchQueryVersion: RESEARCH_QUERY_VERSION,
         fileProtocol: 2,
         privateAccess: true,
         documentRemovalProtocol: 2,
         maxPdfBytes: Math.min(MAX_PDF_BYTES, Number(env.MAX_PDF_BYTES || MAX_PDF_BYTES)),
         knowledgeProtocol: 1,
         manualKnowledgeProtocol: env.KNOWLEDGE_FROM_MANUAL === 'true' ? 1 : 0,
+        profileMetadataProtocol: 1,
+        knowledgeReuseProtocol: 1,
+        informationIdentityProtocol: 1,
         knowledgeConfigured: !!(env.GAME_KNOWLEDGE && env.GEMINI_API_KEY),
         manualAiEnabled: env.ALLOW_MANUAL_AI === 'true',
         firebaseProject: env.FIREBASE_PROJECT_ID,
@@ -433,7 +438,8 @@ export async function handleRequest(request, env, ctx) {
       identity.profile = access;
       const research = /^\/v1\/research\/(wikidata|wikipedia|ludopedia|bgg)$/.exec(url.pathname);
       const knowledge = /^\/v1\/games\/([a-f0-9-]{36})\/knowledge$/.exec(url.pathname);
-      if (knowledge && ['GET', 'POST'].includes(request.method)) response = await knowledgeEndpoint(request, env, identity, knowledge[1], request.method === 'POST' ? await readJSON(request) : null, ctx);
+      if (url.pathname === '/v1/research/draft-knowledge' && request.method === 'POST') response = await draftKnowledgeEndpoint(request, env, identity, await readJSON(request, 1000000), ctx);
+      else if (knowledge && ['GET', 'POST'].includes(request.method)) response = await knowledgeEndpoint(request, env, identity, knowledge[1], request.method === 'POST' ? await readJSON(request) : null, ctx);
       else if (url.pathname === '/v1/research/sources' && request.method === 'GET') response = json(researchCapabilities(env));
       else if (research && request.method === 'POST') {
         const input = await readJSON(request);

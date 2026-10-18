@@ -18,6 +18,7 @@ test('Wikipédia importa descrição licenciada somente de artigo vinculado ao j
   assert.match(result[0].licenseUrl, /by-sa\/4.0/);
   assert.equal(result[0].fields.minPlayers, undefined);
   assert.match(result[0].fieldReasons.recommendedAge, /não foi extraído/);
+  assert(result[0].names.some((n) => n.value === 'Descobridores de Catan' && n.language === 'pt'));
 });
 test('artigo de filme homônimo e artigo sem identidade verificável são descartados', async () => {
   const result = await wikipedia({ query: 'Jogo', pdfLanguage: 'pt-BR', preferredLanguage: 'pt-BR' }, async (url) =>

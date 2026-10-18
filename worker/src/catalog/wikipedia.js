@@ -46,7 +46,7 @@ export async function wikipedia(input, io) {
     const query = normalizeText(input.query),
       names = [article.title, ...entity.names.map((n) => n.value)].map(normalizeText);
     const searches = [query, ...(input.alternateTitles || []).map((name) => normalizeText(name.value))];
-    if (!searches.some((term) => names.some((name) => name === term || (term.length >= 5 && (name.includes(term) || term.includes(name)))))) continue;
+    if (!searches.some((term) => names.some((name) => name === term))) continue;
     const url = new URL(`https://${article.language}.wikipedia.org/w/index.php`);
     url.searchParams.set('curid', article.pageid);
     const description =
@@ -57,6 +57,7 @@ export async function wikipedia(input, io) {
         ?.slice(0, 1100) || '';
     candidates.push({
       ...entity,
+      names: [...entity.names, { value: article.title, language: article.language, origin: 'artigo vinculado ao mesmo item Wikidata' }],
       source: 'wikipedia',
       url: url.href,
       fields: { title: article.title, ...(description ? { description } : {}) },

@@ -67,6 +67,7 @@ export function knowledgeFixture() {
                       text: JSON.stringify({
                         language: 'pt-BR',
                         unconfirmed: [],
+                        metadata: typeof faults.metadata==='function' ? faults.metadata(prompt) : faults.metadata || {},
                         sections: [
                           { topic: 'visao-geral', title: 'Visão geral', text: 'A Sociedade coopera para proteger Frodo e alcançar o objetivo apresentado no manual.', sourceId: source.id, page: first.page, evidenceId: first.passages[0].id },
                           { topic: 'acoes', title: 'Como atacar', text: 'Para atacar, gaste uma ação e consulte a carta do cenário.', sourceId: source.id, page: last.page, evidenceId: last.passages[0].id },

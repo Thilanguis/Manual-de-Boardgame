@@ -1,6 +1,6 @@
 import { validateGame, durationLabel, playersLabel } from './model.js';
 
-export function createGameSteps({ form, dialog, getSession, getDocuments = () => [], isBusy = () => false }) {
+export function createGameSteps({ form, dialog, getSession, getDocuments = () => [], isBusy = () => false, onEnter = () => {} }) {
   let current = 1,
     invalidControl;
   const $ = (id) => document.getElementById(id),
@@ -67,7 +67,11 @@ export function createGameSteps({ form, dialog, getSession, getDocuments = () =>
           : 'Desmarcado: somente a equipe administrativa poderá ler este manual.';
   }
   function go(next, check = true, focus = true) {
-    if (check && isBusy()) return false;
+    if (check && isBusy()) {
+      $('save-error').textContent = 'Aguarde a conclusão ou cancele a operação para continuar.';
+      $('save-error').hidden = false;
+      return false;
+    }
     if (check) $('save-error').hidden = true;
     if (check && next > current)
       for (let step = current; step < next; step++)
@@ -95,6 +99,7 @@ export function createGameSteps({ form, dialog, getSession, getDocuments = () =>
     const scroller = form.querySelector('.review-grid');
     scroller.scrollTop = 0;
     if (focus) steps[current - 1].querySelector('h3')?.focus({ preventScroll: true });
+    onEnter(current);
     return true;
   }
   $('game-step-nav')

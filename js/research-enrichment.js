@@ -16,16 +16,16 @@ export function savedKnowledgeCandidate(record, game) {
       const section = knowledge.sections?.find(
         (section) => section.topic === 'visao-geral' && section.review !== 'rejected' && section.text === fact.value && section.sourceId === source.id && (section.sourceHash || source.sourceHash) === source.sourceHash,
       );
-      if (!section) continue;
-      evidence[key] = { page: section.page, excerpt: section.quote };
+      if (!section && !knowledge.profile?.description) continue;
+      evidence[key] = { page: fact.page || section?.page, excerpt: fact.quote || section?.quote };
     }
     fields[key] = fact.value;
-    evidence[key] = { ...evidence[key], documentId: source.documentId || 'main', sourceHash: source.sourceHash, sourceId: source.id };
+    evidence[key] = { ...evidence[key], ...(fact.page ? { page: fact.page, excerpt: fact.excerpt || fact.quote, evidenceId: fact.evidenceId } : {}), documentId: source.documentId || 'main', sourceHash: source.sourceHash, sourceId: source.id };
   }
   if (!Object.keys(fields).length) return null;
   return {
     source: 'gemini',
-    id: game.id,
+    id: game.id || `draft-${hash}`,
     manualHash: hash,
     identifiers: { manual: hash },
     fields,

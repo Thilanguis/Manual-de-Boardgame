@@ -17,6 +17,25 @@ if (!/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST || '') || !/^
 const port = Number(process.env.FIRESTORE_EMULATOR_HOST.split(':')[1]);
 const env = await initializeTestEnvironment({ projectId: project, firestore: { host: '127.0.0.1', port, rules: await readFile('firestore.rules', 'utf8') } });
 const backend = await workerFixture({ project, origin: base, initialFiles: [], enableKnowledge: true, manualKnowledge: true });
+backend.knowledge.faults.metadata = (prompt) => {
+  const s = prompt.sources[0],
+    reference = { sourceId: s.id, page: 1, evidenceId: s.pages[0].passages[0].id };
+  return Object.fromEntries(
+    Object.entries({
+      title: 'O Senhor dos Anéis: Sina da Sociedade',
+      edition: 'Terceira edição',
+      description: 'Coopere com a Sociedade para proteger Frodo e cumprir a missão.',
+      minPlayers: 1,
+      maxPlayers: 5,
+      minDurationMinutes: 60,
+      maxDurationMinutes: 150,
+      recommendedAge: 14,
+      tags: ['Fantasia'],
+      mechanics: ['Gestão de cartas'],
+      gameType: 'Jogo base cooperativo',
+    }).map(([k, value]) => [k, { ...reference, value }]),
+  );
+};
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const contexts = [],
   errors = [];
@@ -78,7 +97,7 @@ async function pageFor(email) {
   contexts.push(context);
   await context.route('**/*', (route) => {
     const url = new URL(route.request().url());
-    return url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname) ? route.continue() : route.abort();
+    return url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname) ? route.fallback() : route.abort();
   });
   await context.route('**/config/app-config.js', (route) =>
     route.fulfill({
@@ -133,7 +152,7 @@ try {
     font = await pdf.embedFont(StandardFonts.Helvetica);
   pdf.setTitle(title);
   for (const lines of [
-    [title, 'Objetivo: a Sociedade coopera para proteger Frodo e cumprir a missao.', 'Jogadores: 1 a 5', 'Duracao: 60 a 150 minutos', 'Idade: 14 anos'],
+    [title, 'Objetivo: a Sociedade coopera para proteger Frodo e cumprir a missao.', 'Jogadores: 1 a 5', 'Duracao: 60 a 150 minutos', 'Idade: 14 anos', 'Terceira edição', 'Tipo: Jogo base cooperativo. Tema: Fantasia. Mecanica: gestao de cartas.'],
     ['Preparacao', 'Distribua quatro cartas e coloque as fichas sobre a mesa. Cada jogador recebe um personagem.'],
     ['Acoes e combate', 'Para atacar, gaste uma acao e consulte a carta do cenario.', 'Movimento: mova as pecas respeitando o limite do cenario.'],
   ]) {
@@ -165,19 +184,35 @@ try {
     return route.continue();
   });
   await owner.locator('#game-title').fill(title);
+  assert.equal(backend.knowledge.calls.length, 0, 'identificar não gera IA');
+  await owner.locator('[data-step-target="2"]').click();
+  assert.equal(backend.knowledge.calls.length, 0, 'abrir a conferência não gera IA');
   await owner.locator('[data-research-search]').click();
   await owner.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
-  await owner.locator('.research-card').getByRole('button', { name: 'Conferir informações', exact: true }).click();
-  assert.equal(await owner.locator('[data-metadata-field=minPlayers].metadata-conflict').count(), 1, 'conflito numérico aparece no campo, não em outra ficha');
+  await owner.waitForFunction(() => document.querySelector('[data-research-status]').textContent.includes('Ficha analisada'));
+  assert.equal(backend.knowledge.calls.length, 1, 'ficha e regras foram preparadas juntas antes de criar o jogo');
+  const beforeCreate = await fetch(`http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/${project}/databases/(default)/documents/games`, { headers: { Authorization: 'Bearer owner' } }).then((r) => r.json());
+  assert.equal(beforeCreate.documents?.length || 0, 0, 'o rascunho não cria um cadastro definitivo');
+  assert.equal(await owner.locator('[data-metadata-field=minPlayers].metadata-conflict').count(), 0, 'o manual da edição resolve a divergência externa');
+  assert.equal(await owner.locator('[name=edition]').inputValue(), 'Terceira edição');
+  assert.equal(await owner.locator('[name=recommendedAge]').inputValue(), '14');
+  assert.match(await owner.locator('[name=tags]').inputValue(), /Fantasia/);
+  assert.match(await owner.locator('[name=mechanics]').inputValue(), /Gestão de cartas/);
+  assert.equal(await owner.locator('[name=gameType]').inputValue(), 'Jogo base cooperativo');
   assert.equal(await owner.locator('[name=minPlayers]').inputValue(), '1', 'divergência externa não substitui o PDF sem seleção');
   await owner.locator('[name=language]').selectOption('pt-BR');
   await owner.locator('[data-step-target="3"]').click();
   await owner.locator('[name=confirmed]').check();
   await owner.locator('#save-game').click();
-  await owner.waitForFunction(() => !document.querySelector('#save-error').hidden && document.querySelector('#save-error').textContent.includes('alguns PDFs'));
+  try {
+    await owner.waitForFunction(() => !document.querySelector('#save-error').hidden && document.querySelector('#save-error').textContent.includes('alguns PDFs'));
+  } catch (error) {
+    console.log(await owner.locator('#save-error').textContent());
+    throw error;
+  }
   assert.equal(await owner.locator('#upload-dialog').evaluate((dialog) => dialog.open), true);
   assert.equal(await owner.locator('[data-registration-document]').count(), 1, `somente o PDF que falhou continua pendente: ${await owner.locator('.registration-pdf-row .inline-error').allTextContents()}`);
-  assert.equal(backend.knowledge.calls.length, 0, 'análise não começa antes de concluir o lote do cadastro');
+  assert.equal(backend.knowledge.calls.length, 1, 'falha no envio não repete a análise do rascunho');
   await owner.locator('[data-step-target="3"]').click();
   await owner.locator('[name=confirmed]').check();
   await owner.locator('#save-game').click();
@@ -194,18 +229,15 @@ try {
     (response) => response.data?.status === 'ready',
   );
   assert.equal(backend.knowledge.calls.length, 1, 'cadastro e preparo fazem uma única geração');
+  assert.equal((await backend.knowledge.storage.get('quota')).count, 1, 'promover o rascunho não consome outra geração da cota');
   assert.equal(
     ready.data.knowledge.sections.every((section) => section.review === 'unreviewed'),
     true,
   );
   const saved = await inspect(`games/${id}`);
   assert.equal(saved.sources.metadata.manualHash, saved.manual.sha256);
-  assert.equal(saved.sources.metadata.consistency.minPlayers, 'conflict');
-  assert.deepEqual(
-    saved.sources.metadata.alternatives.minPlayers.map((fact) => fact.value),
-    [1, 2],
-    'a divergência e suas origens foram persistidas',
-  );
+  assert.equal(saved.sources.metadata.consistency.minPlayers, 'manual-preferred');
+  assert.deepEqual([...new Set(saved.sources.metadata.alternatives.minPlayers.map((fact) => fact.value))], [1, 2], 'a divergência e suas origens foram persistidas');
   assert.equal(Object.keys(saved.documents).length, 3);
   assert.deepEqual(
     Object.values(saved.documents)
@@ -282,7 +314,9 @@ try {
   await owner.locator('#reader-close').click();
   await owner.locator('.card-main').click();
   await openGameManagement(owner, 'manage-information');
-  assert.deepEqual(await owner.locator('.management-tabs button').allTextContents(), ['PDFs', 'Informações']);
+  assert.deepEqual(await owner.locator('.management-tabs button').allTextContents(), ['PDFs', 'Informações', 'Regras']);
+  assert.equal(await owner.getByRole('button', { name: 'Atualizar conhecimento com IA', exact: true }).isVisible(), false);
+  await openGameManagement(owner, 'manage-rules');
   await owner.waitForFunction(() => document.querySelector('.knowledge-status')?.textContent.includes('Conhecimento disponível'));
   assert.equal(await owner.locator('.knowledge-section select').count(), 0);
   assert.equal(await owner.locator('.knowledge-section textarea').first().isVisible(), false);
@@ -312,8 +346,10 @@ try {
     await owner.setViewportSize({ width, height });
     if (!(await owner.locator('#guide-dialog').evaluate((node) => node.open))) await owner.locator('#quick-rules').click();
     await owner.locator('#guide-search').fill('atacar');
-    await owner.locator('.rule-result').first().waitFor();
-    assert.match(await owner.locator('#guide-content').textContent(), /Correção manual preservada/);
+    const answer = await owner.waitForFunction(
+      () => document.querySelector('#guide-content').dataset.query === 'atacar' && document.querySelector('#guide-content').textContent.includes('Correção manual preservada') && document.querySelector('#guide-content').textContent,
+    );
+    assert.match(await answer.jsonValue(), /Correção manual preservada/);
     assert(await owner.locator('#guide-dialog').evaluate((node) => node.scrollWidth <= node.clientWidth + 1));
     await mkdir('test-output', { recursive: true });
     await owner.screenshot({ path: `test-output/unified-rules-${name}.png` });
@@ -329,12 +365,33 @@ try {
   assert.match(await owner.locator('#guide-content').textContent(), /Trecho do PDF/);
   assert.match(await owner.locator('#guide-status').textContent(), /explicações estão indisponíveis/);
   await owner.context().unroute(`**/v1/games/${id}/knowledge`);
-  await env.withSecurityRulesDisabled((c) => updateDoc(doc(c.firestore(), 'games', id), { recommendedAge: null }));
+  await env.withSecurityRulesDisabled((c) => updateDoc(doc(c.firestore(), 'games', id), { recommendedAge: null, 'sources.recommendedAge': null }));
   await owner.reload();
   await owner.locator('.card-main').click();
+  if (!(await owner.locator('#detail-dialog').evaluate((d) => d.open))) await owner.locator('.card-main').click();
   await openGameManagement(owner, 'manage-information');
+  assert.match(await owner.locator('#saved-game-information').textContent(), /Não informado/);
+  assert.equal(await owner.locator('#game-knowledge-admin').isVisible(), false);
+  let knowledgeReads = 0;
+  await owner.context().route(`**/v1/games/${id}/knowledge`, (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    knowledgeReads++;
+    return route.fulfill({ json: knowledgeReads === 1 ? { status: 'running', knowledge: null } : updated.data });
+  });
   await owner.locator('#edit-game').click();
+  assert.equal(await owner.locator('#upload-dialog').getAttribute('data-step'), '2');
   await owner.waitForFunction(() => document.querySelector('[name=recommendedAge]').value === '14');
+  await eventually(
+    () => Promise.resolve(knowledgeReads),
+    (count) => count >= 2,
+  );
+  await owner.waitForFunction(() => document.querySelector('[data-research-status]').textContent.includes('Análise salva disponível'));
+  assert(knowledgeReads >= 2, 'o editor acompanha a conclusão sem outro clique');
+  assert.equal((await inspect(`games/${id}`)).recommendedAge, null, 'a sugestão não altera o cadastro antes de salvar');
+  await owner.context().unroute(`**/v1/games/${id}/knowledge`);
+  await owner.getByRole('button', { name: 'Completar informações', exact: true }).click();
+  await owner.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
+  assert.equal(backend.knowledge.calls.length, 2, 'completar reutiliza a geração existente');
   await owner.locator('[data-step-target="2"]').click();
   assert.equal(await owner.locator('#game-form [name=description]').inputValue(), saved.description, 'sugestão não substitui descrição confirmada');
   await owner.locator('[data-step-target="1"]').click();
@@ -348,6 +405,47 @@ try {
   assert.equal(backend.knowledge.calls.length, 2);
   assert.deepEqual(await inspect(`gameGuides/${id}`), legacyBefore);
   assert.deepEqual(await inspect(`guideDrafts/${id}`), draftBefore);
+  // Cota, formato antigo e geração necessária usam respostas locais controladas.
+  // O registro real do emulador só deve mudar pelo botão Salvar alterações.
+  const persisted = await inspect(`games/${id}`);
+  for (const scenario of ['quota', 'legacy', 'empty']) {
+    await owner.reload();
+    await owner.locator('.card-main').click();
+    await openGameManagement(owner, 'manage-information');
+    let generated = 0;
+    await owner.context().route(`**/v1/games/${id}/knowledge`, async (route) => {
+      if (route.request().method() === 'POST') {
+        generated++;
+        if (scenario === 'legacy') assert.equal(route.request().postDataJSON().force, true, 'legado atualiza a ficha por ação explícita');
+        return route.fulfill({ json: updated.data });
+      }
+      const legacy = structuredClone(updated.data);
+      delete legacy.knowledge.profile;
+      return route.fulfill({ json: scenario === 'quota' ? { status: 'quota', retryAt: Date.now() + 60000, message: 'Cota gratuita atingida.', knowledge: null } : scenario === 'legacy' ? legacy : null });
+    });
+    await owner.locator('#edit-game').click();
+    await owner.locator('#game-form [name=description]').fill('Resumo corrigido manualmente e preservado.');
+    await owner.getByRole('button', { name: 'Completar informações', exact: true }).click();
+    await owner.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
+    assert.equal(await owner.locator('#game-form [name=description]').inputValue(), 'Resumo corrigido manualmente e preservado.');
+    assert.equal(generated, ['legacy', 'empty'].includes(scenario) ? 1 : 0);
+    if (scenario === 'quota') assert.match(await owner.locator('[data-research-status]').textContent(), /Cota gratuita atingida/);
+    assert.deepEqual(await inspect(`games/${id}`), persisted, 'abrir, completar e corrigir não grava a ficha');
+    for (const [width, height] of [
+      [1440, 1000],
+      [768, 1024],
+      [390, 844],
+    ]) {
+      await owner.setViewportSize({ width, height });
+      assert(await owner.locator('#upload-dialog').evaluate((node) => node.scrollWidth <= node.clientWidth + 1));
+      assert.equal(await owner.locator('[data-game-step="2"] [data-research-search]:visible').count(), 1);
+      if (scenario === 'quota') await owner.screenshot({ path: `test-output/firestore-fixes/flow-editor-${width}.png` });
+    }
+    await owner.getByRole('button', { name: 'Fechar importação', exact: true }).click();
+    await owner.context().unroute(`**/v1/games/${id}/knowledge`);
+  }
+  assert.equal(backend.knowledge.calls.length, 2, 'as situações de edição não repetem o provedor');
+  console.log('Ficha: abertura direta, resultado tardio, cache, cota, legado, edição manual e gravação apenas ao salvar verificados.');
   const reader = await pageFor('unified-reader@example.test');
   await reader.locator('.card-main').click();
   assert.equal(await reader.locator('#detail-admin').isVisible(), false);
@@ -367,7 +465,7 @@ try {
   await admin.locator('.card-main').click();
   await openGameManagement(admin, 'manage-information');
   assert.equal(await admin.locator('#delete-game').isVisible(), false);
-  assert.deepEqual(await admin.locator('.management-tabs button').allTextContents(), ['PDFs', 'Informações']);
+  assert.deepEqual(await admin.locator('.management-tabs button').allTextContents(), ['PDFs', 'Informações', 'Regras']);
   const pending = await pageFor('unified-pending@example.test');
   await pending.waitForFunction(() => document.querySelector('#session-status').textContent.includes('aguardando aprovação'));
   assert.equal(await pending.locator('.card-main').count(), 0);

@@ -13,6 +13,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     sourceGame = null,
     pageNumber = 1,
     zoom = 1,
+    fitPage = true,
     renderTask = null,
     textTask = null,
     generation = 0,
@@ -35,6 +36,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     element('page-next').disabled = !total || pageNumber >= total;
     element('reader-document').disabled = !total;
     element('zoom-fit').textContent = `${Math.round(zoom * 100)}%`;
+    element('zoom-fit').setAttribute('aria-pressed', String(fitPage));
     const name = game ? documentName(findDocument(sourceGame, game.documentId)) : 'Manual';
     element('reader-subtitle').textContent = total ? `Página ${pageNumber} de ${total} · ${name}` : `Carregando ${name}…`;
   }
@@ -51,7 +53,13 @@ export function createReader({ repository, getProgress, saveProgress, onError })
         if (token !== generation || !documentPdf) return;
         status('Preparando a página…');
         const base = page.getViewport({ scale: 1 });
-        const availableWidth = Math.max(220, stage.clientWidth - (window.innerWidth < 600 ? 16 : 32));
+        const padding = getComputedStyle(stage);
+        const availableWidth = Math.max(1, stage.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight));
+        const availableHeight = Math.max(1, stage.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom));
+        if (fitPage) {
+          zoom = Math.min(1, availableHeight / base.height / (availableWidth / base.width));
+          stage.scrollTop = stage.scrollLeft = 0;
+        }
         const scale = (availableWidth / base.width) * zoom;
         const viewport = page.getViewport({ scale });
         const dpi = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(16_000_000 / (viewport.width * viewport.height)));
@@ -92,7 +100,8 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     requestRender();
   }
   function setZoom(next) {
-    zoom = Math.min(3, Math.max(0.5, Math.round(next * 100) / 100));
+    fitPage = false;
+    zoom = Math.min(3, Math.max(0.1, Math.round(next * 100) / 100));
     updateControls();
     requestRender();
   }
@@ -127,7 +136,10 @@ export function createReader({ repository, getProgress, saveProgress, onError })
   element('page-number').onchange = (event) => goToPage(event.target.value);
   element('zoom-out').onclick = () => setZoom(zoom - 0.25);
   element('zoom-in').onclick = () => setZoom(zoom + 0.25);
-  element('zoom-fit').onclick = () => setZoom(1);
+  element('zoom-fit').onclick = () => {
+    fitPage = true;
+    requestRender();
+  };
   document.addEventListener('keydown', (event) => {
     if (reader.hidden) return;
     if (event.key === 'Escape') {
@@ -153,7 +165,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
   stage.addEventListener(
     'touchend',
     (event) => {
-      if (!touch || !event.changedTouches.length || zoom !== 1) return;
+      if (!touch || !event.changedTouches.length || (!fitPage && zoom !== 1)) return;
       const dx = event.changedTouches[0].clientX - touch.x,
         dy = event.changedTouches[0].clientY - touch.y;
       if (Math.abs(dx) > 85 && Math.abs(dy) < 40) goToPage(pageNumber + (dx > 0 ? -1 : 1));
@@ -211,6 +223,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
       selector.value = doc.id;
       element('reader-document-picker').hidden = gameDocuments(originalGame).length < 2;
       zoom = 1;
+      fitPage = true;
       pageNumber = 1;
       element('reader-title').textContent = game.title;
       element('pdf-page').hidden = true;

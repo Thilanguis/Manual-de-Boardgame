@@ -4,6 +4,8 @@ import { queryCatalog } from './catalog/index.js';
 import { normalizeText } from '../../js/model.js';
 import { gameDocuments } from '../../js/documents.js';
 import { collectManualKnowledge, synthesisSources, manualPassages } from './manual-knowledge.js';
+import { PROFILE_INSTRUCTION, profileSchema, validateProfile } from '../../js/profile-facts.js';
+import { reusableDraftKnowledge } from './draft-knowledge.js';
 
 export const KNOWLEDGE_MODEL = 'gemini-3.5-flash-lite';
 export const TOPICS = ['visao-geral', 'objetivo', 'mecanicas', 'componentes', 'preparacao', 'turnos', 'acoes', 'pontuacao', 'vitoria', 'conceitos', 'estrategias', 'perguntas'];
@@ -105,6 +107,7 @@ export function knowledgeFields(knowledge) {
   const overviews = knowledge.sections.filter((s) => s.topic === 'visao-geral' && s.review !== 'rejected' && s.text.length <= 2000);
   const overview = overviews.find((s) => s.review === 'manual') || overviews.find((s) => s.review === 'accepted') || overviews[0];
   if (overview) fields.description = { value: overview.text, sourceId: overview.sourceId, language: 'pt-BR', generated: true };
+  for (const [key, fact] of Object.entries(knowledge.profile || {})) if (!(key === 'description' && overview?.review === 'manual')) fields[key] = fact;
   return fields;
 }
 
@@ -155,6 +158,16 @@ export class KnowledgeStore {
       const key = `job:${input.key}`,
         old = await tx.get(key),
         now = Date.now();
+      if (url.pathname === '/adopt') {
+        if (old?.knowledge || old?.status === 'running') return json(old);
+        const latestKey = input.gameId ? await tx.get(`latest:${input.gameId}`) : null;
+        const prior = latestKey ? await tx.get(latestKey) : null;
+        const knowledge = preserveKnowledgeCorrections(input.knowledge, prior?.knowledge, input.documents || []);
+        const record = { status: 'ready', knowledge, revision: (old?.revision || 0) + 1, message: '', expires: 0 };
+        await tx.put(key, record);
+        if (input.gameId) await tx.put(`latest:${input.gameId}`, key);
+        return json(record);
+      }
       if (url.pathname === '/pending') {
         if (old && !['pending_configuration', 'waiting_index'].includes(old.status)) return json(old);
         const pending = { ...old, status: input.status || 'pending_configuration', message: input.message || 'A geração aguarda a configuração da IA.', revision: old?.revision || 0 };
@@ -336,6 +349,8 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
     properties.evidenceId = { type: 'string' };
     schema = { ...outputSchema, properties: { ...outputSchema.properties, sections: { type: 'array', items: { type: 'object', properties, required: ['topic', 'title', 'text', 'sourceId', 'page', 'evidenceId'] } } } };
   }
+  // Seções e seu prompt permanecem intactos. A ficha usa a mesma resposta.
+  schema = { ...schema, properties: { ...schema.properties, metadata: profileSchema(fromManual) } };
   // O envio do texto dos manuais foi autorizado pelo proprietário; nunca envia credenciais.
   const body = {
     systemInstruction: {
@@ -348,6 +363,13 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
     contents: [{ role: 'user', parts: [{ text: JSON.stringify({ game: { title: game.title, edition: game.edition || '' }, sources: synthesisSources(sources) }) }] }],
     generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.1, maxOutputTokens: 6500, thinkingConfig: { thinkingLevel: 'minimal' } },
   };
+  body.systemInstruction.parts.push({ text: PROFILE_INSTRUCTION + ' Em excerpt, copie um trecho literal curto que sustente apenas o campo correspondente, dentro da evidência indicada.' });
+  body.contents[0].parts.push({
+    text: JSON.stringify({
+      metadataContext: sources.map((s) => ({ sourceId: s.id, documentType: s.documentType || 'principal', edition: s.edition || '', eligible: s.profileEligible !== false })),
+      instruction: 'Somente para a ficha: priorize o manual principal. Não use documentos marcados eligible=false para metadados do jogo base. As seções de regras continuam seguindo suas instruções existentes.',
+    }),
+  });
   let response;
   try {
     response = await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${KNOWLEDGE_MODEL}:generateContent`, {
@@ -393,7 +415,20 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
   }
   const clean = validateSynthesis(raw, sources);
   for (const source of sources) if (source.incompletePages?.length) clean.unconfirmed.push(`Páginas com leitura insuficiente em ${source.name}: ${source.incompletePages.join(', ')}.`);
-  return { ...clean, gameId: game.id, title: game.title, edition: game.edition || '', model: KNOWLEDGE_MODEL, generatedAt: Date.now(), schemaVersion: 1, sources };
+  const profile = validateProfile(raw.metadata, sources, manualPassages);
+  const metadataObject = raw.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata);
+  return {
+    ...clean,
+    profile,
+    profileAnalysis: { version: 1, complete: !!metadataObject && (!Object.keys(raw.metadata).length || Object.keys(profile).length > 0) },
+    gameId: game.id,
+    title: game.title,
+    edition: game.edition || '',
+    model: KNOWLEDGE_MODEL,
+    generatedAt: Date.now(),
+    schemaVersion: 1,
+    sources,
+  };
 }
 
 export async function knowledgeEndpoint(request, env, identity, gameId, input, ctx) {
@@ -403,6 +438,16 @@ export async function knowledgeEndpoint(request, env, identity, gameId, input, c
   // getDocument usa o JWT do solicitante: as regras Firestore validam este jogo.
   const write = request.method === 'POST';
   if (write && !(access.edit || (access.add && game.createdBy === identity.uid && !input.force && !input.sections))) throw new ApiError(403, 'Sua conta não pode gerar ou revisar conhecimento.');
+  if (write && input.expectedIdentity) {
+    const expected = input.expectedIdentity;
+    if (
+      normalizeText(expected.title || '') !== normalizeText(game.title) ||
+      expected.edition !== (game.edition || '') ||
+      expected.manualHash !== game.manual.sha256 ||
+      JSON.stringify(expected.documents) !== JSON.stringify(gameDocuments(game).map((d) => [d.id, d.manual.sha256]))
+    )
+      throw new ApiError(409, 'A identificação mudou. Salve o título, a edição e os PDFs antes de solicitar outra análise.');
+  }
   if (!env.GAME_KNOWLEDGE) return json({ status: 'pending_configuration', message: 'A geração aguarda a configuração da IA.', knowledge: null });
   const stub = env.GAME_KNOWLEDGE.get(env.GAME_KNOWLEDGE.idFromName(env.FIREBASE_PROJECT_ID)),
     key = await knowledgeKey(game, env.KNOWLEDGE_FROM_MANUAL === 'true');
@@ -447,7 +492,12 @@ export async function knowledgeEndpoint(request, env, identity, gameId, input, c
     if (existing && (existing.status === 'running' || (!input.force && !['pending_configuration', 'waiting_index'].includes(existing.status)))) return json(visible(existing));
     manual = await collectManualKnowledge(game, env, identity);
     if (manual.missing.length) return outward(await store('/pending', { status: 'waiting_index', message: 'Aguardando a preparação dos manuais para gerar o conhecimento.' }));
+    if (!input.force) {
+      const reused = await reusableDraftKnowledge(game, manual.sources, env);
+      if (reused) return outward(await store('/adopt', { knowledge: reused }));
+    }
   }
+  if (input.reuseOnly) return json({ status: 'not_started', message: 'Use Completar informações para analisar os manuais.', knowledge: null });
   if (!/^[a-f0-9-]{36}$/i.test(input.requestId || '')) throw new ApiError(400, 'Identificador de geração inválido.');
   const claimed = await store('/claim', { force: input.force === true, requestId: input.requestId });
   if (!claimed.ok) return outward(claimed);

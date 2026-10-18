@@ -80,8 +80,15 @@ export function createDriveStorage(config, getToken, getUid) {
     provider: 'drive',
     capabilities,
     validatePdfUpload,
+    async draftKnowledge(input, { signal } = {}) {
+      const info = await capabilities();
+      if (!(info.profileMetadataProtocol >= 1)) return { status: 'pending_configuration', knowledge: null, message: 'A análise da ficha precisa da atualização do servidor.' };
+      return (await call('/v1/research/draft-knowledge', { method: 'POST', json: input, signal })).json();
+    },
     async knowledge(game, input, { signal } = {}) {
       const info = await capabilities();
+      if (input?.expectedIdentity && !(info.informationIdentityProtocol >= 1)) return { status: 'pending_configuration', knowledge: null, message: 'A análise da ficha precisa da atualização do servidor. Nenhuma geração foi iniciada.' };
+      if (input?.reuseOnly && !(info.knowledgeReuseProtocol >= 1)) return { status: 'not_started', knowledge: null };
       if (!(info.knowledgeProtocol >= 1)) return { status: 'pending_configuration', reason: 'server-update', message: 'O servidor conectado ainda não oferece geração de conhecimento. É necessário atualizá-lo.', knowledge: null };
       return (await call(`/v1/games/${encodeURIComponent(game.id)}/knowledge`, input ? { method: 'POST', json: input, signal } : { signal })).json();
     },

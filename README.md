@@ -12,6 +12,12 @@ Biblioteca pessoal em HTML, CSS e JavaScript puro, publicada no [GitHub Pages](h
 
 Biblioteca privada, processamento automático e vários PDFs por jogo foram preservados. [Base da versão 1.10 e transição segura](docs/IMPLEMENTACAO-1.10.md).
 
+Auditoria do fluxo único: legado, identidade completa, retirada de sugestões obsoletas e reaproveitamento do índice sem IA. [Reproduções antes/depois](docs/AUDITORIA-FLUXO-INFORMACOES-2026-10-18.md). Correções locais, sem publicação.
+
+Fluxo atual: **Editar informações → Completar informações → Salvar alterações**, com manutenção separada em **Regras**. [Fluxo, segurança e testes](docs/FLUXO-CADASTRO-EDICAO-2026-10-18.md).
+
+Ficha estruturada Gemini no cadastro inicial, reaproveitamento após salvar e revisão consolidada de divergências: [implementação e testes](docs/FICHA-GEMINI-CONSENSO-2026-10-18.md). Mudanças locais, sem deploy.
+
 Correções locais adicionais: restauração de sessão sem alternar telas, compatibilidade de capas/manuais, preparo e remoção recuperável. [Causas, testes e dependências do backend](docs/CORRECOES-ACESSO-1.10.md).
 
 **Correção local 1.10.1:** salvamento de PDFs grandes, conferência da capacidade do servidor e avisos de conexão em Minha conta. [Correções e teste completo com PDFs de 157,3 e 200 MiB](docs/CORRECOES-UPLOAD-1.10.1.md). Ainda sem publicação.
