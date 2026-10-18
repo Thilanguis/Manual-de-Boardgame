@@ -101,7 +101,8 @@ try {
   await owner.waitForFunction(() => document.querySelectorAll('.rule-result').length > 0);
   await owner.locator('#guide-close').click();
   if (!(await owner.locator('#detail-dialog').evaluate((d) => d.open))) await owner.locator('.card-main').filter({ hasText: 'Ilha dos Faroleiros' }).click();
-  await owner.locator('#learn-game').click();
+  await owner.locator('#quick-rules').click();
+  await owner.locator('#guide-search').fill('preparação');
   await owner.waitForFunction(() => document.querySelector('#guide-content').textContent.includes('Distribua quatro'));
   await owner.locator('#guide-close').click();
   if (!(await owner.locator('#detail-dialog').evaluate((d) => d.open))) await owner.locator('.card-main').filter({ hasText: 'Ilha dos Faroleiros' }).click();

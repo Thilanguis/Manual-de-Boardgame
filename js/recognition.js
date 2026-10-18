@@ -121,6 +121,10 @@ export function extractMetadata(text) {
     }
   }
   const sources = {};
+  const publisher = normalized.match(/^(?:editora|publisher|[ée]diteur)\s*[:：]\s*(.{2,100})$/im);
+  const year = normalized.match(/^(?:ano(?: de publica[cç][aã]o)?|publication year|year|ann[ée]e)\s*[:：]\s*((?:19|20)\d{2})\b/im);
+  if (publisher) sources.publisher = { source: 'PDF · editora explícita', excerpt: publisher[1].trim() };
+  if (year) sources.year = { source: 'PDF · ano explícito', excerpt: year[1] };
   const originalTitle = normalized.match(/^(?:t[ií]tulo original|original title|titre original)\s*[:：]\s*(.{2,160})$/im);
   if (originalTitle) sources.originalTitle = { source: 'PDF · título original explícito', excerpt: originalTitle[1].trim() };
   if (minPlayers) sources.players = { source: 'PDF', excerpt: playerMatch[0] };

@@ -416,6 +416,9 @@ export async function handleRequest(request, env, ctx) {
         documentRemovalProtocol: 2,
         maxPdfBytes: Math.min(MAX_PDF_BYTES, Number(env.MAX_PDF_BYTES || MAX_PDF_BYTES)),
         knowledgeProtocol: 1,
+        manualKnowledgeProtocol: env.KNOWLEDGE_FROM_MANUAL === 'true' ? 1 : 0,
+        knowledgeConfigured: !!(env.GAME_KNOWLEDGE && env.GEMINI_API_KEY),
+        manualAiEnabled: env.ALLOW_MANUAL_AI === 'true',
         firebaseProject: env.FIREBASE_PROJECT_ID,
         driveConnected: !!(env.GOOGLE_REFRESH_TOKEN && env.DRIVE_FOLDER_ID && env.TICKET_KEY),
       });

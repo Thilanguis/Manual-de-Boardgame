@@ -1,4 +1,12 @@
 export function setupPwa({ onNotice, isBusy = () => false, onInstallReady }) {
+  // No computador de desenvolvimento, os arquivos devem vir do servidor atual.
+  // Atualiza um worker antigo para que ele se retire, sem tocar nos dados da conta.
+  if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+    onInstallReady(false);
+    if ('serviceWorker' in navigator)
+      navigator.serviceWorker.getRegistration(new URL('./', location.href).href).then((registration) => registration?.update()).catch(() => {});
+    return async () => false;
+  }
   let pendingPrompt = null,
     requested = false,
     reloading = false;

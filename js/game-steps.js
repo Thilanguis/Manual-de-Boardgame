@@ -1,6 +1,6 @@
 import { validateGame, durationLabel, playersLabel } from './model.js';
 
-export function createGameSteps({ form, dialog, getSession, isBusy = () => false }) {
+export function createGameSteps({ form, dialog, getSession, getDocuments = () => [], isBusy = () => false }) {
   let current = 1,
     invalidControl;
   const $ = (id) => document.getElementById(id),
@@ -9,6 +9,11 @@ export function createGameSteps({ form, dialog, getSession, isBusy = () => false
     return Object.fromEntries(new FormData(form).entries());
   }
   function validate(step) {
+    if (step === 1 && getDocuments().some((document) => !document.manual)) {
+      $('save-error').textContent = 'Há PDFs que não puderam ser preparados. Retire os arquivos indicados ou selecione cópias válidas antes de continuar.';
+      $('save-error').hidden = false;
+      return false;
+    }
     const data = values();
     const section = steps[step - 1];
     const invalid = [...section.querySelectorAll('input,textarea,select')].find((c) => !c.checkValidity());
@@ -30,10 +35,12 @@ export function createGameSteps({ form, dialog, getSession, isBusy = () => false
   }
   function summary() {
     const game = validateGame(values());
+    const documents = getDocuments();
     $('game-summary').replaceChildren();
     const languages = { 'pt-BR': 'Português', en: 'Inglês', fr: 'Francês', es: 'Espanhol' };
     for (const [label, value] of [
       ['Jogo', game.title],
+      ...(documents.length ? [['PDFs', `${documents.length} ${documents.length === 1 ? 'arquivo' : 'arquivos'}: ${documents.map((document) => document.name || document.manual?.name).join(' · ')}`]] : []),
       ['Resumo', game.description || 'Não informado'],
       ['Jogadores', playersLabel(game)],
       ['Duração', durationLabel(game)],

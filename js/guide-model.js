@@ -1,7 +1,8 @@
 import { findDocument, gameDocuments } from './documents.js';
 import { normalizeText } from './model.js';
 import { isPortuguese, translatedValue } from './translation.js';
-import { relevance } from './rule-relevance.js';
+import { ruleMatch } from './rule-relevance.js';
+import { splitPassages, cleanRuleText } from './rule-passages.js';
 export const GUIDE_LIMIT = 350000;
 export const SECTION_TYPES = ['texto', 'lista', 'aviso', 'exemplo', 'pergunta'];
 export function emptyGuide(game) {
@@ -70,7 +71,14 @@ export function staleSection(game, section, legacyHash) {
 export function searchDocuments(indexes, guide, query, documents) {
   const result = [];
   for (const entry of indexes || [])
-    result.push(...searchRules(entry.index, null, query, { currentHash: entry.document.manual.sha256 }).map((r) => ({ ...r, documentId: entry.document.id, documentName: entry.document.name, sourceHash: entry.index.sourceHash })));
+    result.push(
+      ...searchRules({ ...entry.index, language: entry.document.language && entry.document.language !== 'other' ? entry.document.language : entry.index.language }, null, query, { currentHash: entry.document.manual.sha256 }).map((r) => ({
+        ...r,
+        documentId: entry.document.id,
+        documentName: entry.document.name,
+        sourceHash: entry.index.sourceHash,
+      })),
+    );
   if (guide)
     for (const section of guide.sections) {
       const doc = documents.find((d) => d.id === (section.documentId || 'main'));
@@ -105,6 +113,8 @@ export function searchRules(index, guide, query, { currentHash } = {}) {
       needsTranslation: foreign,
       page: guide.sourceHash === currentHash ? s.page : null,
       sectionId: s.id,
+      imageId: s.imageId || '',
+      caption: s.caption || '',
       source: 'Guia revisado',
       sourceUrl: s.sourceUrl || '',
       sourceLicense: s.sourceLicense || '',
@@ -115,31 +125,50 @@ export function searchRules(index, guide, query, { currentHash } = {}) {
   }
   if (index?.sourceHash === currentHash)
     for (const p of index.pages || []) {
-      const headings = (index.headings || []).filter((h) => h.page === p.page),
-        heading = headings[0];
+      const headings = (index.headings || []).filter((h) => h.page === p.page);
       const translated = translatedValue(p.translation, p.text),
         foreign = !isPortuguese(index.language || 'pt-BR');
-      candidates.push({
-        title: heading ? translatedValue(heading.translation, heading.title) || (foreign ? heading.category : heading.title) || `Página ${p.page}` : `Página ${p.page}`,
-        searchTitle: headings.map((h) => `${h.category || ''} ${h.title} ${translatedValue(h.translation, h.title)}`).join(' '),
-        text: translated || (foreign ? '' : p.text),
-        originalText: p.text,
-        page: p.page,
-        language: 'pt-BR',
-        needsTranslation: foreign && !translated,
-        translated: !!translated,
-        source: p.method === 'ocr-local' ? 'PDF · OCR; confira a página' : 'Trecho do PDF',
-      });
+      const contentsPage = (p.text.match(/[.…]{3,}/g) || []).length >= 3 || headings.filter((h) => h.printedPage).length >= 3;
+      const passages = splitPassages(
+        translated || p.searchLayout?.text || p.text,
+        translated ? headings.filter((h) => translatedValue(h.translation, h.title)).map((h) => ({ ...h, title: translatedValue(h.translation, h.title) })) : headings,
+        p.page,
+      );
+      for (const passage of passages)
+        candidates.push({
+          title: foreign && !translated ? ruleCategory(passage.searchTitle) || 'Trecho do manual' : passage.searchTitle || passage.title,
+          searchTitle: passage.searchTitle,
+          text: translated || !foreign ? passage.text : '',
+          searchText: passage.text,
+          originalText: translated || p.searchLayout ? p.text : passage.originalText,
+          layoutRebuilt: !!p.searchLayout,
+          originalPage: !!translated || !!p.searchLayout,
+          passageStart: passage.start,
+          passageEnd: passage.end,
+          contentsPage,
+          page: p.page,
+          language: translated ? 'pt-BR' : index.language || 'pt-BR',
+          needsTranslation: foreign && !translated,
+          translated: !!translated,
+          source: p.method === 'ocr-local' ? 'PDF · OCR; confira a página' : 'Trecho do PDF',
+        });
     }
   const seen = new Set();
   return candidates
     .map((c) => {
-      const title = normalizeText(`${c.title} ${c.searchTitle || ''}`),
-        text = normalizeText(`${c.text} ${c.originalText || ''}`),
-        score = relevance(query, title, text);
-      return { ...c, score: score ? score + (c.sectionId ? 2 : 0) : 0 };
+      const match = ruleMatch(query, c.searchTitle || c.title, c.searchText || c.text || c.originalText);
+      const inventoryExample =
+        /componentes|components|composants/.test(normalizeText(c.searchTitle || c.title)) &&
+        /iniciais|dificuldade|vantagem/.test(normalizeText(c.text).slice(0, 400)) &&
+        !/^\d+(?:x)?\s+(?:tabuleiros?|cartas?|miniaturas?|pecas?|fichas?)/i.test(normalizeText(c.text));
+      if (inventoryExample && /^(?:componentes|components|composants)$/.test(normalizeText(query))) {
+        match.matchType = 'related';
+        match.score = Math.min(match.score, 30);
+      }
+
+      return { ...c, text: cleanRuleText(c.text), ...match, ...(c.contentsPage && match.score ? { score: Math.max(1, match.score - 100), matchType: 'related' } : {}) };
     })
-    .filter((c) => c.score && !seen.has(`${c.page}:${c.text}`) && seen.add(`${c.page}:${c.text}`))
+    .filter((c) => c.score && !seen.has(`${c.page}:${c.text || c.searchText || c.originalText}`) && seen.add(`${c.page}:${c.text || c.searchText || c.originalText}`))
     .sort((a, b) => b.score - a.score || (a.page || Infinity) - (b.page || Infinity))
     .slice(0, 60);
 }
@@ -151,6 +180,8 @@ export function ruleCategory(title) {
     ['Componentes', /componentes|components|conteudo|composants|materiel|materiais/],
     ['Turnos', /turno|turn|round|rodada|tour de jeu|deroulement/],
     ['Ações', /acoes|actions/],
+    ['Custos', /custos?|costs?|couts?/],
+    ['Cartas', /cartas?|cards?|cartes?/],
     ['Regras especiais', /regra especial|regras especiais|special rules|regles speciales/],
     ['Habilidades', /habilidade|abilities|capacites|pouvoirs/],
     ['Combate', /combate|combat|attack|ataque|atacar|batalha|battle|bataille/],

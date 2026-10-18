@@ -21,16 +21,19 @@ const fieldValues = (candidate) => Object.fromEntries(selectedFields(candidate, 
 export function consolidateCandidates(input) {
   const groups = [];
   for (const candidate of input) {
-    const group = groups.find((items) => items.every((other) => sameWork(candidate, other) && (candidate.kind || 'unknown') === (other.kind || 'unknown') && editionCompatible(candidate, other)));
+    const group = groups.find((items) =>
+      items.every((other) => sameWork(candidate, other) && editionCompatible(candidate, other) && ((candidate.kind || 'unknown') === (other.kind || 'unknown') || ![candidate.kind, other.kind].includes('expansion'))),
+    );
     if (group) group.push(candidate);
     else groups.push([candidate]);
   }
   return groups.map((members) => {
-    const ordered = [...members].sort((a, b) => languageRank(a.language) - languageRank(b.language));
+    const ordered = [...members].sort((a, b) => Number(a.source === 'gemini') - Number(b.source === 'gemini') || languageRank(a.language) - languageRank(b.language));
     const first = ordered[0],
       fields = {},
       fieldSources = {},
       alternatives = {},
+      consistency = {},
       conflicts = [...new Set(members.flatMap((c) => c.conflicts || []))];
     for (const candidate of ordered) {
       const normalized = portugueseCandidate(candidate);
@@ -47,6 +50,9 @@ export function consolidateCandidates(input) {
           authorsUrl: candidate.authorsUrl || '',
           fetchedAt: candidate.fetchedAt || Date.now(),
           originalValue: candidate.fields[field.key] ?? candidate.fields.durationMinutes ?? field.value,
+          evidenceGroup: ['pdf', 'gemini'].includes(candidate.source) ? `manual:${candidate.evidence?.[field.key]?.sourceHash || candidate.manualHash || ''}` : `${candidate.source}:${candidate.id}`,
+          ...(candidate.source === 'gemini' ? { generated: true } : {}),
+          ...(candidate.evidence?.[field.key] ? { evidence: candidate.evidence[field.key] } : {}),
         };
         const fact = { value: field.value, ...provenance };
         alternatives[field.key] ||= [];
@@ -58,6 +64,16 @@ export function consolidateCandidates(input) {
       }
     }
     for (const [field, facts] of Object.entries(alternatives)) {
+      const independent = new Set(facts.map((fact) => fact.evidenceGroup));
+      consistency[field] = new Set(facts.map((fact) => factSignature(fact.value))).size > 1 ? 'conflict' : independent.size > 1 ? 'consistent' : 'single-source';
+      if (['tags', 'mechanics'].includes(field)) {
+        const value = [...new Set(facts.flatMap((fact) => fact.value))];
+        fields[field] = value;
+        fieldSources[field] = { ...fieldSources[field], origins: facts };
+        // A união é a sugestão principal; as origens individuais continuam na revisão.
+        alternatives[field] = [{ ...fieldSources[field], value }, ...facts];
+        continue;
+      }
       // Nomes e textos em idiomas diferentes são alternativas, não contradições numéricas.
       if (!['title', 'description'].includes(field) && new Set(facts.map((f) => factSignature(f.value))).size > 1) conflicts.push(`${field}: fontes com valores diferentes; escolha na revisão.`);
     }
@@ -66,21 +82,38 @@ export function consolidateCandidates(input) {
       .filter((name, i, all) => all.findIndex((n) => n.value === name.value && n.language === name.language) === i)
       .slice(0, 32);
     const pt = names.find((n) => /^pt-BR$/i.test(n.language)) || names.find((n) => /^pt$/i.test(n.language));
-    if (pt && !alternatives.title?.some((f) => f.value === pt.value)) alternatives.title?.unshift({ ...fieldSources.title, value: pt.value, language: pt.language });
     if (pt) {
+      const member = ordered.find((candidate) => candidate.names?.some((name) => name.value === pt.value && name.language === pt.language));
+      const origin = {
+        source: member.source,
+        id: member.id,
+        url: member.url || '',
+        language: pt.language,
+        originalLanguage: pt.language,
+        license: member.license || '',
+        licenseUrl: member.licenseUrl || '',
+        authorsUrl: member.authorsUrl || '',
+        fetchedAt: member.fetchedAt || Date.now(),
+        originalValue: pt.value,
+        translationMethod: '',
+      };
       fields.title = pt.value;
-      fieldSources.title = { ...fieldSources.title, language: pt.language, originalValue: pt.value };
+      fieldSources.title = origin;
+      alternatives.title ||= [];
+      if (!alternatives.title.some((fact) => fact.value === pt.value && fact.source === member.source && fact.id === member.id)) alternatives.title.unshift({ ...origin, value: pt.value });
     }
     return {
       ...first,
+      kind: members.find((member) => member.kind && member.kind !== 'unknown')?.kind || first.kind || 'unknown',
       fields,
       names,
       fieldSources,
       alternatives,
+      consistency,
       pendingTranslations: ordered.flatMap((candidate) => portugueseCandidate(candidate).pendingTranslations),
       requiresEditionReview: members.some((c) => c.requiresEditionReview),
       conflicts: [...new Set(conflicts)],
-      contributors: members.map(({ source, id, url }) => ({ source, id, url })),
+      contributors: members.map(({ source, id, url = '' }) => ({ source, id, url })),
       members,
     };
   });

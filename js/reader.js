@@ -1,4 +1,4 @@
-import { findDocument, documentGame, primaryDocumentId } from './documents.js';
+import { findDocument, documentGame, primaryDocumentId, gameDocuments, documentName } from './documents.js';
 import { fileErrorMessage } from './file-errors.js';
 import { loadPdf, loadRemotePdf, pdfLibrary } from './pdf.js';
 
@@ -10,6 +10,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     stage = element('reader-stage');
   let documentPdf = null,
     game = null,
+    sourceGame = null,
     pageNumber = 1,
     zoom = 1,
     renderTask = null,
@@ -18,7 +19,8 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     openSequence = 0;
   let renderChain = Promise.resolve(),
     returnFocus = null,
-    resizeTimer;
+    resizeTimer,
+    loadingController;
   function status(text) {
     element('reader-status').textContent = text;
     element('reader-status').hidden = !text;
@@ -31,8 +33,10 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     element('page-total').textContent = `/ ${total || '—'}`;
     element('page-prev').disabled = !total || pageNumber <= 1;
     element('page-next').disabled = !total || pageNumber >= total;
+    element('reader-document').disabled = !total;
     element('zoom-fit').textContent = `${Math.round(zoom * 100)}%`;
-    element('reader-subtitle').textContent = total ? `Página ${pageNumber} de ${total} · ${game?.manual?.name || 'Manual'}` : 'Carregando manual…';
+    const name = game ? documentName(findDocument(sourceGame, game.documentId)) : 'Manual';
+    element('reader-subtitle').textContent = total ? `Página ${pageNumber} de ${total} · ${name}` : `Carregando ${name}…`;
   }
   function requestRender() {
     if (!documentPdf) return;
@@ -93,6 +97,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     requestRender();
   }
   async function close() {
+    loadingController?.abort();
     ++openSequence;
     ++generation;
     renderTask?.cancel();
@@ -102,6 +107,9 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     const previous = documentPdf;
     documentPdf = null;
     game = null;
+    sourceGame = null;
+    element('reader-document').replaceChildren();
+    element('reader-document-picker').hidden = true;
     await previous?.destroy().catch(() => {});
     canvas.width = canvas.height = 0;
     layer.replaceChildren();
@@ -111,6 +119,9 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     else document.getElementById('hero-main').focus({ preventScroll: true });
   }
   element('reader-close').onclick = close;
+  element('reader-document').onchange = (event) => {
+    if (sourceGame) void api.open(sourceGame, { documentId: event.target.value });
+  };
   element('page-prev').onclick = () => goToPage(pageNumber - 1);
   element('page-next').onclick = () => goToPage(pageNumber + 1);
   element('page-number').onchange = (event) => goToPage(event.target.value);
@@ -123,7 +134,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
       event.preventDefault();
       close();
     }
-    if (event.target instanceof HTMLInputElement) return;
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
     if (event.key === 'ArrowLeft') goToPage(pageNumber - 1);
     if (event.key === 'ArrowRight') goToPage(pageNumber + 1);
   });
@@ -150,7 +161,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
     },
     { passive: true },
   );
-  return {
+  const api = {
     close,
     revokeMissing(games) {
       if (game && !games.some((item) => item.id === game.id)) void close();
@@ -175,15 +186,30 @@ export function createReader({ repository, getProgress, saveProgress, onError })
         onError(new Error('Esta referência pertence a outra versão do PDF.'));
         return;
       }
+      const originalGame = nextGame;
       nextGame = documentGame(nextGame, doc);
       if (!reader.hidden) await close();
       const sequence = ++openSequence;
+      loadingController?.abort();
+      const control = (loadingController = new AbortController());
       returnFocus = document.activeElement;
       document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close());
       document.body.classList.remove('modal-open');
       document.body.classList.add('reader-open');
       reader.hidden = false;
       game = nextGame;
+      sourceGame = originalGame;
+      const selector = element('reader-document');
+      selector.replaceChildren(
+        ...gameDocuments(originalGame).map((document) => {
+          const option = window.document.createElement('option');
+          option.value = document.id;
+          option.textContent = `${documentName(document)} · ${document.manual.pages} ${document.manual.pages === 1 ? 'página' : 'páginas'}`;
+          return option;
+        }),
+      );
+      selector.value = doc.id;
+      element('reader-document-picker').hidden = gameDocuments(originalGame).length < 2;
       zoom = 1;
       pageNumber = 1;
       element('reader-title').textContent = game.title;
@@ -194,7 +220,7 @@ export function createReader({ repository, getProgress, saveProgress, onError })
       try {
         const source = repository.getManualSource ? await repository.getManualSource(nextGame) : null;
         if (sequence !== openSequence) return;
-        const pdf = source ? await loadRemotePdf(source) : await loadPdf(await repository.getManual(nextGame));
+        const pdf = source ? await loadRemotePdf(source, { signal: control.signal }) : await loadPdf(await repository.getManual(nextGame, { signal: control.signal }), { signal: control.signal });
         if (sequence !== openSequence) {
           await pdf.destroy();
           return;
@@ -211,4 +237,5 @@ export function createReader({ repository, getProgress, saveProgress, onError })
       }
     },
   };
+  return api;
 }

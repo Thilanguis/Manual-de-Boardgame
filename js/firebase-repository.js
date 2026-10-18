@@ -12,6 +12,7 @@ import { annotateAvailability } from './catalog-availability.js';
 import { requestBgg } from './bgg-client.js';
 import { createGuideRepository } from './guide-repository.js';
 import { researchRequest } from './research-client.js';
+import { withoutUndefined } from './firestore-data.js';
 const SDK = 'https://www.gstatic.com/firebasejs/13.0.0';
 
 export async function createFirebaseRepository(config) {
@@ -68,9 +69,9 @@ export async function createFirebaseRepository(config) {
   const repository = {
     mode: 'firebase',
     fileProvider: 'drive',
-    getKnowledge(game) {
+    getKnowledge(game, options) {
       requireRead();
-      return files.knowledge(game);
+      return files.knowledge(game, undefined, options);
     },
     generateKnowledge(game, { force = false, requestId = crypto.randomUUID() } = {}) {
       requireWrite(force ? 'edit' : undefined);
@@ -282,17 +283,17 @@ export async function createFirebaseRepository(config) {
       if (!previous && !manualBlob) throw new Error('Selecione um manual para adicionar o jogo.');
       const expected = previous?.updatedAt?.toMillis?.() || 0;
       if (previous && game.updatedAt && game.updatedAt !== expected) throw new Error('Este jogo foi atualizado em outro dispositivo. Reabra as informações antes de editar.');
-      const uploaded = [],
-        record = {
-          ...Object.fromEntries(Object.entries(game).filter(([key]) => key !== '_driveAvailability')),
-          id,
-          isPublic: game.isPublic === true,
-          deleting: false,
-          schemaVersion: 1,
-          createdBy: previous?.createdBy || auth.currentUser.uid,
-          createdAt: previous?.createdAt || dbSDK.serverTimestamp(),
-          updatedAt: dbSDK.serverTimestamp(),
-        };
+      const uploaded = [];
+      let record = {
+        ...Object.fromEntries(Object.entries(game).filter(([key]) => key !== '_driveAvailability')),
+        id,
+        isPublic: game.isPublic === true,
+        deleting: false,
+        schemaVersion: 1,
+        createdBy: previous?.createdBy || auth.currentUser.uid,
+        createdAt: previous?.createdAt || dbSDK.serverTimestamp(),
+        updatedAt: dbSDK.serverTimestamp(),
+      };
       try {
         if (manualBlob) {
           const path = `games/${id}/manual.pdf`,
@@ -310,6 +311,7 @@ export async function createFirebaseRepository(config) {
           const id = primaryDocumentId(record);
           record.documents = { ...record.documents, [id]: { ...record.documents[id], manual: record.manual, language: record.language } };
         }
+        record = withoutUndefined(record);
         await dbSDK.runTransaction(db, async (transaction) => {
           const latest = await transaction.get(docRef);
           if (latest.exists() !== !!previous || (latest.exists() && latest.data().updatedAt?.toMillis?.() !== expected)) throw new Error('O jogo mudou durante o envio. Reabra o cadastro e tente novamente.');

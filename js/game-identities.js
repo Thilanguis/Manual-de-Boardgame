@@ -45,6 +45,13 @@ export function queryVariants(input) {
     values.push({ query, language: language.startsWith('pt') ? 'pt' : language, reason });
   };
   add(input.query, 'pt', 'título enviado, prioridade PT-BR');
+  const edition = String(input.query).match(/\b([1-6])\s*(?:[ªaºo]|nd|rd|th|st|e)?\s*(?:edi[cç][aã]o|edition|édition)\b/i);
+  if (edition) {
+    const number = Number(edition[1]);
+    const ordinal = ['', '1st', '2nd', '3rd', '4th', '5th', '6th'][number];
+    add(input.query.replace(edition[0], `${ordinal} Edition`), 'en', 'variação de escrita da edição; não confirma identidade');
+    add(input.query.replace(edition[0], `${number}e édition`), 'fr', 'variação de escrita da edição; não confirma identidade');
+  }
   for (const name of identity?.names || []) add(name.value, name.language, 'alias editorial revisado');
   for (const name of input.alternateTitles || [])
     for (const language of ['pt-BR', 'en', 'fr'].includes(name.language) ? [name.language] : ['en', 'fr', 'pt']) add(name.value, language, 'título original explícito no PDF; idioma do nome não presumido');
@@ -55,6 +62,7 @@ export function queryVariants(input) {
     if (parts.length > 1 && normalizeText(parts.at(-1)).split(' ').length >= 2) add(parts.at(-1), 'pt', 'subtítulo; identidade ainda não confirmada');
   }
   if (input.expanded) {
+    if (input.publisher || input.year) add(`${input.query} ${input.publisher || ''} ${input.year || ''}`, 'pt', 'pistas explícitas do manual; não confirmam edição');
     add(normalizeText(input.query), 'pt', 'variação sem acentos/pontuação');
     for (const name of identity?.names || []) {
       const subtitle = name.value.split(':').at(-1);

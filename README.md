@@ -1,4 +1,6 @@
-> **Desenvolvimento isolado:** execute `npm run dev` e abra http://localhost:4173. Login fictício: `proprietario@acervo.test` / `Acervo-teste-123`. O localhost recusa produção e não possui fallback. Veja [DESENVOLVIMENTO.md](docs/DESENVOLVIMENTO.md).
+> **Seu Acervo real no computador:** execute `npm start` e abra http://127.0.0.1:4174. Use sua conta habitual. Atualize a página manualmente; o servidor não recarrega ao salvar arquivos.
+>
+> **Testes isolados:** `npm run dev` usa emuladores em http://localhost:4173, sem serviços reais. Veja [DESENVOLVIMENTO.md](docs/DESENVOLVIMENTO.md).
 >
 > Novos PDFs: **50 MiB (52.428.800 bytes)**, com blocos retomáveis de 8 MiB. PDFs antigos maiores continuam legíveis. As alterações desta versão são locais, sem deploy.
 
@@ -51,14 +53,16 @@ A autenticação e a aprovação são obrigatórias. A configuração antiga pub
 
 ## Executar e testar
 
-Para desenvolvimento e testes: Node 24.12+; Java 21 para emuladores.
+Para abrir o Acervo local: Node 24.12+. Java 21 é necessário somente nos testes com emuladores.
 
 ```powershell
 npm ci
 npm start
 ```
 
-Abra http://localhost:4173. O parâmetro `?local=1` sozinho não libera acesso. O sandbox IndexedDB exige localhost e allowLocalDevelopment=true explícito, fornecido apenas pelas fixtures de teste. A configuração publicada não habilita esse modo.
+Abra http://127.0.0.1:4174 e entre com sua conta habitual. Authentication, Firestore, Drive, Worker e integrações usam os serviços reais existentes. O servidor não executa watcher nem recarrega páginas ao salvar arquivos. Encerre com Ctrl+C.
+
+Para testes automáticos, use `npm run dev` e os comandos abaixo. O parâmetro `?local=1` sozinho não libera o sandbox IndexedDB; esse modo continua exclusivo das fixtures explícitas.
 
 ```powershell
 npm run check

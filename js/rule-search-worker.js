@@ -1,5 +1,5 @@
 import { searchRules, searchDocuments } from './guide-model.js';
-import { searchKnowledge } from './rule-relevance.js';
+import { searchKnowledge, rankRuleResults } from './rule-relevance.js';
 let indexes = [],
   documents = [],
   index = null,
@@ -17,9 +17,9 @@ self.onmessage = ({ data }) => {
   if (data.type === 'query') {
     try {
       const pdfResults = indexes.length ? searchDocuments(indexes, guide, data.query, documents) : searchRules(index, guide, data.query, { currentHash });
-      self.postMessage({ id: data.id, results: [...pdfResults, ...searchKnowledge(knowledge, data.query)].sort((a, b) => b.score - a.score).slice(0, 60) });
+      self.postMessage({ id: data.id, query: data.query.trim(), results: rankRuleResults([...pdfResults, ...searchKnowledge(knowledge, data.query)]) });
     } catch {
-      self.postMessage({ id: data.id, error: 'Não foi possível pesquisar este índice. Analise novamente o PDF.' });
+      self.postMessage({ id: data.id, query: data.query.trim(), error: 'Não foi possível pesquisar este índice. Analise novamente o PDF.' });
     }
   }
 };

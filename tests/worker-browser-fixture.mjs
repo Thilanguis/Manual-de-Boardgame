@@ -5,7 +5,7 @@ import { handleRequest } from '../worker/src/index.js';
 import { base64url } from '../worker/src/auth.js';
 import { DRIVE_FOLDER_ID, OWNER_UID } from '../js/permissions.js';
 import { knowledgeFixture } from './knowledge-fixture.mjs';
-export async function workerFixture({ project, origin, initialFiles, enableKnowledge = false, ownerUid = OWNER_UID, folderId = DRIVE_FOLDER_ID, port = 0, handler, interceptGlobal = true }) {
+export async function workerFixture({ project, origin, initialFiles, enableKnowledge = false, manualKnowledge = false, ownerUid = OWNER_UID, folderId = DRIVE_FOLDER_ID, port = 0, handler, interceptGlobal = true }) {
   if (project !== 'demo-acervo' || !process.env.FIRESTORE_EMULATOR_HOST) throw new Error('Exige projeto e emuladores de teste.');
   for (const host of [process.env.FIRESTORE_EMULATOR_HOST, process.env.FIREBASE_AUTH_EMULATOR_HOST]) if (!/^127\.0\.0\.1:\d+$/.test(host || '')) throw new Error('Somente emuladores em loopback.');
   const originalFetch = globalThis.fetch,
@@ -28,6 +28,7 @@ export async function workerFixture({ project, origin, initialFiles, enableKnowl
     GOOGLE_REFRESH_TOKEN: 'fixture',
     TICKET_KEY: base64url(crypto.getRandomValues(new Uint8Array(32))),
     ...(knowledge?.env || {}),
+    ...(manualKnowledge ? { KNOWLEDGE_FROM_MANUAL: 'true', ALLOW_MANUAL_AI: 'true' } : {}),
   };
   const metadata = (id, input = {}) => ({
     id,
@@ -66,6 +67,8 @@ export async function workerFixture({ project, origin, initialFiles, enableKnowl
     if (url.includes('upload_id=')) {
       const id = new URL(url).searchParams.get('upload_id'),
         upload = uploads.get(id);
+      if (!upload && files.has(id) && /^bytes \*\//.test(new Headers(init.headers).get('Content-Range') || ''))
+        return Response.json(Object.fromEntries(Object.entries(files.get(id)).filter(([key]) => key !== 'bytes')));
       if (!upload) return new Response(null, { status: 404 });
       const content = init.body ? Buffer.from(await new Response(init.body).arrayBuffer()) : Buffer.alloc(0);
       upload.parts.push(content);

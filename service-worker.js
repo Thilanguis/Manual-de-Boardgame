@@ -1,5 +1,6 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.11.0';
+const VERSION = 'acervo-v1.11.0-firestore-lifecycle-1';
+const LOCAL_DEVELOPMENT = ['localhost', '127.0.0.1', '[::1]'].includes(self.location.hostname);
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
 const ESSENTIAL = [
@@ -30,6 +31,10 @@ const ESSENTIAL = [
   './js/research-panel.js',
   './js/game-vocabulary.js',
   './js/research-knowledge.js',
+  './js/research-enrichment.js',
+  './js/metadata-consolidation.js',
+  './js/metadata-form.js',
+  './js/firestore-data.js',
   './js/research-store.js',
   './js/pdf-knowledge.js',
   './js/translation.js',
@@ -42,7 +47,11 @@ const ESSENTIAL = [
   './js/guide-repository.js',
   './js/guide-panel.js',
   './js/knowledge-panel.js',
+  './js/knowledge-observer.js',
+  './js/knowledge-model.js',
   './js/rule-relevance.js',
+  './js/rule-passages.js',
+  './js/rule-layout.js',
   './js/pdf-index.js',
   './js/index-cache.js',
   './js/private-cache.js',
@@ -62,10 +71,22 @@ const ESSENTIAL = [
 ];
 
 self.addEventListener('install', (event) => {
+  if (LOCAL_DEVELOPMENT) {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
   // Uma instalação incompleta não substitui a versão funcional anterior.
   event.waitUntil(caches.open(SHELL).then((cache) => cache.addAll(ESSENTIAL.map((path) => new Request(new URL(path, self.registration.scope), { cache: 'reload' })))));
 });
 self.addEventListener('activate', (event) => {
+  if (LOCAL_DEVELOPMENT) {
+    event.waitUntil((async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((key) => /^acervo-.*-shell$/.test(key) || key === SDK).map((key) => caches.delete(key)));
+      await self.registration.unregister();
+    })());
+    return;
+  }
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
@@ -81,6 +102,7 @@ function unavailable() {
   return new Response('Este recurso precisa de conexão.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 self.addEventListener('fetch', (event) => {
+  if (LOCAL_DEVELOPMENT) return;
   const request = event.request,
     url = new URL(request.url);
   if (request.method !== 'GET' || request.headers.has('range') || request.headers.has('authorization')) return;

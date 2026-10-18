@@ -73,6 +73,9 @@ export function validateQuery(source, raw) {
     preferredLanguage: raw.preferredLanguage || 'pt-BR',
     pdfLanguage: ['pt-BR', 'en', 'fr'].includes(raw.pdfLanguage) ? raw.pdfLanguage : 'other',
     kind: raw.kind || 'unknown',
+    edition: typeof raw.edition === 'string' ? raw.edition.trim().slice(0, 100) : '',
+    publisher: typeof raw.publisher === 'string' ? raw.publisher.trim().slice(0, 100) : '',
+    year: /^(19|20)\d{2}$/.test(String(raw.year || '')) ? String(raw.year) : '',
     expanded: raw.expanded === true,
     alternateTitles: Array.isArray(raw.alternateTitles)
       ? raw.alternateTitles

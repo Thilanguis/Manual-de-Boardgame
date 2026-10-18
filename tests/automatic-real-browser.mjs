@@ -17,7 +17,7 @@ const browser = await chromium.launch({ channel: 'chrome', headless: true }),
 try {
   for (const item of cases) {
     const context = await browser.newContext({ serviceWorkers: 'block' });
-    await context.route('**/config/app-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'export const APP_CONFIG={allowLocalDevelopment:true,firebase:null,fileStorage:{},maxPdfBytes:209715200};' }));
+    await context.route('**/config/app-config.js', (r) => r.fulfill({ contentType: 'text/javascript', body: 'export const APP_CONFIG={allowLocalDevelopment:true,firebase:null,fileStorage:{},maxPdfBytes:52428800};' }));
     await context.route('**/js/pdf-knowledge.js', async (route) => {
       const response = await route.fetch();
       await route.fulfill({ response, body: (await response.text()).replace('addOcrPage(index, page);', '(window.ocrReadPages ||= []).push(page.page); console.info("QA OCR",page.page); addOcrPage(index, page);') });
@@ -84,6 +84,7 @@ try {
       doneBefore.every((p) => !repeated.includes(p)),
       'Retomada não repete páginas concluídas.',
     );
+    if (await page.locator('#game-management-dialog').evaluate((dialog) => dialog.open)) await page.locator('[data-close="game-management-dialog"]').click();
     await page.locator('#quick-rules').click();
     await page.locator('#guide-search').fill(item.query);
     await page.locator('.rule-result').first().waitFor();
@@ -92,15 +93,6 @@ try {
       await page.locator('.rule-result button').first().click();
       await page.waitForFunction(() => document.getElementById('reader-status').hidden);
       await page.locator('#reader-close').click();
-      await page.locator('.card-main').click();
-      await openGameManagement(page, 'manage-guide');
-      await page.locator('#edit-guide').click();
-      await page.getByRole('button', { name: 'Adicionar sugestões do PDF ao rascunho', exact: true }).click();
-      assert((await page.locator('.guide-editor-section').count()) > 0);
-      for (const checkbox of await page.locator('.guide-editor-section [name=reviewed]').all()) await checkbox.check();
-      await page.getByRole('button', { name: 'Publicar guia', exact: true }).click();
-      await page.waitForFunction(() => document.getElementById('guide-status').textContent.startsWith('Guia publicado'));
-      await page.locator('#guide-close').click();
     }
     await page.reload();
     await page.locator('.card-main').click();

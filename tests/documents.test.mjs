@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gameDocuments, withDocument, withoutDocument, documentGame } from '../js/documents.js';
+import { gameDocuments, withDocument, withoutDocument, documentGame, documentName } from '../js/documents.js';
 import { searchDocuments, cleanGuide, staleSection } from '../js/guide-model.js';
 import { indexMatches, packIndex, unpackIndex } from '../js/pdf-index.js';
 import { accessFor, OWNER_UID } from '../js/permissions.js';
@@ -9,6 +9,13 @@ const hash = 'a'.repeat(64),
   id = '12345678-1234-1234-1234-123456789abc';
 const game = { id, title: 'Ilha', manual: { name: 'principal.pdf', sha256: hash, pages: 1, path: `games/${id}/manual.pdf` }, language: 'pt-BR' };
 const document = { id: '22345678-1234-1234-1234-123456789abc', name: 'Errata', documentType: 'errata', language: 'pt-BR', edition: '2', manual: { name: 'errata.pdf', sha256: other, pages: 1 } };
+
+test('nome do manual é preservado para principal, complementos e nomes personalizados', () => {
+  assert.equal(documentName({ name: 'Manual principal', manual: { name: 'Livro_de_regras_202301.pdf' } }), 'Livro de regras 202301');
+  assert.equal(documentName({ name: 'Tomo do Traidor', manual: { name: 'arquivo_305303.pdf' } }), 'Tomo do Traidor');
+  assert.equal(documentName({ manual: { name: 'Segredos_da_sobrevivencia.pdf' } }), 'Segredos da sobrevivencia');
+  assert.equal(documentName({}), 'Manual');
+});
 test('manual legado é principal virtual sem duplicar arquivo; adicionar, escolher principal e remover são independentes', () => {
   assert.equal(gameDocuments(game)[0].id, 'main');
   const next = withDocument(game, document);

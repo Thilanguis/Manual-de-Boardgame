@@ -335,15 +335,14 @@
             <span class="upload-circle">
               <svg><use href="#i-upload" /></svg>
             </span>
-            <strong>Solte o manual por aqui</strong>
-            <span>ou toque para escolher um arquivo</span>
-            <small>PDF · até 50 MiB</small>
+            <strong>Solte os PDFs deste jogo por aqui</strong>
+            <span>ou toque para escolher um ou mais arquivos</span>
+            <small>Até 12 PDFs · 50 MiB por arquivo · o primeiro será o principal</small>
           </label>
           <p class="privacy-note">A leitura do PDF acontece no seu navegador. O arquivo só é salvo quando você confirmar os dados.</p>
         </div>
         <p id="upload-status" class="status-message" role="status" aria-live="polite"></p>
         <progress id="upload-progress" max="100" hidden></progress>
-        <div id="additional-pdfs" aria-live="polite"></div>
         <form id="game-form" novalidate hidden>
           <div class="review-grid">
             <aside class="review-aside">
@@ -374,6 +373,16 @@
                 </label>
                 <p id="title-warning" class="inline-error" role="alert" hidden></p>
                 <div id="title-suggestions" class="title-suggestions" aria-label="Alternativas de título"></div>
+                <fieldset id="registration-pdfs" class="registration-pdfs" hidden>
+                  <legend>PDFs deste jogo</legend>
+                  <p id="registration-main-pdf"></p>
+                  <label class="button secondary small cover-upload">
+                    Adicionar mais PDFs
+                    <input id="additional-pdf-file" multiple type="file" accept="application/pdf,.pdf" />
+                  </label>
+                  <p id="registration-pdf-permission" hidden>Sua conta não tem permissão para acrescentar documentos.</p>
+                  <div id="additional-pdfs" aria-live="polite"></div>
+                </fieldset>
                 <section id="research-panel" class="research-panel" aria-label="Pesquisa de jogos em múltiplas fontes">
                   <h3>Completar informações</h3>
                   <details class="research-options">
@@ -438,7 +447,10 @@
               </section>
               <section class="game-step" data-game-step="2" aria-labelledby="information-heading" hidden>
                 <h3 id="information-heading" tabindex="-1">Confira as informações</h3>
-                <p class="step-intro">Preencha somente o que você puder confirmar. Campos desconhecidos podem ficar em branco.</p>
+                <p class="step-intro">Confira os dados reunidos e ajuste o que precisar.</p>
+                <label>Nome do jogo
+                  <input data-metadata-title maxlength="160" />
+                </label>
                 <div id="research-pending" class="review-notice" hidden>
                   <p id="research-pending-text" role="status"></p>
                   <button id="review-pending-suggestions" type="button" class="button secondary small">Revisar sugestões encontradas</button>
@@ -571,19 +583,11 @@
               <svg><use href="#i-book" /></svg>
               Ler manual
             </button>
+            <button class="button secondary" id="quick-rules">Consultar regras</button>
             <button class="icon-button favorite-button" id="detail-favorite" aria-label="Adicionar aos favoritos">
               <svg><use href="#i-heart" /></svg>
             </button>
           </div>
-          <div class="guide-entry-actions">
-            <div>
-              <button class="button secondary" id="learn-game">Como jogar</button>
-            </div>
-            <div>
-              <button class="button secondary" id="quick-rules">Buscar regras</button>
-            </div>
-          </div>
-          <p id="detail-guide-status" class="guide-availability" role="status"></p>
           <section id="detail-documents-disclosure" class="game-documents-summary">
             <h3>Manuais deste jogo</h3>
             <div id="detail-documents"></div>
@@ -609,7 +613,6 @@
         <nav class="management-tabs" aria-label="Gerenciar jogo">
           <button class="button secondary" data-game-management="manage-documents-section">PDFs</button>
           <button class="button secondary" data-game-management="manage-information">Informações</button>
-          <button class="button secondary" data-game-management="manage-guide">Guia</button>
         </nav>
         <section id="manage-documents-section">
           <h3>PDFs do jogo</h3>
@@ -623,36 +626,20 @@
           </button>
           <div id="game-knowledge-admin"></div>
         </section>
-        <section id="manage-guide" hidden>
-          <h3>Como jogar</h3>
-          <p>Revise as seções antes de publicar o guia.</p>
-          <button class="button secondary" id="edit-guide">Editar guia</button>
-        </section>
       </div>
       <footer class="management-danger"><button class="text-button danger" id="delete-game">Excluir jogo</button></footer>
     </dialog>
     <dialog id="guide-dialog" class="guide-dialog" aria-labelledby="guide-title">
       <div class="dialog-header">
         <div>
-          <p class="eyebrow" id="guide-mode">COMO JOGAR</p>
+          <p class="eyebrow" id="guide-mode">CONSULTAR REGRAS</p>
           <h2 id="guide-title"></h2>
         </div>
         <button id="guide-close" class="button secondary small" type="button">Fechar</button>
       </div>
       <div class="dialog-body">
-        <nav class="guide-toolbar" aria-label="Modo de consulta" hidden>
-          <button id="guide-tab-learn" class="button secondary small" type="button" hidden>Como jogar</button>
-          <button id="guide-tab-quick" class="button secondary small" type="button" hidden>Buscar regras</button>
-          <button id="guide-ocr" class="button secondary small" type="button" data-mutate hidden>Ler páginas escaneadas</button>
-          <button id="guide-translate" class="button secondary small" type="button" data-mutate hidden title="Tradução neste dispositivo; pode baixar o pacote de idioma, sem enviar o manual.">Traduzir para português</button>
-          <button id="guide-analyze" class="button secondary small" type="button" data-mutate>Analisar PDF completo</button>
-          <button id="guide-cancel-analysis" class="button secondary small" type="button" hidden>Cancelar análise</button>
-        </nav>
-        <p id="guide-stale" class="guide-warning" hidden></p>
-        <p id="guide-translation-note" class="muted-text" hidden></p>
         <p id="guide-status" role="status" aria-live="polite" hidden></p>
-        <progress id="guide-progress" max="1" value="0" hidden></progress>
-        <input id="guide-search" type="search" placeholder="Pesquisar movimento, ataque, pontuação…" aria-label="Pesquisar regras" hidden />
+        <input id="guide-search" type="search" placeholder="Pesquise uma regra ou faça uma pergunta…" aria-label="Consultar regras" />
         <div id="guide-content"></div>
       </div>
     </dialog>
@@ -934,6 +921,10 @@
           <button class="icon-button" id="zoom-in" aria-label="Ampliar zoom">+</button>
         </div>
       </header>
+      <label class="reader-document-picker" id="reader-document-picker" hidden>
+        <span>Manual em leitura</span>
+        <select id="reader-document" aria-label="Escolher manual deste jogo"></select>
+      </label>
       <div class="reader-stage" id="reader-stage">
         <p id="reader-status" role="status">Carregando manual…</p>
         <div id="pdf-page" class="pdf-page">

@@ -54,6 +54,31 @@ export function knowledgeFixture() {
         if (faults.wait) await faults.wait;
         const prompt = JSON.parse(calls.at(-1).contents[0].parts[0].text),
           source = prompt.sources.find((s) => s.name.includes('Wikipédia')) || prompt.sources[0];
+        if (source.pages) {
+          const first = source.pages[0],
+            last = source.pages.at(-1);
+          return Response.json({
+            candidates: [
+              {
+                finishReason: 'STOP',
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        language: 'pt-BR',
+                        unconfirmed: [],
+                        sections: [
+                          { topic: 'visao-geral', title: 'Visão geral', text: 'A Sociedade coopera para proteger Frodo e alcançar o objetivo apresentado no manual.', sourceId: source.id, page: first.page, evidenceId: first.passages[0].id },
+                          { topic: 'acoes', title: 'Como atacar', text: 'Para atacar, gaste uma ação e consulte a carta do cenário.', sourceId: source.id, page: last.page, evidenceId: last.passages[0].id },
+                        ],
+                      }),
+                    },
+                  ],
+                },
+              },
+            ],
+          });
+        }
         return Response.json({
           candidates: [
             {

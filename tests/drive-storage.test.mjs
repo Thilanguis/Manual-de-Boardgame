@@ -3,6 +3,57 @@ import assert from 'node:assert/strict';
 import { createDriveStorage } from '../js/drive-storage.js';
 import { MAX_PDF_BYTES } from '../js/pdf-limits.js';
 
+test('429 de conhecimento preserva mensagem, prazo e estado em vez de erro genérico de Drive', async () => {
+  const original = globalThis.fetch;
+  const record = { status: 'quota', reason: 'app-rate-limit', message: 'O limite diário do Acervo foi atingido (5 gerações).', retryAt: Date.now() + 60000 };
+  let requests = 0;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/health')) return Response.json({ knowledgeProtocol: 1 });
+    requests++;
+    return Response.json(record, { status: 429 });
+  };
+  try {
+    const storage = createDriveStorage(
+      { apiBase: 'https://api.example.test' },
+      async () => 'fixture',
+      () => 'owner',
+    );
+    await assert.rejects(storage.knowledge({ id: 'game' }, { force: true }), (error) => {
+      assert.equal(error.status, 429);
+      assert.equal(error.message, record.message);
+      assert.deepEqual(error.record, record);
+      return true;
+    });
+    assert.equal(requests, 1, 'não repete automaticamente a geração');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('servidor sem protocolo de conhecimento é identificado antes de tentar gerar IA', async () => {
+  const oldFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (url) => {
+    calls++;
+    assert.ok(url.endsWith('/health'));
+    return Response.json({ ok: true });
+  };
+  try {
+    const storage = createDriveStorage(
+      { apiBase: 'https://api.example.test' },
+      async () => 'jwt',
+      () => 'owner',
+    );
+    const result = await storage.knowledge({ id: 'game' }, { requestId: 'fixture' });
+    assert.equal(result.status, 'pending_configuration');
+    assert.equal(result.reason, 'server-update');
+    assert.equal(result.knowledge, null);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = oldFetch;
+  }
+});
+
 test('limite local de 50 MiB impede envio mesmo quando servidor aceita mais; capacidades menores são respeitadas', async () => {
   const oldFetch = globalThis.fetch;
   let reads = 0;
@@ -194,7 +245,10 @@ test('leitor usa somente JWT Firebase e rejeita endereço de API inseguro', asyn
     () => 'owner',
   );
   const source = await good.readerSource({ id: 'game' });
-  assert.deepEqual(source, { url: 'https://api.example.test/v1/games/game/manual', headers: { Authorization: 'Bearer firebase-jwt' } });
+  assert.deepEqual({ url: source.url, headers: source.headers }, { url: 'https://api.example.test/v1/games/game/manual', headers: { Authorization: 'Bearer firebase-jwt' } });
+  assert.equal(source.signal.aborted, false);
+  good.resetSession();
+  assert.equal(source.signal.aborted, true, 'revogação cancela a transferência do leitor');
   for (const apiBase of ['', 'http://remote.example.test', 'https://user:secret@api.example.test', 'https://api.example.test/?token=secret'])
     await assert.rejects(
       createDriveStorage(

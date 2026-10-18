@@ -1,180 +1,188 @@
-import { vocabularyTerm } from './game-vocabulary.js';
-const el = (tag, text) => {
-  const e = document.createElement(tag);
-  if (text) e.textContent = text;
-  return e;
+import { consolidateMetadata, storedCatalogCandidates, emptyValue, metadataKeys } from './metadata-consolidation.js';
+import { pdfMetadataCandidate } from './catalog-language.js';
+import { savedKnowledgeCandidate } from './research-enrichment.js';
+import { fieldLabels } from './research-client.js';
+import { knowledgeSummary, verifiedKnowledgeFields } from './knowledge-model.js';
+import { observeKnowledge } from './knowledge-observer.js';
+const el = (tag, text = '') => {
+  const node = document.createElement(tag);
+  node.textContent = text;
+  return node;
 };
-export function createKnowledgePanel({ root, repository, onUseFields, onNotice }) {
+export function createKnowledgePanel({ root, repository, onNotice, openManual }) {
   const edits = new Map();
   let game,
     record,
     sequence = 0,
     timer,
-    dirty = false;
+    dirty = false,
+    active = false,
+    observation;
   const button = (text, action) => {
-    const b = el('button', text);
-    b.type = 'button';
-    b.className = 'button secondary small';
-    b.onclick = async () => {
-      b.disabled = true;
+    const node = el('button', text);
+    node.type = 'button';
+    node.className = 'button secondary small';
+    node.onclick = async () => {
+      const token = sequence;
+      node.disabled = true;
       try {
         await action();
       } catch (error) {
-        onNotice(error.message);
+        if (token === sequence) onNotice(error.message);
       } finally {
-        b.disabled = false;
+        node.disabled = false;
       }
     };
-    return b;
+    return node;
   };
   async function load() {
-    const token = sequence;
-    const next = repository.getKnowledge ? await repository.getKnowledge(game) : { status: 'pending_configuration', message: 'A geração aguarda a conexão da IA.' };
-    if (token !== sequence || !repository.session.canEdit || !repository.session.canRead) return;
-    if (!dirty) {
-      record = next;
-      render();
+    if (!active || !game) return;
+    if (!observation) {
+      const token = sequence;
+      observation = observeKnowledge(repository, game, {
+        onRecord(next) {
+          if (token !== sequence || !active || !repository.session.canEdit || !repository.session.canRead) return;
+          if (!dirty) {
+            record = next;
+            render();
+          }
+        },
+        onError(error) {
+          if (active && token === sequence) onNotice(error.message);
+        },
+      });
     }
-    if (next?.status === 'running') timer = setTimeout(() => void load().catch((e) => onNotice(e.message)), 2500);
+    await observation.refresh();
   }
   function render() {
     root.replaceChildren();
-    if (!game || !repository.session.canEdit) return;
-    const label = el('p', record?.message || (record?.knowledge ? 'Conhecimento do jogo' : 'Ainda não há conhecimento gerado.'));
+    if (!game || !repository.session.canEdit || !repository.session.canRead) return;
+    const model = consolidateMetadata(game, [pdfMetadataCandidate(game), savedKnowledgeCandidate(record, game), ...storedCatalogCandidates(game)].filter(Boolean));
+    const sheet = el('dl');
+    sheet.className = 'game-summary consolidated-information';
+    for (const key of metadataKeys) {
+      const value = emptyValue(game[key]) ? model.fields[key] : game[key];
+      if (emptyValue(value)) continue;
+      const row = el('div');
+      row.append(el('dt', fieldLabels[key]), el('dd', Array.isArray(value) ? value.join(', ') : String(value)));
+      if (emptyValue(game[key])) row.append(el('small', 'Sugestão · confira em Editar informações'));
+      if (model.consistency[key] === 'conflict') row.append(el('small', 'Valores diferentes · confira na ficha'));
+      sheet.append(row);
+    }
+    root.append(sheet);
+    const summary = knowledgeSummary(record, game);
+    const label = el('p', record?.message || (summary.sections.length ? 'Conhecimento disponível.' : 'Aguardando a análise dos manuais.'));
     label.className = 'knowledge-status';
     label.setAttribute('role', 'status');
     root.append(label);
-    if (record?.status === 'pending_configuration') return;
-    const actions = el('div');
-    actions.className = 'knowledge-actions';
-    const generate = button(record?.knowledge ? 'Atualizar conhecimento com IA' : 'Gerar conhecimento com IA', async () => {
-      if (!repository.generateKnowledge) throw new Error('Conecte a IA para gerar o conhecimento.');
-      if (dirty && !confirm('Descartar alterações não salvas nesta revisão?')) return;
-      if (record?.knowledge && !confirm('Gerar novas sugestões? Os textos já revisados serão preservados.')) return;
-      dirty = false;
-      edits.clear();
-      record = await repository.generateKnowledge(game, { force: true });
-      render();
-      clearTimeout(timer);
-      if (record.status === 'running') timer = setTimeout(() => void load().catch((e) => onNotice(e.message)), 1000);
-    });
-    generate.disabled = ['running', 'pending_configuration'].includes(record?.status);
-    if (record?.status === 'pending_configuration') generate.title = 'O proprietário precisa configurar a conexão da IA.';
-    actions.append(generate);
-    root.append(actions);
-    if (record?.diagnostics?.length) {
-      const details = el('details');
-      details.append(el('summary', 'Detalhes da geração'));
-      for (const result of record.diagnostics) details.append(el('p', `${result.source === 'wikidata' ? 'Wikidata' : 'Wikipédia'}: ${result.state === 'failed' ? 'indisponível' : `${result.count} correspondência(s)`}`));
-      root.append(details);
+    if (summary.sections.length) {
+      const info = el('p', `${summary.sections.length} assuntos identificados · ${summary.documents.length} ${summary.documents.length === 1 ? 'documento analisado' : 'documentos analisados'}`);
+      if (summary.analyzedAt) info.append(document.createTextNode(` · ${new Date(summary.analyzedAt).toLocaleString('pt-BR')}`));
+      root.append(info);
+    }
+    if (!['pending_configuration', 'pending_authorization'].includes(record?.status)) {
+      const update = button('Atualizar conhecimento com IA', async () => {
+        if (!confirm('Analisar novamente os manuais? Isso utiliza a cota de IA. Suas correções serão preservadas.')) return;
+        if (dirty && !confirm('Descartar alterações ainda não salvas?')) return;
+        const token = sequence,
+          target = game;
+        clearTimeout(timer);
+        edits.clear();
+        dirty = false;
+        try {
+          const next = await repository.generateKnowledge(target, { force: true });
+          if (token !== sequence) return;
+          record = next;
+        } catch (error) {
+          if (token !== sequence) return;
+          if (error.record?.status !== 'quota') throw error;
+          record = error.record;
+        }
+        render();
+        observation?.update(record);
+      });
+      const cooldown = record?.status === 'quota' && record.retryAt > Date.now();
+      update.disabled = record?.status === 'running' || cooldown;
+      root.append(update);
+      if (cooldown) {
+        root.append(el('p', `Nova tentativa disponível em ${new Date(record.retryAt).toLocaleString('pt-BR')}.`));
+        clearTimeout(timer);
+        timer = setTimeout(
+          () => {
+            if (game) render();
+          },
+          Math.min(record.retryAt - Date.now() + 50, 2147483647),
+        );
+      }
+    }
+    if (summary.limitations.length) {
+      const limitations = el('details');
+      limitations.append(el('summary', 'Limitações da análise'));
+      for (const text of summary.limitations) limitations.append(el('p', text));
+      root.append(limitations);
     }
     if (!record?.knowledge) return;
-    const knowledge = record.knowledge;
-    root.append(el('p', 'Conteúdo gerado por IA. Confira as fontes antes de aceitar ou publicar.'));
-    const fields = Object.entries(knowledge.fields || {});
-    if (fields.length) {
-      const suggestions = el('details');
-      suggestions.append(el('summary', 'Sugestões para o cadastro'), el('p', 'Dados gerais da obra. Confirme a edição e os campos antes de salvar.'));
-      const choices = [],
-        labels = {
-          description: 'Resumo',
-          minPlayers: 'Jogadores mínimos',
-          maxPlayers: 'Jogadores máximos',
-          minDurationMinutes: 'Duração mínima (min)',
-          maxDurationMinutes: 'Duração máxima (min)',
-          recommendedAge: 'Idade',
-          tags: 'Categorias',
-          mechanics: 'Mecânicas',
-          gameType: 'Tipo de jogo',
-        };
-      for (const [key, fact] of fields) {
-        const label = el('label'),
-          input = el('input');
-        input.type = 'checkbox';
-        input.dataset.knowledgeField = key;
-        const value = Array.isArray(fact.value) ? fact.value.join(', ') : String(fact.value);
-        label.append(input, document.createTextNode(`${labels[key] || key}: ${value.slice(0, 150)}${fact.generated ? ' · IA, conferir' : ''}`));
-        suggestions.append(label);
-        choices.push({ input, key, fact });
-      }
-      const all = el('label'),
-        select = el('input');
-      select.type = 'checkbox';
-      select.onchange = () =>
-        choices.forEach((c) => {
-          c.input.checked = select.checked;
-        });
-      all.append(select, document.createTextNode('Selecionar todos'));
-      suggestions.append(
-        all,
-        button('Usar campos selecionados', () => {
-          const values = Object.fromEntries(
-            choices.filter((c) => c.input.checked).map((c) => [c.key, c.key === 'tags' || c.key === 'mechanics' ? c.fact.value.map((v) => vocabularyTerm(v)) : c.key === 'gameType' ? vocabularyTerm(c.fact.value) : c.fact.value]),
-          );
-          if (!Object.keys(values).length) throw new Error('Selecione as informações que deseja usar.');
-          if (confirm('Levar os campos selecionados para a edição? Eles substituirão os valores correspondentes no formulário, após sua confirmação.')) onUseFields(values, knowledge);
-        }),
-      );
-      root.append(suggestions);
-    }
-    for (const section of knowledge.sections) {
+    const knowledge = { ...record.knowledge, fields: verifiedKnowledgeFields(record.knowledge, game) };
+    const details = el('details');
+    details.className = 'knowledge-details';
+    details.append(el('summary', 'Ver assuntos e corrigir informações'), el('p', 'Explicações por IA, com referências ao manual. Não são uma reprodução oficial das regras.'));
+    for (const section of summary.sections) {
       const row = el('details');
       row.className = 'knowledge-section';
       row.dataset.knowledgeSection = section.id;
       row.append(el('summary', section.title));
       const text = el('textarea');
-      text.value = edits.get(section.id)?.text ?? section.text;
+      text.value = edits.get(section.id) ?? section.text;
       text.maxLength = 6000;
       text.setAttribute('aria-label', `Texto: ${section.title}`);
-      const review = el('select');
-      review.setAttribute('aria-label', `Revisão: ${section.title}`);
-      for (const [value, name] of Object.entries({ unreviewed: 'Não confirmado', accepted: 'Aceitar informação', manual: 'Texto corrigido', rejected: 'Rejeitar informação' })) {
-        const o = el('option', name);
-        o.value = value;
-        o.selected = value === (edits.get(section.id)?.review ?? section.review);
-        review.append(o);
-      }
-      text.oninput = review.onchange = () => {
+      text.oninput = () => {
         dirty = true;
-        edits.set(section.id, { text: text.value, review: review.value });
+        edits.set(section.id, text.value);
       };
       row.append(
         text,
-        review,
-        button('Salvar revisão', async () => {
-          record = await repository.reviewKnowledge(game, record.revision, [{ id: section.id, text: text.value, review: review.value }]);
+        button('Salvar correção', async () => {
+          if (!text.value.trim()) throw new Error('Escreva a informação corrigida.');
+          const token = sequence;
+          const next = await repository.reviewKnowledge(game, record.revision, [{ id: section.id, text: text.value, review: 'manual' }]);
+          if (token !== sequence || !repository.session.canRead || !repository.session.canEdit) return;
+          record = next;
           edits.delete(section.id);
           dirty = edits.size > 0;
           render();
         }),
       );
-      const source = knowledge.sources.find((s) => s.id === section.sourceId);
-      if (source) {
-        const reference = el('a', `${source.name} · ${source.license} ↗`);
-        reference.href = source.url;
-        reference.target = '_blank';
-        reference.rel = 'noopener noreferrer';
-        row.append(reference, el('blockquote', section.quote));
+      const source = knowledge.sources.find((source) => source.id === section.sourceId);
+      if (section.review === 'manual') row.append(el('small', 'Correção manual preservada'));
+      if (source?.pages) {
+        row.append(el('small', `${source.name} · página ${section.page}`), el('blockquote', section.quote));
+        if (openManual) row.append(button('Abrir página do manual', () => openManual(game, { page: section.page, documentId: section.documentId, sourceHash: section.sourceHash })));
+      } else if (/^https:\/\//.test(source?.url || '')) {
+        const link = el('a', `${source.name} · ${source.license} ↗`);
+        link.href = source.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        row.append(link, el('blockquote', section.quote));
       }
-      root.append(row);
+      details.append(row);
     }
-    const sources = el('details');
-    sources.append(el('summary', 'Fontes e informações não confirmadas'));
-    for (const source of knowledge.sources) {
-      const a = el('a', `${source.name} · ${source.language} · ${source.license} ↗`);
-      a.href = source.url;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      const p = el('p');
-      p.append(a);
-      sources.append(p);
-    }
-    for (const missing of knowledge.unconfirmed) sources.append(el('p', missing));
-    root.append(sources);
+    root.append(details);
   }
   return {
+    async refresh() {
+      if (!active || !game || dirty || !repository.session.canRead || !repository.session.canEdit) return;
+      clearTimeout(timer);
+      try {
+        await load();
+      } catch (error) {
+        onNotice(error.message);
+      }
+    },
     open(next) {
-      if (game?.id === next.id && dirty) return;
+      if (active && game?.id === next.id && dirty) return;
+      observation?.close();
+      observation = null;
+      active = true;
       if (game?.id !== next.id) {
         edits.clear();
         dirty = false;
@@ -183,16 +191,23 @@ export function createKnowledgePanel({ root, repository, onUseFields, onNotice }
       game = next;
       ++sequence;
       clearTimeout(timer);
-      root.replaceChildren(el('p', 'Carregando conhecimento…'));
+      if (!dirty) root.replaceChildren(el('p', 'Carregando conhecimento…'));
+      const token = sequence;
       void load().catch((error) => {
-        root.replaceChildren(el('p', error.message));
+        if (token === sequence) root.replaceChildren(el('p', error.message));
       });
     },
-    close() {
-      edits.clear();
+    suspend() {
+      active = false;
       ++sequence;
       clearTimeout(timer);
+      observation?.close();
+      observation = null;
+    },
+    close() {
+      this.suspend();
       game = record = null;
+      edits.clear();
       dirty = false;
       root.replaceChildren();
     },

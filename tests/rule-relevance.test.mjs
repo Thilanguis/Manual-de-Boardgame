@@ -15,6 +15,6 @@ test('busca local associa assuntos e perguntas sem chamar IA', () => {
   };
   const result = searchKnowledge(knowledge, 'montar');
   assert.equal(result.length, 1);
-  assert.match(result[0].source, /não confirmado/);
+  assert.match(result[0].source, /Informação geral/);
   assert.ok(result[0].sourceUrl);
 });

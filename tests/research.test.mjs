@@ -3,6 +3,29 @@ import assert from 'node:assert/strict';
 import { extractMetadata, titleCandidates } from '../js/recognition.js';
 import { normalizedQuery, parallelResearch, researchRequest, sameWork, matchWarnings, selectedFields } from '../js/research-client.js';
 
+test('lista de fontes também envia o token exigido pelo Worker privado', async () => {
+  let calls = 0;
+  const data = await researchRequest('https://api.test', async () => 'token-ficticio', 'sources', null, {
+    fetcher: async (url, options) => {
+      calls++;
+      assert.equal(options.method, 'GET');
+      assert.equal(options.headers.Authorization, 'Bearer token-ficticio');
+      assert.equal(options.body, undefined);
+      return Response.json({ sources: [] });
+    },
+  });
+  assert.deepEqual(data.sources, []);
+  await assert.rejects(
+    researchRequest('https://api.test', async () => null, 'sources', null, {
+      fetcher: () => {
+        calls++;
+      },
+    }),
+    /Entre com/,
+  );
+  assert.equal(calls, 1, 'sem sessão não consulta o endpoint');
+});
+
 test('PDF francês extrai fatos explícitos sem estimar intervalos ou traduzir regras', () => {
   const result = extractMetadata(
     'Joueurs: 2 à 4\nDurée: 45 minutes\nÂge: 10 ans\nÉdition: Québec 2024\nMécaniques: Placement, Cartes\nCatégories: Famille\nTitre original: Test Island\nObjectif du jeu\nCollectez les cartes.\nPréparation\nPlacez les pièces sur le plateau. Victoire et points du jeu.',

@@ -21,6 +21,7 @@ async function localValue(key, value) {
   });
 }
 export function createDocumentRepository(repository, { files, db, sdk, auth, project = 'local' } = {}) {
+  let journalChange = Promise.resolve();
   const preparationListeners = new Map();
   const announce = (game, document, state, index) => {
     for (const callback of preparationListeners.get(game.id) || []) callback([{ documentId: document.id, sourceHash: document.manual.sha256, state, readablePages: index.pages.filter((p) => p.text.trim().length >= 40).length }]);
@@ -29,6 +30,23 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
     originalSource = repository.getManualSource?.bind(repository);
   const scope = () => `${project}:${repository.session.user?.uid || 'device'}`;
   const key = (game, doc) => `${game.id}:${doc.id}:${doc.manual.sha256}`;
+  const journalKey = () => `preparation:document-links:${scope()}`;
+  async function changePending(change) {
+    const owner = scope();
+    const task = journalChange.catch(() => {}).then(() => {
+      const apply = async () => {
+        requireEdit();
+        if (owner !== scope()) throw new Error('Sua sessão mudou. Reabra o jogo.');
+        const name = journalKey(), pending = (await cachedIndex(name)) || [];
+        const next = change(pending);
+        if (owner !== scope()) throw new Error('Sua sessão mudou. Reabra o jogo.');
+        await cachedIndex(name, next);
+      };
+      return globalThis.navigator?.locks ? navigator.locks.request(`acervo-document-links:${owner}`, apply) : apply();
+    });
+    journalChange = task;
+    return task;
+  }
   function requireRead() {
     if (!repository.session.canRead) throw new Error('Entre com uma conta aprovada.');
   }
@@ -50,8 +68,52 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
     const record = snapshot.data();
     return { ...record, updatedAt: record.updatedAt?.toMillis?.() || 0, createdAt: record.createdAt?.toMillis?.() || 0 };
   }
+  async function commitDocument(game, document, previousHash) {
+    requireEdit();
+    if (!db) return (await repository.saveGame(withDocument(game, document))).game;
+    const reference = sdk.doc(db, 'games', game.id);
+    await sdk.runTransaction(db, async (tx) => {
+      const snapshot = await tx.get(reference);
+      requireEdit();
+      if (!snapshot.exists() || snapshot.data().deleting) throw new Error('O jogo foi removido ou está em exclusão.');
+      const latest = { ...snapshot.data(), id: game.id }, old = findDocument(latest, document.id);
+      const alreadyLinked = old?.manual.sha256 === document.manual.sha256 && old?.manual.driveFileId === document.manual.driveFileId;
+      if (!alreadyLinked && (previousHash ? old?.manual.sha256 !== previousHash : !!old)) throw new Error('Este documento mudou em outra sessão. Reabra o jogo antes de substituir.');
+      const next = withDocument(latest, document);
+      // Somente o vínculo dos documentos muda; uma cópia antiga do cadastro não
+      // pode apagar complementos ou sobrescrever informações editadas em paralelo.
+      tx.update(reference, { documents: next.documents, documentChanges: next.documentChanges, primaryDocumentId: next.primaryDocumentId, manual: next.manual, language: next.language, updatedAt: sdk.serverTimestamp() });
+    });
+    const confirmed = await current(game), linked = findDocument(confirmed, document.id);
+    if (linked?.manual.sha256 !== document.manual.sha256 || linked?.manual.driveFileId !== document.manual.driveFileId) throw new Error('O PDF foi enviado, mas o vínculo no cadastro não pôde ser confirmado. Tente novamente para concluir.');
+    return confirmed;
+  }
   return {
     canPrepare,
+    async pendingDocumentLinks(game) {
+      requireEdit();
+      if (!db || !files) return [];
+      return ((await cachedIndex(journalKey())) || []).filter((entry) => entry.gameId === game.id);
+    },
+    async finishPendingDocumentLinks(game) {
+      requireEdit();
+      let latest = await current(game);
+      const failures = [];
+      for (const entry of await this.pendingDocumentLinks(game)) {
+        try {
+          const linked = findDocument(latest, entry.document.id);
+          if (linked?.manual.driveFileId !== entry.document.manual.driveFileId || linked?.manual.sha256 !== entry.document.manual.sha256) {
+            entry.receipt = await files.confirmUpload(entry.receipt);
+            latest = await commitDocument(latest, entry.document, entry.previousHash);
+          }
+          await files.finalize(entry.receipt);
+          await changePending((items) => items.filter((item) => !(item.gameId === game.id && item.document.id === entry.document.id)));
+        } catch (error) {
+          failures.push(`${entry.document.name}: ${error.message}`);
+        }
+      }
+      return { game: latest, failures };
+    },
     watchPreparation(game, callback, onError = () => {}) {
       requireRead();
       if (db)
@@ -96,9 +158,9 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
     async saveDocument(game, metadata, blob, onProgress = () => {}) {
       requireEdit();
       game = await current(game);
-      if (!game.documents) game = (await repository.saveGame(withDocument(game, findDocument(game)))).game;
       const id = metadata.id || crypto.randomUUID(),
-        previous = findDocument(game, id);
+        previous = findDocument(game, id),
+        previousHash = previous?.manual.sha256 || '';
       const { expectedSourceHash, ...fields } = metadata;
       if (previous && expectedSourceHash && previous.manual.sha256 !== expectedSourceHash) throw new Error('Este PDF mudou em outra sessão. Reabra o documento antes de substituir.');
       if (previous && !blob && previous.manual.sha256 !== metadata.manual.sha256) throw new Error('Este documento foi atualizado. Reabra as informações antes de salvar.');
@@ -110,17 +172,22 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
           if (files) {
             receipt = await files.put(document.manual.path, blob, onProgress, { kind: 'document', mimeType: 'application/pdf', name: document.manual.name, documentId: id, fingerprint: document.manual.sha256 });
             document.manual = { ...document.manual, driveFileId: receipt.driveFileId, storage: 'drive' };
+            if (db) await changePending((items) => [...items.filter((entry) => !(entry.gameId === game.id && entry.document.id === id)), { gameId: game.id, document, previousHash, receipt }]);
           } else await localValue(`pdf:${key(game, document)}`, blob);
         } else if (!previous) throw new Error('Selecione um PDF.');
-        const next = withDocument(game, document);
-        const result = await repository.saveGame(next);
-        if (receipt)
-          await files.finalize(receipt).catch(() => {
+        const confirmed = await commitDocument(game, document, previousHash);
+        if (receipt) {
+          await files.finalize(receipt).then(async () => {
+            if (db) await changePending((items) => items.filter((entry) => !(entry.gameId === game.id && entry.document.id === id)));
+          }).catch(() => {
             repository.fileWarning = 'Documento salvo. A limpeza do arquivo anterior está pendente; tente novamente antes de sair.';
           });
-        return result.game;
+        }
+        return confirmed;
       } catch (error) {
-        if (receipt) await files.discard(receipt).catch(() => {});
+        // O upload retomável permanece associado à mesma sessão/ID. Uma falha
+        // no Firestore não deve apagar o PDF e obrigar outro envio ao Drive.
+        if (receipt) error.message = `O PDF já foi enviado. Falta concluir o cadastro: ${error.message}`;
         throw error;
       }
     },
@@ -163,18 +230,35 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
       const view = documentGame(game, document),
         cacheKey = indexCacheKey(project, repository.session.user?.uid, view);
       if (!db) return (await localValue(`index:${key(game, document)}`)) || (await cachedIndex(cacheKey));
-      const snapshot = await sdk.getDocFromServer(sdk.doc(db, 'games', game.id, 'indexes', document.id));
-      if (!snapshot.exists() || snapshot.data().sourceHash !== document.manual.sha256 || !snapshot.data().fileId) {
-        if (document.id === 'main' && repository.getGuide) {
-          const guides = repository.session.canEdit ? [await repository.getGuide(game, true), await repository.getGuide(game)] : [await repository.getGuide(game)];
-          const legacy = guides.find((guide) => guide?.sourceHash === document.manual.sha256 && guide.indexFileId);
-          if (legacy) {
-            const index = await unpackIndex(await repository.getGuideAsset(game, legacy.indexFileId), view);
-            index.legacyShared = true;
-            return index;
-          }
+      const legacyIndex = async () => {
+        if (document.id !== 'main' || !repository.getGuide) return null;
+        // Cada leitura continua sujeita às regras do guia e à autorização do arquivo.
+        for (const draft of repository.session.canEdit ? [false, true] : [false]) {
+          const legacy = await repository.getGuide(game, draft);
+          if (legacy?.sourceHash !== document.manual.sha256 || !legacy.indexFileId) continue;
+          const index = await unpackIndex(await repository.getGuideAsset(game, legacy.indexFileId), view);
+          requireRead();
+          index.legacyShared = true;
+          return index;
         }
         return null;
+      };
+      if (repository.mode === 'firebase' && repository.session.storageStatus && !(repository.session.storageStatus.fileProtocol >= 2)) {
+        const legacy = await legacyIndex();
+        if (legacy) return legacy;
+        throw Object.assign(new Error('A pesquisa deste PDF precisa da atualização do servidor.'), { status: 426, code: 'index/server-update' });
+      }
+      let snapshot;
+      try {
+        snapshot = await sdk.getDocFromServer(sdk.doc(db, 'games', game.id, 'indexes', document.id));
+      } catch (error) {
+        if (error.code !== 'permission-denied') throw error;
+        const legacy = await legacyIndex();
+        if (legacy) return legacy;
+        throw Object.assign(new Error('O servidor recusou a leitura do índice de pesquisa.'), { status: 403, code: 'index/access', cause: error });
+      }
+      if (!snapshot.exists() || snapshot.data().sourceHash !== document.manual.sha256 || !snapshot.data().fileId) {
+        return legacyIndex();
       }
       const record = snapshot.data();
       const cached = await cachedIndex(cacheKey);

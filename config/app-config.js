@@ -20,5 +20,6 @@ const HOSTED_CONFIG = {
   allowPasswordLogin: true,
   maxPdfBytes: MAX_PDF_BYTES,
 };
-// O servidor de testes substitui somente esta seleção pela configuração fictícia.
+// Uso manual: mesmos serviços reais no localhost e no site publicado.
+// O servidor de testes substitui esta seleção explicitamente por DEV_CONFIG.
 export const APP_CONFIG = HOSTED_CONFIG;

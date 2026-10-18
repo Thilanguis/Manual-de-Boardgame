@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { KnowledgeStore, KNOWLEDGE_MODEL, knowledgeKey, knowledgeFields, validateSynthesis, synthesizePublicKnowledge, collectPublicKnowledge } from '../src/game-knowledge.js';
+import { KnowledgeStore, KNOWLEDGE_MODEL, knowledgeKey, knowledgeFields, validateSynthesis, synthesizePublicKnowledge, collectPublicKnowledge, preserveKnowledgeCorrections } from '../src/game-knowledge.js';
 import { knowledgeFixture } from '../../tests/knowledge-fixture.mjs';
 import { resetCatalogCache } from '../src/catalog/io.js';
 
@@ -22,6 +22,50 @@ function memoryStorage() {
   return store;
 }
 const operation = (store, path, data) => new KnowledgeStore({ storage: store }).fetch(new Request(`https://internal${path}`, data ? { method: 'POST', body: JSON.stringify({ key: 'game1', ...data }) } : undefined));
+
+test('correções têm prioridade por referência sem eliminar outros assuntos da mesma categoria', () => {
+  const manual = { id: 'manual-1', documentId: 'main', sourceHash: 'a'.repeat(64), pages: [{ page: 1, text: 'Evidência da primeira ação.' }] };
+  const corrected = { id: 'saved', topic: 'acoes', documentId: 'main', sourceHash: manual.sourceHash, sourceId: manual.id, page: 1, quote: 'Evidência da primeira ação.', text: 'Correção do administrador', review: 'manual' };
+  const previous = { sections: [corrected], sources: [manual] };
+  const next = {
+    sections: [
+      { ...corrected, text: 'Tentativa de substituir correção', review: 'unreviewed' },
+      { ...corrected, id: 'another', page: 2, quote: 'Outra evidência', text: 'Outra ação válida', review: 'unreviewed' },
+    ],
+    sources: [manual],
+  };
+  const result = preserveKnowledgeCorrections(next, previous);
+  assert.deepEqual(
+    result.sections.map((section) => section.text),
+    ['Correção do administrador', 'Outra ação válida'],
+  );
+  assert.equal(preserveKnowledgeCorrections(next, previous, [{ id: 'main', hash: 'b'.repeat(64) }]).sections[0].review, 'unreviewed', 'não transporta correção para outra versão do PDF');
+});
+
+test('ao adicionar um PDF, correções dos documentos inalterados acompanham o novo contexto', async () => {
+  const store = memoryStorage(),
+    hash = 'a'.repeat(64);
+  const prior = {
+    sections: [{ id: 'old', sourceId: 'manual', sourceHash: hash, documentId: 'main', topic: 'acoes', page: 1, quote: 'Fonte da regra', text: 'Correção preservada', review: 'manual' }],
+    sources: [{ id: 'manual', sourceHash: hash, documentId: 'main', pages: [{ page: 1, text: 'Fonte da regra' }] }],
+  };
+  await store.put('job:prior', { knowledge: prior, status: 'ready' });
+  await store.put('latest:game', 'job:prior');
+  const { record } = await (await operation(store, '/claim', { requestId: 'new' })).json();
+  await operation(store, '/finish', {
+    lease: record.lease,
+    gameId: 'game',
+    documents: [
+      { id: 'main', hash },
+      { id: 'extra', hash: 'b'.repeat(64) },
+    ],
+    status: 'ready',
+    knowledge: { sections: [], sources: [] },
+  });
+  const restored = await (await operation(store, '/?key=game1')).json();
+  assert.equal(restored.knowledge.sections[0].text, 'Correção preservada');
+  assert.equal(await store.get('latest:game'), 'job:game1');
+});
 test('conhecimento exige evidência literal de uma fonte consultada e saída em PT-BR', () => {
   const good = validateSynthesis(synthesis(), [source]);
   assert.equal(good.sections.length, 1);
@@ -120,7 +164,29 @@ test('revisão usa versão, preserva correções e rejeições na atualização 
 test('cota persistente global limita novas gerações, inclusive em outros jogos', async () => {
   const store = memoryStorage();
   for (const key of ['a', 'b']) assert.equal((await (await operation(store, '/claim', { key, requestId: key })).json()).claimed, true);
-  assert.equal((await operation(store, '/claim', { key: 'c', requestId: 'c' })).status, 429);
+  const denied = await operation(store, '/claim', { key: 'c', requestId: 'c' });
+  assert.equal(denied.status, 429);
+  const record = await denied.json();
+  assert.equal(record.reason, 'app-rate-limit');
+  assert.equal(record.quotaScope, 'minute');
+  assert(record.retryAt > Date.now() && record.retryAt <= Date.now() + 60000);
+  assert.equal((await store.get('quota')).count, 2);
+});
+
+test('limite diário informa a próxima virada UTC e preserva conhecimento existente', async () => {
+  const store = memoryStorage();
+  const day = new Date().toISOString().slice(0, 10);
+  const knowledge = { sections: [{ text: 'Texto já revisado' }] };
+  await store.put('quota', { day, count: 5, recent: [] });
+  await store.put('job:game1', { status: 'ready', knowledge, revision: 3 });
+  const response = await operation(store, '/claim', { requestId: 'limited', force: true });
+  const record = await response.json();
+  assert.equal(response.status, 429);
+  assert.equal(record.quotaScope, 'day');
+  assert.equal(record.retryAt, Date.parse(`${day}T00:00:00Z`) + 86400000);
+  assert.deepEqual(record.knowledge, knowledge);
+  assert.match(record.message, /5 gerações/);
+  assert.equal((await store.get('quota')).count, 5);
 });
 
 test('conectores reais consultam três títulos em português com fontes simuladas e preservam a origem', async () => {

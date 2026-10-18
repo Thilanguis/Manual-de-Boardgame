@@ -3,6 +3,7 @@ import { analyzePdf, indexMatches } from './pdf-index.js';
 import { extendOcrIndex, ocrCoverage } from './pdf-knowledge.js';
 import { createTextTranslator, translateIndex, isPortuguese, translatedValue } from './translation.js';
 import { cachedIndex, indexCacheKey } from './index-cache.js';
+import { normalizeText } from './model.js';
 export const PREPARATION_LABELS = {
   waiting: 'Aguardando',
   analyzing: 'Preparando',
@@ -23,7 +24,9 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
     timer,
     sequence = 0,
     account = '',
-    loaded = false;
+    loaded = false,
+    restoring,
+    catalogReady = false;
   let observedGameId = null;
   const key = (game, doc) => `${game.id}:${doc.id}:${doc.manual.sha256}`;
   const queueKey = () => `preparation:${scope}:${repository.session.user?.uid || 'device'}`;
@@ -33,6 +36,35 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
     await cachedIndex(queueKey(), [...jobs.values()].slice(-144));
   };
   const notify = () => onChange([...jobs.values()]);
+  async function requestKnowledge(game) {
+    if (!(repository.session.storageStatus?.manualKnowledgeProtocol >= 1) || repository.session.storageStatus?.manualAiEnabled === false || !repository.generateKnowledge || !repository.session.canRead) return;
+    const token = sequence,
+      user = account;
+    const ready = gameDocuments(game).map((document) => jobs.get(key(game, document)));
+    const context = JSON.stringify([normalizeText(game.title), game.edition || '', gameDocuments(game).map((document) => [document.id, document.manual.sha256])]);
+    if (ready.some((job) => !job || !['ready', 'partial'].includes(job.state)) || ready.every((job) => job.knowledgeContext === context)) return;
+    // Marca antes da requisição para deduplicar notificações concorrentes e recargas.
+    ready.forEach((job) => {
+      job.knowledgeRequested = true;
+      job.knowledgeContext = context;
+    });
+    await persist();
+    if (token !== sequence || user !== account || !repository.session.canRead) return;
+    try {
+      const result = await repository.generateKnowledge(game);
+      if (token !== sequence || user !== account || !repository.session.canRead) return;
+      ready.forEach((job) => {
+        job.knowledgeStatus = result?.status || 'requested';
+      });
+    } catch (error) {
+      if (token !== sequence || user !== account || !repository.session.canRead) return;
+      ready.forEach((job) => {
+        job.knowledgeStatus = error.record?.status || 'attention';
+      });
+    }
+    await persist();
+    notify();
+  }
   function schedule(delay = 0) {
     clearTimeout(timer);
     timer = setTimeout(() => void drain(), delay);
@@ -93,6 +125,7 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
         if (!job.translationPending) {
           if (shared.legacyShared) await repository.saveTechnicalIndex(game, doc, shared, { state: c.failed ? 'partial' : 'ready', signal });
           await status(job, c.failed ? 'partial' : 'ready', { current: c.readable, total: c.total, failedPages: c.failed });
+          await requestKnowledge(game);
           return;
         }
       }
@@ -147,6 +180,7 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
       if (needsPdf || !sharedValid || shared.legacyShared || !job.translationPending) await repository.saveTechnicalIndex(game, doc, index, { state, signal });
       await checkpoint(index);
       await status(job, state, { current: c.readable, total: c.total, failedPages: c.failed, attempts: 0 });
+      await requestKnowledge(game);
     } catch (error) {
       if (!active()) return;
       if (signal.aborted) {
@@ -171,25 +205,38 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
       activeKey = null;
     }
   }
-  async function update(nextGames) {
-    games = nextGames;
+  async function update(nextGames, { loading = false } = {}) {
     const uid = repository.session.user?.uid || 'device';
     if (!repository.session.canRead) {
       stop();
       return;
     }
+    // Uma lista vazia durante a inicialização não representa exclusão do catálogo.
+    if (loading) return;
+    games = nextGames;
     if (account !== uid) {
       stop();
       account = uid;
       loaded = false;
       jobs.clear();
     }
+    catalogReady = true;
     const token = sequence;
     if (!loaded) {
-      const saved = await cachedIndex(queueKey());
-      if (token !== sequence || !repository.session.canRead) return;
-      for (const job of Array.isArray(saved) ? saved : []) jobs.set(job.key, { ...job, state: ['analyzing', 'ocr', 'translating'].includes(job.state) ? 'waiting' : job.state });
-      loaded = true;
+      if (!restoring) {
+        const pending = cachedIndex(queueKey())
+          .then((saved) => {
+            if (token !== sequence || !repository.session.canRead) return;
+            for (const job of Array.isArray(saved) ? saved : []) jobs.set(job.key, { ...job, state: ['analyzing', 'ocr', 'translating'].includes(job.state) ? 'waiting' : job.state });
+            loaded = true;
+          })
+          .finally(() => {
+            if (restoring === pending) restoring = null;
+          });
+        restoring = pending;
+      }
+      await restoring;
+      if (token !== sequence || !loaded || !repository.session.canRead) return;
     }
     for (const [id, stop] of watchers)
       if (id !== observedGameId || !games.some((game) => game.id === id)) {
@@ -230,6 +277,7 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
     if (activeKey && (!jobs.has(activeKey) || !games.some((game) => game.id === jobs.get(activeKey)?.gameId && permitted(game)))) controller?.abort();
     notify();
     await persist();
+    for (const game of games) if (permitted(game)) await requestKnowledge(game);
     schedule();
   }
   function stop() {
@@ -241,6 +289,8 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
     controller?.abort();
     jobs.clear();
     loaded = false;
+    restoring = null;
+    catalogReady = false;
   }
   const onOffline = () => controller?.abort();
   const onOnline = () => schedule();
@@ -254,7 +304,7 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
           stop();
           watchers.delete(id);
         }
-      if (repository.session.canRead) void update(games);
+      if (repository.session.canRead && catalogReady) void update(games);
     },
     update,
     stop,

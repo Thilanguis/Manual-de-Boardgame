@@ -9,6 +9,8 @@
     "OWNER_UID": "7TitBObtb8a0W8GisSstSM1RHiX2",
     "ALLOWED_ORIGINS": "http://localhost:4173,http://localhost:4174,http://127.0.0.1:4173,http://127.0.0.1:4174,http://localhost:5500,http://127.0.0.1:5500,https://thilanguis.github.io",
     "MAX_PDF_BYTES": "52428800",
+    "KNOWLEDGE_FROM_MANUAL": "true",
+    "ALLOW_MANUAL_AI": "true",
   },
   "observability": { "enabled": false },
   "durable_objects": { "bindings": [{ "name": "GAME_KNOWLEDGE", "class_name": "KnowledgeStore" }] },

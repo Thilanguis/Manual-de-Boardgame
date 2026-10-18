@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Biblioteca pessoal de manuais de jogos de tabuleiro, em JavaScript puro.",
   "scripts": {
-    "start": "node scripts/dev.mjs",
+    "start": "node scripts/serve.mjs --real",
     "build": "node scripts/build.mjs",
     "test": "node --import ./scripts/test-guard.mjs --test tests/*.test.mjs",
     "check": "node scripts/check.mjs",

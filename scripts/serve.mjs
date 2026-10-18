@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2),
-  port = Number(process.env.PORT || 4173),
+  real = args.includes('--real'),
+  isolated = !real && process.env.ACERVO_DEVELOPMENT === '1',
+  port = real ? 4174 : Number(process.env.PORT || 4173),
   host = args.includes('--lan') ? '0.0.0.0' : '127.0.0.1';
 const allowedRoots = new Set(['index.html', 'manifest.webmanifest', 'service-worker.js', 'assets', 'styles', 'js', 'vendor', 'config']);
 const types = {
@@ -26,7 +28,7 @@ const types = {
 };
 const server = createServer(async (request, response) => {
   try {
-    if (process.env.ACERVO_DEVELOPMENT === '1')
+    if (isolated)
       response.setHeader(
         'Content-Security-Policy',
         "default-src 'self'; connect-src 'self' http://127.0.0.1:8080 http://127.0.0.1:9099 http://127.0.0.1:8787; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'",
@@ -59,7 +61,8 @@ const server = createServer(async (request, response) => {
       return;
     }
     let content = await readFile(file);
-    if (process.env.ACERVO_DEVELOPMENT === '1' && rel === `config${sep}app-config.js`) {
+    if (isolated && rel === 'index.html') content = Buffer.from(content.toString('utf8').replace('<head>', '<head>\n<meta name="acervo-environment" content="isolated">'));
+    if (isolated && rel === `config${sep}app-config.js`) {
       const source = content.toString('utf8');
       const selection = 'export const APP_CONFIG = HOSTED_CONFIG;';
       if (!source.includes(selection)) throw new Error('Seleção do ambiente de testes não encontrada.');
@@ -76,4 +79,8 @@ server.on('error', (error) => {
   console.error(error.message);
   process.exitCode = 1;
 });
-server.listen(port, host, () => console.log(`Acervo: http://localhost:${server.address().port}${host === '0.0.0.0' ? ' (acesso na rede local habilitado; PWA exige HTTPS fora do localhost)' : ''}`));
+server.listen(port, host, () =>
+  console.log(
+    real ? 'Acervo: http://127.0.0.1:4174 — seus dados reais; sem recarga automática.' : `Acervo: http://localhost:${server.address().port}${host === '0.0.0.0' ? ' (acesso na rede local habilitado; PWA exige HTTPS fora do localhost)' : ''}`,
+  ),
+);

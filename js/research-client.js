@@ -2,7 +2,7 @@ import { normalizeText, durationRange, synopsisText } from './model.js';
 import { RESEARCH_PROTOCOL } from './research-contract.js';
 import { durationSuggestion } from './research-duration.js';
 
-export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', wikipedia: 'Wikipédia', pdf: 'PDF · texto do manual', bgg: 'BoardGameGeek' };
+export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', wikipedia: 'Wikipédia', pdf: 'PDF · texto do manual', gemini: 'Gemini · manual', bgg: 'BoardGameGeek' };
 export function researchSummary(sources, statuses) {
   const active = sources.filter((s) => s.enabled),
     disabled = sources.filter((s) => !s.enabled),
@@ -36,19 +36,16 @@ export async function researchRequest(base, getToken, source, input, { signal, t
     combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let abort;
   try {
-    const token =
-      source === 'sources'
-        ? ''
-        : await Promise.race([
-            getToken(),
-            new Promise((_, reject) => {
-              abort = () => reject(combined.reason);
-              if (combined.aborted) abort();
-              else combined.addEventListener('abort', abort, { once: true });
-            }),
-          ]);
+    const token = await Promise.race([
+      getToken(),
+      new Promise((_, reject) => {
+        abort = () => reject(combined.reason);
+        if (combined.aborted) abort();
+        else combined.addEventListener('abort', abort, { once: true });
+      }),
+    ]);
     combined.throwIfAborted();
-    if (source !== 'sources' && !token) throw new Error('Entre com uma conta autorizada para pesquisar.');
+    if (!token) throw new Error('Entre com uma conta autorizada para pesquisar.');
     const response = await fetcher(`${base.replace(/\/$/, '')}/v1/research/${source}`, {
       method: source === 'sources' ? 'GET' : 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },

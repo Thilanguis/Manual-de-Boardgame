@@ -3,11 +3,25 @@ import { vocabularyFields, knownVocabulary } from './game-vocabulary.js';
 
 const keys = ['description', 'tags', 'mechanics', 'gameType'];
 export function pdfMetadataCandidate(game) {
-  const original = game.sources?.pdfOriginalMetadata;
+  const legacyFields = Object.fromEntries(
+    ['title', 'edition', 'description', 'minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'recommendedAge', 'tags', 'mechanics', 'gameType']
+      .filter((key) => {
+        const origin = game.sources?.[['minPlayers', 'maxPlayers'].includes(key) ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(key) ? 'duration' : key];
+        return /^PDF/i.test(origin?.source || '') && !origin.confirmedAt && game[key] != null && game[key] !== '' && (!Array.isArray(game[key]) || game[key].length);
+      })
+      .map((key) => [key, game[key]]),
+  );
+  const stored = game.sources?.pdfOriginalMetadata;
+  const original = stored
+    ? { ...stored, fields: { ...(stored.manualHash === game.manual?.sha256 ? legacyFields : {}), ...stored.fields } }
+    : Object.keys(legacyFields).length
+      ? { fields: legacyFields, manualHash: game.manual?.sha256, language: game.language }
+      : null;
   if (!original?.fields || !original.manualHash || original.manualHash !== game.manual?.sha256) return null;
   return {
     source: 'pdf',
     manualHash: original.manualHash,
+    identifiers: { manual: original.manualHash },
     id: 'pdf-extracted',
     pdfMethod: 'text',
     fields: { title: game.title, ...original.fields },
@@ -18,6 +32,16 @@ export function pdfMetadataCandidate(game) {
     edition: game.edition || '',
     kind: 'unknown',
     license: 'Manual enviado · conferir os trechos originais',
+    evidence: Object.fromEntries(
+      Object.keys(original.fields).map((key) => [
+        key,
+        {
+          ...(game.sources?.[['minPlayers', 'maxPlayers'].includes(key) ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(key) ? 'duration' : key] || {}),
+          documentId: game.primaryDocumentId || 'main',
+          sourceHash: original.manualHash,
+        },
+      ]),
+    ),
     conflicts: [],
   };
 }

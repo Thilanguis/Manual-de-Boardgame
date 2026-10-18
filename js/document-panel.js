@@ -1,5 +1,5 @@
 import { MAX_PDF_BYTES } from './pdf-limits.js';
-import { DOCUMENT_TYPES, gameDocuments, primaryDocumentId } from './documents.js';
+import { DOCUMENT_TYPES, gameDocuments, primaryDocumentId, documentName } from './documents.js';
 import { inspectPdf } from './pdf.js';
 import { PREPARATION_LABELS } from './preparation-queue.js';
 const el = (tag, text) => {
@@ -12,6 +12,8 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
     sequence = 0,
     busy = false,
     pendingRemovals = [],
+    pendingLinks = [],
+    pendingLoad = 0,
     controller;
   const button = (text, action) => {
     const b = el('button', text);
@@ -64,6 +66,14 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
     if (failures.length) onNotice(`Jogo preservado. Não foi possível adicionar: ${failures.join(' · ')}`);
     return { game: latest, failures };
   }
+  async function finishLinks() {
+    ++pendingLoad;
+    const result = await repository.finishPendingDocumentLinks(game);
+    ++pendingLoad;
+    pendingLinks = await repository.pendingDocumentLinks(result.game);
+    await saved(result.game);
+    if (result.failures.length) onNotice(result.failures.join(' · '));
+  }
   function render() {
     root.replaceChildren();
     readRoot?.replaceChildren();
@@ -71,27 +81,44 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
     root.className = 'document-list';
     const documents = gameDocuments(game),
       blocked = queue.blockedReason?.() || '';
-    for (const [i, doc] of documents.entries()) {
+    for (const doc of documents) {
       const principal = doc.id === primaryDocumentId(game);
-      const name = principal
-        ? 'Manual principal'
-        : doc.name
-            .replace(/_/g, ' ')
-            .replace(/\b\d{5,}\b/g, '')
-            .trim() || `${DOCUMENT_TYPES[doc.documentType]} ${i + 1}`;
+      const name = documentName(doc);
       const row = el('div');
       row.className = 'document-reading-row';
       row.dataset.readDocumentId = doc.id;
-      row.append(
+      const info = el('div');
+      info.className = 'document-reading-info';
+      const title = el('strong', name);
+      title.title = doc.manual.name || name;
+      info.append(
+        title,
         el(
           'p',
-          `${name}${principal ? '' : ` · ${DOCUMENT_TYPES[doc.documentType]}`} · ${{ 'pt-BR': 'Português', pt: 'Português', en: 'Inglês', fr: 'Francês' }[doc.language] || 'Idioma não identificado'} · ${doc.manual.pages} ${doc.manual.pages === 1 ? 'página' : 'páginas'}`,
+          `${principal ? 'Manual principal' : DOCUMENT_TYPES[doc.documentType] || 'Complemento'} · ${{ 'pt-BR': 'Português', pt: 'Português', en: 'Inglês', fr: 'Francês' }[doc.language] || 'Idioma não identificado'} · ${doc.manual.pages} ${doc.manual.pages === 1 ? 'página' : 'páginas'}`,
         ),
       );
-      if (documents.length > 1) row.append(button('Ler documento', () => openManual(game, { documentId: doc.id })));
+      row.append(info);
+      if (documents.length > 1) {
+        const read = button('Ler documento', () => openManual(game, { documentId: doc.id }));
+        read.setAttribute('aria-label', `Ler documento: ${name}`);
+        row.append(read);
+      }
       readRoot?.append(row);
     }
     if (!repository.session.canEdit && !repository.session.canDelete) return;
+    if (repository.session.canEdit && pendingLinks.length) {
+      const pending = el('article');
+      pending.className = 'document-link-pending';
+      pending.append(el('strong', `${pendingLinks.length} ${pendingLinks.length === 1 ? 'PDF aguarda' : 'PDFs aguardam'} concluir o cadastro`));
+      for (const entry of pendingLinks) pending.append(el('p', entry.document.name));
+      pending.append(button('Concluir cadastro dos PDFs', finishLinks));
+      root.append(pending);
+      const notice = el('div');
+      notice.className = 'document-link-pending';
+      notice.append(el('p', 'Há PDFs enviados com cadastro pendente.'), button('Concluir cadastro dos PDFs', finishLinks));
+      readRoot?.append(notice);
+    }
     if (blocked) {
       root.append(el('p', blocked));
       const diagnostic = el('details');
@@ -110,7 +137,7 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
       row.dataset.documentId = doc.id;
       const job = queue.entries().find((j) => j.gameId === game.id && j.documentId === doc.id && j.sourceHash === doc.manual.sha256);
       row.append(
-        el('strong', doc.id === primaryDocumentId(game) ? 'Manual principal' : doc.name.replace(/_/g, ' ').replace(/\.pdf$/i, '')),
+        el('strong', documentName(doc)),
         el(
           'p',
           `${DOCUMENT_TYPES[doc.documentType]}${doc.id === primaryDocumentId(game) ? ' · Principal' : ''} · ${{ 'pt-BR': 'Português', pt: 'Português', en: 'Inglês', fr: 'Francês' }[doc.language] || 'Idioma não identificado'} · ${doc.manual.pages} ${doc.manual.pages === 1 ? 'página' : 'páginas'}`,
@@ -269,11 +296,18 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
       render();
     },
     open(next) {
-      if (game?.id !== next.id) ++sequence;
+      if (game?.id !== next.id) { ++sequence; pendingLinks = []; }
       game = next;
       queue.observeGame?.(next);
       render();
       const token = sequence;
+      const load = ++pendingLoad;
+      if (repository.session.canEdit && repository.pendingDocumentLinks)
+        void repository.pendingDocumentLinks(next).then((entries) => {
+          if (token !== sequence || load !== pendingLoad || game?.id !== next.id) return;
+          pendingLinks = entries;
+          if (!busy) render();
+        }).catch((error) => onNotice(error.message));
       if (repository.session.canDelete && (repository.mode !== 'firebase' || repository.session.storageStatus?.documentRemovalProtocol >= 2))
         void repository
           .pendingDocumentRemovals?.(next)
@@ -291,6 +325,7 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
       game = null;
       queue.observeGame?.(null);
       pendingRemovals = [];
+      pendingLinks = [];
       root.replaceChildren();
       readRoot?.replaceChildren();
     },

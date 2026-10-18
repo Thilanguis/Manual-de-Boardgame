@@ -1,7 +1,7 @@
 import { lockPrivateCache } from './private-cache.js';
 import { createPreparationQueue } from './preparation-queue.js';
 import { createDocumentPanel } from './document-panel.js';
-import { gameDocuments, findDocument } from './documents.js';
+import { DOCUMENT_TYPES, gameDocuments, findDocument } from './documents.js';
 import { createGameSteps } from './game-steps.js';
 import { titleCandidates } from './recognition.js';
 import { createAccountPanel } from './account-panel.js';
@@ -16,6 +16,8 @@ import { statusLabel } from './permissions.js';
 import { readableGame, unavailableReason } from './catalog-availability.js';
 import { createGuidePanel } from './guide-panel.js';
 import { createKnowledgePanel } from './knowledge-panel.js';
+import { createMetadataForm } from './metadata-form.js';
+import { sourceField } from './metadata-consolidation.js';
 import { vocabularyTerm } from './game-vocabulary.js';
 import { portugueseCandidate } from './catalog-language.js';
 import { bggWebsiteSearch } from './bgg-client.js';
@@ -34,7 +36,7 @@ let repository,
   preparationSignature = '',
   documentPanel,
   additionalFiles = [],
-  additionalTypes = [],
+  registrationSavingId = null,
   reader,
   draft = null,
   registrationOcr = null,
@@ -44,8 +46,10 @@ let repository,
   draftCoverURL = '',
   importAbort = null,
   importSequence = 0,
-  noticeTimer;
-const gameSteps = createGameSteps({ form: $('game-form'), dialog: $('upload-dialog'), getSession: () => state.session, isBusy: () => state.busy || state.importing });
+  noticeTimer,
+  metadataForm,
+  consolidatedDraft = null;
+const gameSteps = createGameSteps({ form: $('game-form'), dialog: $('upload-dialog'), getSession: () => state.session, getDocuments: () => [...gameDocuments(draft), ...additionalFiles], isBusy: () => state.busy || state.importing });
 const localMode = APP_CONFIG.allowLocalDevelopment === true && ['localhost', '127.0.0.1'].includes(location.hostname) && new URLSearchParams(location.search).get('local') === '1';
 if (localMode) document.body.classList.add('access-approved');
 function icon(name) {
@@ -161,8 +165,16 @@ document.querySelectorAll('dialog').forEach((dialog) => {
   });
   dialog.addEventListener('close', () => {
     if (!document.querySelector('dialog[open]')) document.body.classList.remove('modal-open');
-    if (dialog.id === 'upload-dialog') resetDraft();
+    if (dialog.id === 'upload-dialog') {
+      const saved = additionalFiles.length && draft?.id && state.games.some((game) => game.id === draft.id);
+      resetDraft();
+      if (saved) void preparationQueue?.update(state.games);
+    }
     if (dialog.id === 'detail-dialog' && !$('game-management-dialog').open) documentPanel?.close();
+    if (dialog.id === 'game-management-dialog') {
+      knowledgePanel?.suspend();
+      if (!$('detail-dialog').open) documentPanel?.close();
+    }
   });
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) {
@@ -449,17 +461,6 @@ function showGame(game) {
   $('detail-title-warning').textContent = state.session.canEdit
     ? 'O título original deste cadastro é técnico e precisa de revisão. Use Editar informações para confirmar o nome real.'
     : 'O nome deste jogo está em revisão. O manual continua disponível.';
-  const selectedId = game.id;
-  $('detail-guide-status').textContent = 'Verificando guia…';
-  repository
-    .getGuide(game)
-    .then((guide) => {
-      if (state.selected?.id === selectedId)
-        $('detail-guide-status').textContent = guide?.sections?.length ? (guide.sourceHash === game.manual.sha256 ? 'Guia passo a passo disponível.' : 'As referências do guia precisam de revisão. Consulte o manual.') : 'Guia ainda não publicado.';
-    })
-    .catch(() => {
-      if (state.selected?.id === selectedId) $('detail-guide-status').textContent = 'Não foi possível conferir o guia agora.';
-    });
   $('detail-description').textContent = displayDescription(game);
   $('detail-description').hidden = !displayDescription(game);
   $('detail-description').classList.remove('expanded');
@@ -484,8 +485,6 @@ function showGame(game) {
   updateManualStatus(game);
   $('detail-admin').hidden = !state.session.canEdit && !state.session.canDelete;
   $('edit-game').hidden = !state.session.canEdit;
-  $('edit-guide').hidden = !state.session.canEdit;
-  $('edit-guide').disabled = game.deleting === true;
   $('delete-game').hidden = !state.session.canDelete;
   $('delete-game').parentElement.hidden = !state.session.canDelete;
   $('edit-game').disabled = game.deleting === true;
@@ -541,17 +540,13 @@ function updateManualStatus(game) {
 }
 $('detail-favorite').onclick = () => toggleFavorite(state.selected.id);
 $('read-manual').onclick = () => reader.open(state.selected);
-$('learn-game').onclick = () => guidePanel.open(state.selected, 'learn');
-$('quick-rules').onclick = () => guidePanel.open(state.selected, 'quick');
-$('edit-guide').onclick = () => {
-  if ($('game-management-dialog').open) $('game-management-dialog').close();
-  guidePanel.open(state.selected, 'edit');
-};
+$('quick-rules').onclick = () => guidePanel.open(state.selected);
 function formatBytes(size = 0) {
   return size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(size / 1024)} KB`;
 }
 function resetDraft() {
   researchPanel.reset();
+  metadataForm?.reset();
   $('research-applied').hidden = true;
   gameSteps.reset();
   $('bgg-search').removeAttribute('aria-busy');
@@ -561,7 +556,9 @@ function resetDraft() {
   draft = manualBlob = draftCoverBlob = originalPdfCover = null;
   registrationOcr = null;
   additionalFiles = [];
-  additionalTypes = [];
+  $('registration-pdfs').hidden = true;
+  $('registration-pdfs').disabled = false;
+  $('additional-pdf-file').value = '';
   $('additional-pdfs')?.replaceChildren();
   draftCoverURL = '';
   state.importing = false;
@@ -619,6 +616,8 @@ function fillForm() {
   renderEvidence();
   $('use-pdf-cover').hidden = !originalPdfCover;
   $('replace-pdf-label').hidden = !draft.id || !state.session.canEdit;
+  renderRegistrationPdfs();
+  metadataForm?.refresh();
   $('bgg-search').disabled = true;
   $('bgg-search').hidden = true;
   $('bgg-web-search').hidden = !$('bgg-search').disabled;
@@ -672,7 +671,7 @@ async function importFile(file) {
     needsOcr = !textFound;
     draft = { ...record };
     const localized = portugueseCandidate({ fields: record, language: record.language, descriptionLanguage: record.language });
-    const originalFields = {};
+    const originalFields = Object.fromEntries(['title', 'edition', 'description', 'minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'recommendedAge', 'tags', 'mechanics', 'gameType'].filter((key) => record[key] != null && record[key] !== '' && (!Array.isArray(record[key]) || record[key].length)).map((key) => [key, record[key]]));
     for (const pending of localized.pendingTranslations) {
       originalFields[pending.key] = pending.value;
       draft[pending.key] = Array.isArray(pending.value) ? [] : '';
@@ -707,39 +706,100 @@ async function importFile(file) {
   } finally {
     if (token === importSequence) {
       state.importing = false;
-      if (draft && $('upload-dialog').open) {
-        void researchPanel.run();
-        if (needsOcr) void researchPanel.runOcr();
-      }
+      $('registration-pdfs').disabled = false;
     }
     $('pdf-file').disabled = false;
     $('pdf-file').value = '';
   }
+  return { needsOcr };
 }
-function importFiles(files) {
-  const selected = [...files].filter((file) => /\.pdf$/i.test(file.name)).slice(0, 12);
-  additionalFiles = selected.slice(1);
+function renderRegistrationPdfs() {
+  $('registration-pdfs').hidden = !draft;
+  $('registration-pdfs').disabled = state.busy || state.importing;
+  if (!draft) return;
+  const count = gameDocuments(draft).length + additionalFiles.length;
+  $('registration-pdfs').querySelector('legend').textContent = `${count} ${count === 1 ? 'PDF neste jogo' : 'PDFs neste jogo'}`;
+  $('registration-main-pdf').textContent = `${draft.manual.name} · Manual principal`;
+  $('additional-pdf-file').disabled = !state.session.canEdit;
+  $('registration-pdf-permission').hidden = state.session.canEdit;
   const list = $('additional-pdfs');
   list.replaceChildren();
-  if (additionalFiles.length) {
-    list.append(node('p', null, `${additionalFiles.length} PDFs adicionais serão vinculados ao mesmo jogo.`));
-    additionalFiles.forEach((file, i) => {
-      const row = node('label', null, file.name);
-      const select = node('select');
-      select.setAttribute('aria-label', `Tipo de ${file.name}`);
-      for (const [value, label] of Object.entries({ complemento: 'Complemento', referencia: 'Referência', solo: 'Modo solo', faq: 'Perguntas frequentes', errata: 'Errata', expansao: 'Expansão' })) {
-        const option = node('option', null, label);
-        option.value = value;
-        select.append(option);
-      }
-      select.onchange = () => (additionalTypes[i] = select.value);
-      row.append(select);
-      list.append(row);
-    });
+  for (const item of additionalFiles) {
+    const row = node('div', 'registration-pdf-row');
+    row.dataset.registrationDocument = item.id;
+    row.append(node('small', null, `${item.file.name} · ${formatBytes(item.file.size)}${item.manual ? ` · ${item.manual.pages} páginas` : ' · Não preparado'}`));
+    const label = node('label', null, 'Nome do documento'), name = node('input');
+    name.type = 'text'; name.value = item.name; name.maxLength = 160;
+    name.setAttribute('aria-label', `Nome de ${item.file.name}`);
+    name.oninput = () => { item.name = name.value; };
+    label.append(name); row.append(label);
+    const fields = node('div', 'form-row');
+    for (const [key, title, options] of [
+      ['documentType', 'Tipo', Object.entries(DOCUMENT_TYPES).filter(([value]) => value !== 'principal')],
+      ['language', 'Idioma', [['pt-BR', 'Português'], ['en', 'Inglês'], ['fr', 'Francês'], ['other', 'Outro / não identificado']]],
+    ]) {
+      const label = node('label', null, title), select = node('select');
+      select.setAttribute('aria-label', `${title} de ${item.file.name}`);
+      for (const [value, text] of options) { const option = node('option', null, text); option.value = value; select.append(option); }
+      select.value = item[key] === 'pt' ? 'pt-BR' : item[key];
+      select.onchange = () => { item[key] = select.value; };
+      label.append(select); fields.append(label);
+    }
+    const remove = node('button', 'text-button', 'Retirar'); remove.type = 'button';
+    remove.setAttribute('aria-label', `Retirar ${item.file.name}`);
+    remove.onclick = () => { if (state.busy || state.importing) return; additionalFiles = additionalFiles.filter((entry) => entry !== item); renderRegistrationPdfs(); };
+    fields.append(remove); row.append(fields);
+    if (item.error) row.append(node('p', 'inline-error', item.error));
+    list.append(row);
   }
-  return importFile(selected[0]);
+}
+async function appendRegistrationPdfs(files) {
+  if (!draft || state.busy || state.importing || !state.session.canEdit) return;
+  const selected = [...files];
+  if (!selected.length) return;
+  const count = gameDocuments(draft).length + additionalFiles.length;
+  if (count + selected.length > 12) { $('save-error').textContent = 'Use até 12 PDFs por jogo. Nenhum arquivo desta seleção foi acrescentado.'; $('save-error').hidden = false; return; }
+  const token = importSequence, currentHash = draft.manual.sha256, errors = [];
+  state.importing = true; $('registration-pdfs').disabled = true; $('save-game').disabled = true;
+  $('save-error').hidden = true;
+  try {
+    for (const file of selected) {
+      try {
+        $('upload-status').textContent = `Conferindo ${file.name}…`;
+        const info = await inspectPdf(file, { maxBytes: APP_CONFIG.maxPdfBytes, signal: importAbort?.signal });
+        if (token !== importSequence || draft?.manual.sha256 !== currentHash || !$('upload-dialog').open) return;
+        if ([...gameDocuments(draft), ...additionalFiles].some((item) => item.manual?.sha256 === info.manual.sha256)) throw Object.assign(new Error('Este PDF já está na lista deste jogo.'), { code: 'registration/duplicate' });
+        additionalFiles.push({ id: crypto.randomUUID(), file, name: file.name.replace(/\.pdf$/i, '').slice(0, 160), documentType: 'complemento', language: info.language || 'other', edition: info.edition || '', manual: info.manual });
+      } catch (error) {
+        if (token !== importSequence || error.name === 'AbortError') return;
+        if (error.code !== 'registration/duplicate') additionalFiles.push({ id: crypto.randomUUID(), file, name: file.name.replace(/\.pdf$/i, '').slice(0, 160), documentType: 'complemento', language: 'other', edition: '', manual: null, error: errorMessage(error) });
+        errors.push(`${file.name}: ${errorMessage(error)}`);
+      }
+    }
+  } finally {
+    if (token === importSequence) {
+      state.importing = false; $('registration-pdfs').disabled = false; $('save-game').disabled = false;
+      $('upload-status').textContent = '';
+      renderRegistrationPdfs();
+      if (errors.length) { $('save-error').textContent = errors.join(' '); $('save-error').hidden = false; }
+    }
+  }
+}
+async function importFiles(files) {
+  if (state.busy || state.importing) return;
+  const selected = [...files];
+  if (selected.length > 12) { $('upload-status').textContent = 'Selecione até 12 PDFs do mesmo jogo.'; return; }
+  const result = await importFile(selected[0]);
+  const token = importSequence;
+  if (draft && $('upload-dialog').open) {
+    await appendRegistrationPdfs(selected.slice(1));
+    if (token !== importSequence || !$('upload-dialog').open) return;
+    void researchPanel.run();
+    if (result?.needsOcr) void researchPanel.runOcr();
+  }
 }
 $('pdf-file').onchange = (event) => importFiles(event.target.files);
+$('additional-pdf-file').onchange = async (event) => { const files = [...event.target.files]; event.target.value = ''; await appendRegistrationPdfs(files); };
 for (const type of ['dragenter', 'dragover'])
   $('dropzone').addEventListener(type, (event) => {
     event.preventDefault();
@@ -841,87 +901,53 @@ const researchPanel = createResearchPanel({
   },
   readPreference: () => readPreferences('recognition').language,
   writePreference: (language) => writePreferences('recognition', { language }),
+  onConsolidated(model) { consolidatedDraft = model; metadataForm?.update(model); },
   onSuggestions(count) {
-    $('research-pending').hidden = !count;
+    $('research-pending').hidden = true;
     $('research-pending-text').textContent = 'Há sugestões para revisar antes de preencher estes campos.';
   },
-  onApplied(values) {
-    $('research-applied').textContent =
-      `Preenchido: ${[...new Set(Object.keys(values).map((key) => ({ description: 'resumo', minDurationMinutes: 'duração', maxDurationMinutes: 'duração', minPlayers: 'jogadores', maxPlayers: 'jogadores', recommendedAge: 'idade', tags: 'categorias', mechanics: 'mecânicas', gameType: 'tipo', title: 'nome', edition: 'edição', language: 'idioma' })[key] || key))].join(', ')}.`;
-    $('research-applied').hidden = false;
+  onApplied() {
+    $('research-applied').hidden = true;
     return gameSteps.go(2, false);
   },
-  apply(values, candidate) {
-    const current = Object.fromEntries(new FormData($('game-form')).entries());
-    const normalized = normalizeGameDraft({ ...current, ...values }),
-      sources = { ...draft.sources };
-    const before = { ...draft, ...durationRange(draft) };
-    for (const field of ['title', 'description', 'minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'recommendedAge', 'gameType', 'edition', 'language', 'tags', 'mechanics']) {
-      if (JSON.stringify(before[field] ?? '') !== JSON.stringify(normalized[field] ?? '')) {
-        const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(field) ? 'duration' : field;
-        sources[key] = {
-          source: 'Conferido e ajustado por você',
-          excerpt: key === 'players' ? playersLabel(normalized) : key === 'duration' ? durationLabel(normalized) : Array.isArray(normalized[field]) ? normalized[field].join(', ') : String(normalized[field] ?? ''),
-        };
-      }
-    }
-    draft = { ...draft, ...normalized, sources };
-    for (const [field, value] of Object.entries(values)) {
-      const origin = candidate.fieldSources?.[field] || candidate;
-      if (origin.source === 'pdf' && candidate.pdfMethod === 'text' && draft.sources.pdfOriginalMetadata?.manualHash === draft.manual.sha256) {
-        const originals = draft.sources.pdfOriginalMetadata;
-        const member = (candidate.members || [candidate]).find((c) => c.source === 'pdf' && c.id === origin.id);
-        if (member?.fieldTranslations?.[field]) originals.translations = { ...originals.translations, [field]: member.fieldTranslations[field] };
-      }
-      const key = field === 'minPlayers' || field === 'maxPlayers' ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(field) ? 'duration' : field;
-      draft.sources[key] = {
-        ...(candidate.evidence?.[key] || {}),
-        source:
-          origin.source === 'pdf'
-            ? candidate.pdfMethod === 'text'
-              ? 'PDF · trecho confirmado por você'
-              : 'PDF · OCR local · confirmado por você'
-            : origin.source === 'wikipedia'
-              ? 'Wikipédia · trecho confirmado'
-              : origin.source === 'ludopedia'
-                ? 'Ludopedia · API · confirmado'
-                : origin.source === 'bgg'
-                  ? 'BoardGameGeek · API · confirmado'
-                  : 'Wikidata · confirmado',
-        excerpt: key === 'players' ? playersLabel(draft) : key === 'duration' ? durationLabel(draft) : Array.isArray(value) ? value.join(', ') : String(value),
-        url: origin.url,
-        license: origin.license,
-        ...(origin.licenseUrl ? { licenseUrl: origin.licenseUrl, authorsUrl: origin.authorsUrl, modified: true } : {}),
-        language: origin.language || candidate.fieldLanguages?.[field] || 'unknown',
-        originalLanguage: origin.originalLanguage || origin.language || 'unknown',
-        translationMethod: origin.translationMethod || '',
-        fetchedAt: origin.fetchedAt || Date.now(),
-        originalValue: origin.originalValue ?? value,
-        confirmedAt: Date.now(),
-        editionConfirmedBy: state.session.user?.uid || 'device',
-      };
-    }
-    for (const member of candidate.members || [candidate]) {
-      if (member.source === 'pdf') continue;
-      const previous = draft.sources.catalog?.matches || [];
-      const match = {
-        source: member.source,
-        id: member.id,
-        url: member.url,
-        identifiers: member.identifiers || {},
-        names: member.names.slice(0, 20),
-        edition: draft.edition,
-        originalFields: member.fields,
-        license: member.license,
-        licenseUrl: member.licenseUrl || '',
-        authorsUrl: member.authorsUrl || '',
-        modified: true,
-        attributionLogo: member.attributionLogo || '',
-        confirmedAt: Date.now(),
-      };
-      draft.sources.catalog = { source: 'Correspondências confirmadas · edição revisada manualmente', excerpt: member.url, matches: [...previous.filter((m) => !(m.source === match.source && m.id === match.id)), match].slice(-6) };
-    }
-    fillForm();
+});
+function currentMetadata() {
+  const values = Object.fromEntries(new FormData($('game-form')).entries());
+  return draft ? { ...draft, ...normalizeGameDraft(values) } : null;
+}
+function applyMetadataValues(values, model, { automatic = false } = {}) {
+  if (!draft || !$('upload-dialog').open || !state.session.canWrite || state.busy) return;
+  const normalized = normalizeGameDraft({ ...currentMetadata(), ...values });
+  draft = { ...draft, ...normalized, sources: { ...draft.sources } };
+  for (const [key, value] of Object.entries(values)) {
+    const input = $('game-form').elements.namedItem(key);
+    if (input) input.value = Array.isArray(value) ? value.join(', ') : String(value ?? '');
+    const origin = model.fieldSources?.[key] || model;
+    draft.sources[sourceField(key)] = {
+      ...(origin.evidence || {}),
+      source: automatic ? (origin.source === 'gemini' ? 'Gemini · sugestão do manual' : 'Sugestão · ' + origin.source) : 'Conferido e ajustado por você',
+      excerpt: String(value), url: origin.url || '', license: origin.license || '',
+      ...(origin.licenseUrl ? { licenseUrl: origin.licenseUrl, authorsUrl: origin.authorsUrl || '', modified: true } : {}),
+      language: origin.language || 'unknown', originalLanguage: origin.originalLanguage || origin.language || 'unknown',
+      originalValue: origin.originalValue ?? value, fetchedAt: origin.fetchedAt || Date.now(),
+      ...(automatic ? {} : { confirmedAt: Date.now() }),
+    };
+  }
+  const previous = draft.sources.catalog?.matches || [];
+  const members = (model.members || []).filter((m) => !['pdf', 'gemini'].includes(m.source));
+  const matches = members.map((m) => ({ source: m.source, id: m.id, url: m.url || '', identifiers: m.identifiers || {}, names: m.names || [], edition: m.edition || '', language: m.language || 'unknown', kind: m.kind || 'unknown', originalFields: m.fields, fieldTranslations: m.fieldTranslations || {}, license: m.license || '', licenseUrl: m.licenseUrl || '', authorsUrl: m.authorsUrl || '', manualHash: draft.manual.sha256, fetchedAt: m.fetchedAt || Date.now() }));
+  if (matches.length) draft.sources.catalog = { source: 'Fontes reunidas · confira na ficha', excerpt: '', matches: [...previous.filter((old) => !matches.some((m) => m.source === old.source && m.id === old.id)), ...matches].slice(-6) };
+  // As escolhas e suas evidências acompanham o salvamento normal do cadastro.
+  draft.sources.metadata = { source: 'Ficha consolidada', excerpt: '', manualHash: draft.manual.sha256, fields: model.fields, origins: model.fieldSources, alternatives: model.alternatives, consistency: model.consistency };
+  renderEvidence();
+  gameSteps.refresh();
+}
+metadataForm = createMetadataForm({
+  form: $('game-form'), getCurrent: currentMetadata, apply: applyMetadataValues,
+  onManualEdit(key, value) {
+    if (!draft) return;
+    draft.sources ||= {};
+    draft.sources[sourceField(key)] = { source: 'Conferido e ajustado por você', excerpt: value };
   },
 });
 $('review-pending-suggestions').onclick = () => {
@@ -953,6 +979,10 @@ $('game-form').onsubmit = async (event) => {
   $('save-error').hidden = true;
   try {
     if (!$('game-form').elements.namedItem('confirmed').checked) throw new Error('Confira os dados e marque a confirmação antes de salvar.');
+    const expectedDocuments = [...additionalFiles].map((item) => ({ id: item.id, hash: item.manual?.sha256, item }));
+    if (additionalFiles.some((item) => !item.manual)) { gameSteps.go(1, false); throw new Error('Há PDFs que não puderam ser preparados. Retire os arquivos indicados ou selecione cópias válidas antes de salvar.'); }
+    if (additionalFiles.some((item) => !item.name.trim())) { gameSteps.go(1, false); throw new Error('Informe o nome de cada PDF adicional.'); }
+    if (consolidatedDraft) applyMetadataValues({}, consolidatedDraft, { automatic: true });
     const values = Object.fromEntries(new FormData($('game-form')).entries());
     const normalized = validateGame(values);
     const sources = { ...draft.sources };
@@ -972,12 +1002,19 @@ $('game-form').onsubmit = async (event) => {
       if ((before[field] ?? '') !== (normalized[field] ?? ''))
         sources[sourceField] = { source: 'Conferido e ajustado por você', excerpt: sourceField === 'players' ? playersLabel(normalized) : sourceField === 'duration' ? durationLabel(normalized) : String(normalized[field] ?? '') };
     for (const field of ['tags', 'mechanics']) if (JSON.stringify(draft[field] || []) !== JSON.stringify(normalized[field])) sources[field] = { source: 'Conferido e ajustado por você', excerpt: normalized[field].join(', ') };
+    for (const key of ['title', 'description', 'players', 'duration', 'recommendedAge', 'gameType', 'edition', 'tags', 'mechanics']) {
+      if (/^Sugestão|^Gemini · sugestão/.test(sources[key]?.source || '')) sources[key] = { ...sources[key], confirmedAt: Date.now() };
+    }
+    researchPanel.confirmFields({ ...draft, ...normalized });
     researchPanel.cancel();
     state.busy = true;
+    $('registration-pdfs').disabled = true;
     $('game-form')
       .querySelectorAll('button,input,textarea,select')
       .forEach((el) => (el.disabled = true));
     if (!draft.id) draft.id = repository.reserveGameId ? await repository.reserveGameId(draft.manual.sha256) : crypto.randomUUID();
+    registrationSavingId = draft.id;
+    await preparationQueue.update(state.games.filter((game) => game.id !== registrationSavingId));
     let record = { ...draft, ...normalized, sources };
     let registrationBlob = manualBlob;
     if (manualBlob && state.games.some((game) => game.id === record.id)) {
@@ -1017,38 +1054,69 @@ $('game-form').onsubmit = async (event) => {
       await cachedIndex(key, index);
     }
     let savedGame = result.game || record;
+    draft = savedGame;
+    manualBlob = draftCoverBlob = null;
     if (additionalFiles.length) {
-      const additions = await documentPanel.addFiles(savedGame, additionalFiles, { types: additionalTypes });
-      savedGame = additions.game;
-      if (additions.failures.length) result.warning = 'Jogo salvo. Alguns PDFs adicionais não foram enviados; adicione-os em Manuais e documentos.';
+      for (const item of [...additionalFiles]) {
+        try {
+          $('upload-status').textContent = `Salvando ${item.file.name}…`;
+          const { file, error, ...metadata } = item;
+          savedGame = await repository.saveDocument(savedGame, { ...metadata, name: metadata.name.trim() }, file, (percent) => {
+            $('upload-progress').value = percent;
+            $('upload-status').textContent = `Enviando ${file.name}: ${percent}%`;
+          });
+          draft = savedGame;
+          additionalFiles = additionalFiles.filter((entry) => entry !== item);
+        } catch (error) {
+          item.error = errorMessage(error);
+        }
+      }
+      renderRegistrationPdfs();
+      if (additionalFiles.length) {
+        draft = await repository.latestGame(savedGame);
+        gameSteps.go(1, false);
+        throw new Error('O jogo foi salvo, mas alguns PDFs não foram enviados. Confira os arquivos indicados e tente salvar novamente; os já enviados serão preservados.');
+      }
     }
+    savedGame = await repository.latestGame(savedGame);
+    const missing = expectedDocuments.filter(({ id, hash }) => findDocument(savedGame, id)?.manual.sha256 !== hash);
+    if (missing.length) {
+      for (const { item } of missing) { item.error = 'O vínculo deste PDF não foi confirmado no cadastro.'; if (!additionalFiles.includes(item)) additionalFiles.push(item); }
+      draft = savedGame;
+      renderRegistrationPdfs();
+      gameSteps.go(1, false);
+      throw new Error('Nem todos os PDFs foram confirmados no cadastro. Os arquivos enviados serão aproveitados na nova tentativa.');
+    }
+    state.games = [...state.games.filter((game) => game.id !== savedGame.id), savedGame];
+    renderGrid();
     const research = researchPanel.snapshot();
     if (research) {
       try {
-        await repository.saveResearch?.(research, result.game || record);
+        await repository.saveResearch?.(research, savedGame);
       } catch {
         result.warning ||= 'Jogo salvo. Não foi possível guardar o histórico desta pesquisa.';
       }
     }
+    registrationSavingId = null;
     void preparationQueue.update([...state.games.filter((game) => game.id !== savedGame.id), savedGame]);
-    if (result.created)
-      void repository.generateKnowledge?.(savedGame).catch(() => {
-        /* O cadastro está salvo; o estado da IA fica em Gerenciar jogo. */
-      });
     state.busy = false;
     closeDialog('upload-dialog');
-    showNotice(result.warning || repository.fileWarning || 'Jogo salvo. Seu manual já está na biblioteca.');
+    const documentCount = gameDocuments(savedGame).length;
+    showNotice(result.warning || repository.fileWarning || `Jogo salvo com ${documentCount} ${documentCount === 1 ? 'PDF' : 'PDFs'}.`);
     if (repository.mode === 'local') navigator.storage?.persist?.().catch(() => {});
   } catch (error) {
     $('save-error').textContent = errorMessage(error);
     $('save-error').hidden = false;
     $('upload-status').textContent = '';
   } finally {
+    registrationSavingId = null;
     state.busy = false;
+    $('registration-pdfs').disabled = false;
     $('game-form')
       .querySelectorAll('button,input,textarea,select')
       .forEach((el) => (el.disabled = false));
     $('bgg-search').disabled = true;
+    $('additional-pdf-file').disabled = !state.session.canEdit;
     $('upload-progress').hidden = true;
   }
 };
@@ -1082,6 +1150,7 @@ $('edit-game').onclick = () => {
     })
     .catch(() => {});
   showDialog('upload-dialog');
+  void researchPanel.loadExisting();
 };
 function selectManagement(section) {
   for (const button of document.querySelectorAll('[data-game-management]')) {
@@ -1090,6 +1159,7 @@ function selectManagement(section) {
     $(button.dataset.gameManagement).hidden = !active;
   }
   if (section === 'manage-information' && state.selected && state.session.canEdit) knowledgePanel?.open(state.selected);
+  else knowledgePanel?.suspend();
 }
 $('detail-admin').onclick = () => {
   $('management-title').textContent = displayTitle(state.selected);
@@ -1206,7 +1276,7 @@ function updateSession(session) {
         .filter(Boolean)
         .join(' ')
     : '';
-  if (session.canRead && (session.cacheReady !== previous.cacheReady || session.storageStatus !== previous.storageStatus || session.canEdit !== previous.canEdit || session.canAdd !== previous.canAdd)) void preparationQueue?.update(state.games);
+  if (session.canRead && (session.cacheReady !== previous.cacheReady || session.storageStatus !== previous.storageStatus || session.canEdit !== previous.canEdit || session.canAdd !== previous.canAdd)) void preparationQueue?.update(state.games.filter((game) => game.id !== registrationSavingId), { loading: state.gamesLoading });
   if (previous.canWrite && !session.canWrite) {
     preparationQueue?.stop();
     documentPanel?.close();
@@ -1283,6 +1353,11 @@ window.addEventListener('pagehide', () => {
   lockPrivateCache();
   $('games-grid').replaceChildren();
 });
+window.addEventListener('beforeunload', (event) => {
+  if (!state.busy && !state.importing) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
 window.addEventListener('pageshow', (event) => {
   if (event.persisted && !localMode) location.reload();
 });
@@ -1309,11 +1384,12 @@ async function start() {
         documentPanel?.refresh();
         const signature = jobs
           .filter((job) => ['ready', 'partial'].includes(job.state))
-          .map((job) => `${job.key}:${job.state}:${job.remoteRevision || job.updatedAt || 0}`)
+          .map((job) => `${job.key}:${job.state}:${job.remoteRevision || job.updatedAt || 0}:${job.knowledgeStatus || ''}`)
           .join('|');
         if (signature !== preparationSignature) {
           preparationSignature = signature;
           void guidePanel?.refreshIndexes();
+          void knowledgePanel?.refresh();
         }
       },
     });
@@ -1337,36 +1413,16 @@ async function start() {
       scope: APP_CONFIG.firebase?.projectId || 'local',
     });
     knowledgePanel = createKnowledgePanel({
+      openManual: (game, options) => reader.open(game, options),
       root: $('game-knowledge-admin'),
       repository,
       onNotice: showNotice,
-      onUseFields: (fields, knowledge) => {
-        $('edit-game').click();
-        Object.assign(draft, fields);
-        draft.sources ||= {};
-        for (const [key, value] of Object.entries(fields)) {
-          const fact = knowledge.fields?.[key],
-            source = knowledge.sources.find((s) => s.id === fact?.sourceId);
-          draft.sources[key] = {
-            source: fact?.generated ? 'Gemini · fontes públicas, confira antes de salvar' : source?.name || 'Fonte pública · confira a edição',
-            excerpt: String(value),
-            url: source?.url || '',
-            license: source?.license || '',
-            licenseUrl: source?.licenseUrl || '',
-            authorsUrl: source?.authorsUrl || '',
-            language: fact?.language || source?.language || '',
-            confirmedAt: Date.now(),
-          };
-        }
-        fillForm();
-        gameSteps.go(2);
-      },
     });
     repository.subscribeGames(
       (games, metadata = {}) => {
         state.games = games;
         reader?.revokeMissing(games);
-        void preparationQueue.update(games).catch((error) => showNotice(errorMessage(error)));
+        void preparationQueue.update(games.filter((game) => game.id !== registrationSavingId), { loading: metadata.loading === true }).catch((error) => showNotice(errorMessage(error)));
         state.gamesLoading = metadata.loading === true;
         $('library-loading').hidden = !state.gamesLoading;
         $('library-error').hidden = true;
@@ -1380,7 +1436,7 @@ async function start() {
             guidePanel?.invalidate(latest);
             $('read-manual').disabled = !readableGame(latest);
             updateManualStatus(latest);
-            documentPanel?.open(latest);
+            if ($('detail-dialog').open || $('game-management-dialog').open) documentPanel?.open(latest);
           }
         }
         if (state.selected && !games.some((game) => game.id === state.selected.id) && !state.busy) {

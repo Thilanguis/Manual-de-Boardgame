@@ -53,8 +53,9 @@ export function createDriveStorage(config, getToken, getUid) {
     });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      const error = new Error(data.error || 'A API do Drive não respondeu.');
+      const error = new Error(data.error || data.message || 'Não foi possível concluir a solicitação.');
       error.status = response.status;
+      if (data.status === 'quota') error.record = data;
       throw error;
     }
     return response;
@@ -79,10 +80,10 @@ export function createDriveStorage(config, getToken, getUid) {
     provider: 'drive',
     capabilities,
     validatePdfUpload,
-    async knowledge(game, input) {
+    async knowledge(game, input, { signal } = {}) {
       const info = await capabilities();
-      if (!(info.knowledgeProtocol >= 1)) return { status: 'pending_configuration', message: 'A geração aguarda a configuração da IA.', knowledge: null };
-      return (await call(`/v1/games/${encodeURIComponent(game.id)}/knowledge`, input ? { method: 'POST', json: input } : {})).json();
+      if (!(info.knowledgeProtocol >= 1)) return { status: 'pending_configuration', reason: 'server-update', message: 'O servidor conectado ainda não oferece geração de conhecimento. É necessário atualizá-lo.', knowledge: null };
+      return (await call(`/v1/games/${encodeURIComponent(game.id)}/knowledge`, input ? { method: 'POST', json: input, signal } : { signal })).json();
     },
     async checkGames(games) {
       const results = [];
@@ -182,14 +183,23 @@ export function createDriveStorage(config, getToken, getUid) {
       return blob;
     },
     async readerSource(game) {
+      const current = controller;
       const token = await getToken();
-      if (!token || !getUid()) throw new Error('Entre com uma conta aprovada.');
+      if (!token || !getUid() || current !== controller || current.signal.aborted) throw new Error('Entre com uma conta aprovada.');
       const modern = game.documentId && (await capabilities()).fileProtocol >= 2;
       if (game.documentId && !game.legacyManual && !modern) throw Object.assign(new Error('A conexão dos documentos precisa ser atualizada para abrir este PDF.'), { status: 426 });
       return {
+        signal: current.signal,
         url: `${api()}/v1/games/${encodeURIComponent(game.id)}/${modern ? `documents/${encodeURIComponent(game.documentId)}/pdf` : 'manual'}`,
         headers: { Authorization: `Bearer ${token}`, ...(modern && game.manual?.sha256 ? { 'X-Document-Hash': game.manual.sha256 } : {}) },
       };
+    },
+    async confirmUpload(reference) {
+      const state = loadState(reference.resumeKey);
+      if (!state?.ticket) throw new Error('A sessão deste envio não está mais disponível. Selecione o mesmo PDF para retomar.');
+      const verified = await (await call('/v1/uploads/status', { method: 'POST', headers: { 'X-Upload-Ticket': state.ticket } })).json();
+      if (!verified.complete || verified.driveFileId !== reference.driveFileId) throw new Error('O Drive não confirmou este PDF. O cadastro foi preservado.');
+      return { ...verified, resumeKey: reference.resumeKey };
     },
     async finalize(reference) {
       await call('/v1/uploads/finalize', { method: 'POST', json: { receipt: reference.receipt } });

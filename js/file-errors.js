@@ -1,4 +1,6 @@
 export function fileErrorMessage(error) {
+  if (error?.code === 'index/server-update') return 'A pesquisa deste PDF precisa da atualização do servidor.';
+  if (error?.code === 'index/access') return 'Não foi possível acessar o índice de pesquisa. As permissões desse recurso precisam ser verificadas no servidor.';
   const status = error?.status || { 'permission-denied': 403, unauthenticated: 401 }[error?.code];
   return (
     {

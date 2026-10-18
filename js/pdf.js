@@ -1,5 +1,6 @@
 import { linesFromItems, titleCandidates, extractMetadata } from './recognition.js';
 import { MAX_PDF_BYTES } from './pdf-limits.js';
+import { MAX_PDF_READ_BYTES } from './pdf-limits.js';
 
 let library;
 export async function pdfLibrary() {
@@ -11,7 +12,8 @@ export async function pdfLibrary() {
   return library;
 }
 
-export async function loadPdf(blob) {
+export async function loadPdf(blob, { signal } = {}) {
+  signal?.throwIfAborted();
   const pdfjs = await pdfLibrary();
   // Ler somente os trechos pedidos pelo PDF.js evita copiar o arquivo inteiro
   // para o worker durante a leitura, análise e OCR de manuais grandes.
@@ -43,22 +45,46 @@ export async function loadPdf(blob) {
     wasmUrl: new URL('../vendor/pdfjs/wasm/', import.meta.url).href,
     isEvalSupported: false,
   });
-  return task.promise;
+  const abort = () => void task.destroy();
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    signal?.throwIfAborted();
+    return await task.promise;
+  } finally {
+    signal?.removeEventListener('abort', abort);
+  }
 }
-export async function loadRemotePdf(source) {
-  const pdfjs = await pdfLibrary();
-  return pdfjs.getDocument({
-    url: source.url,
-    httpHeaders: source.headers,
-    rangeChunkSize: 256 * 1024,
-    disableAutoFetch: true,
-    disableStream: true,
-    isEvalSupported: false,
-    cMapUrl: new URL('../vendor/pdfjs/cmaps/', import.meta.url).href,
-    cMapPacked: true,
-    standardFontDataUrl: new URL('../vendor/pdfjs/standard_fonts/', import.meta.url).href,
-    wasmUrl: new URL('../vendor/pdfjs/wasm/', import.meta.url).href,
-  }).promise;
+export async function loadRemotePdf(source, { signal } = {}) {
+  const control = new AbortController();
+  const combined = AbortSignal.any([control.signal, ...[source.signal, signal].filter(Boolean)]);
+  combined.throwIfAborted();
+  // Uma transferência autenticada por abertura. O Blob é efêmero; as faixas
+  // seguintes são locais, sem guardar permissões ou copiar o PDF para um ArrayBuffer.
+  try {
+    const response = await fetch(source.url, { headers: source.headers, signal: combined, cache: 'no-store' });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw Object.assign(new Error(data.error || 'Não foi possível abrir o manual.'), { status: response.status });
+    }
+    const limit = MAX_PDF_READ_BYTES;
+    if (Number(response.headers.get('Content-Length')) > limit) throw new Error('Arquivo maior que o permitido.');
+    if (!response.body) throw new Error('O manual não foi recebido.');
+    let received = 0;
+    const bounded = response.body.pipeThrough(
+      new TransformStream({
+        transform(chunk, target) {
+          received += chunk.byteLength;
+          if (received > limit) throw new Error('Arquivo maior que o permitido.');
+          target.enqueue(chunk);
+        },
+      }),
+    );
+    const blob = await new Response(bounded, { headers: { 'Content-Type': 'application/pdf' } }).blob();
+    combined.throwIfAborted();
+    return await loadPdf(blob, { signal: combined });
+  } finally {
+    control.abort();
+  }
 }
 export async function imageToJpeg(blob) {
   const bitmap = await createImageBitmap(blob),

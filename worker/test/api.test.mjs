@@ -207,6 +207,26 @@ test('API inicia sessão Drive de até 50 MiB e recusa excesso antes de tocar no
   });
 });
 
+test('chave configurada não autoriza envio de manuais sem consentimento do proprietário', async () => {
+  await isolated({}, async ({ calls }) => {
+    env.KNOWLEDGE_FROM_MANUAL = 'true';
+    env.GEMINI_API_KEY = 'fixture-key';
+    env.GAME_KNOWLEDGE = { idFromName: () => 'fixture', get: () => ({ fetch: async () => Response.json(null) }) };
+    try {
+      for (const method of ['GET', 'POST']) {
+        const result = await handleRequest(request(`/v1/games/${id}/knowledge`, { method, ...(method === 'POST' ? { json: { requestId: crypto.randomUUID() } } : {}) }), env);
+        assert.equal(result.status, 200);
+        assert.equal((await result.json()).status, 'pending_authorization');
+      }
+      assert.equal(calls.filter((c) => /generativelanguage|drive\/v3/.test(c.url)).length, 0);
+    } finally {
+      delete env.KNOWLEDGE_FROM_MANUAL;
+      delete env.GEMINI_API_KEY;
+      delete env.GAME_KNOWLEDGE;
+    }
+  });
+});
+
 test('pesquisa exige JWT e perfil atual; disponibilidade fica restrita à conta aprovada', async () => {
   await isolated({}, async () => {
     const response = await handleRequest(request('/v1/research/sources'), env);

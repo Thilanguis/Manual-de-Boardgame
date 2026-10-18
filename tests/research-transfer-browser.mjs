@@ -16,7 +16,7 @@ sheet.drawText('Catan\nJogadores: 3 a 4\nComponentes: cartas e pecas.', { font, 
 const bytes = Buffer.from(await pdf.save());
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
-  for (const width of [1440, 390]) {
+  for (const width of [1440, 768, 390]) {
     const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width, height: 1000 } });
     // Mantém o repositório IndexedDB real; a fixture fornece apenas a pesquisa externa.
     await context.route('**/js/local-repository.js', async (route) => {
@@ -24,9 +24,23 @@ try {
       const source = (await response.text()).replace(
         "mode: 'local',",
         `mode: 'fixture',
+        async getKnowledge(game) {
+          window.savedKnowledgeReads = (window.savedKnowledgeReads || 0) + 1;
+          const hash = game.manual.sha256;
+          return { status: 'ready', knowledge: {
+            sources: [{ id: 'manual-fixture', documentId: 'main', sourceHash: hash, pages: [{ page: 1, text: 'Troque recursos para desenvolver a ilha.' }], facts: { gameType: 'Competitivo', recommendedAge: 12 } }],
+            fields: { description: { sourceId: 'manual-fixture', value: 'Descrição didática preparada a partir do manual para testar a reutilização.' }, gameType: { sourceId: 'manual-fixture', value: 'Competitivo' }, recommendedAge: { sourceId: 'manual-fixture', value: 12 } },
+            sections: [{ topic: 'visao-geral', sourceId: 'manual-fixture', documentId: 'main', sourceHash: hash, page: 1, quote: 'Troque recursos para desenvolver a ilha.', text: 'Descrição didática preparada a partir do manual para testar a reutilização.' }]
+          } };
+        },
         async research(source) {
-          if (source === 'sources') return { protocol: 2, apiVersion: 'fixture', sources: [{ id: 'wikidata', name: 'Wikidata', enabled: true, url: 'https://www.wikidata.org', reason: 'teste' }] };
-          return { source, candidates: [window.candidateFixture] };
+          if (source === 'sources') return { protocol: 2, apiVersion: 'fixture', sources: ['wikidata', 'wikipedia'].map(id => ({ id, name: id, enabled: true, url: 'https://example.org', reason: 'teste' })) };
+          const { description, tags, mechanics, recommendedAge, ...other } = window.candidateFixture.fields;
+          return { source, candidates: [{ ...window.candidateFixture, source,
+            kind: source === 'wikipedia' ? 'base' : 'unknown',
+            license: source === 'wikipedia' ? 'CC BY-SA 4.0' : 'CC0',
+            fields: source === 'wikidata' ? other : { description, tags, mechanics, recommendedAge }
+          }] };
         },`,
       );
       await route.fulfill({ response, body: source });
@@ -70,61 +84,28 @@ try {
         );
         throw error;
       });
-    // Avançar sem confirmar não transfere dados silenciosamente e explica a pendência.
-    await page.locator('#game-next').click();
-    assert.equal(await page.locator('#research-pending').isVisible(), true);
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
-    assert.equal(await page.locator('#game-form [name=description]').inputValue(), '');
-    await page.locator('#review-pending-suggestions').click();
-    await page.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
-    await page.locator('[data-research-review] input[type=checkbox]').last().check();
-    await page.locator('[data-research-review] button').click();
+    await page.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
+    assert.equal(await page.locator('.research-card').count(), 1, 'duas fontes da mesma obra produzem uma única sugestão');
+    assert.match(await page.locator('.research-card').textContent(), /Informações reunidas/);
+    await page.locator('.research-card button').click();
     assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true);
     assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'Resumo sintético confirmado para testar o cadastro.');
     assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '75');
     assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '75');
     assert.equal(await page.locator('[name=tags]').inputValue(), 'Estratégia');
-    assert.equal(await page.locator('#research-pending').isVisible(), false);
-    assert.match(await page.locator('#research-applied').textContent(), /resumo.*duração/);
-    // Regressão: outro campo ainda incompleto não pode impedir abrir a etapa de conferência.
-    await page.locator('[name=maxDurationMinutes]').fill('');
-    await page.evaluate(() => {
-      window.candidateFixture.fields = { description: 'Outro resumo confirmado.' };
-    });
+    assert.equal(await page.locator('[data-research-field], [data-research-all]').count(), 0, 'a conferência ocorre nos inputs, sem checklist paralelo');
+    await page.locator('#game-form [name=description]').fill('Resumo corrigido por mim.');
+    await page.locator('[name=recommendedAge]').fill('');
+    // Respostas seguintes não desfazem edição ou apagamento intencional.
     await page.locator('#game-back').click();
-    await page.locator('.research-options').evaluate((element) => (element.open = true));
-    await page.locator('[data-research-refresh]').check();
+    await page.evaluate(() => { window.candidateFixture.fields.description = 'Outro resumo disponível nas fontes públicas.'; });
     await page.locator('[data-research-search]').click();
-    await page.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
-    for (const box of await page.locator('[data-research-review] input[type=checkbox]').all()) await box.check();
-    await page.locator('[data-research-review] button').click();
-    assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true, 'Aplicar sugestões deve abrir a etapa 2 mesmo com duração ainda incompleta');
-    assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'Outro resumo confirmado.');
-    assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '');
-    await page.locator('#game-next').click();
-    assert.equal(await page.locator('[data-game-step="2"]').isVisible(), true, 'Duração incompleta continua impedindo publicação');
-    await page.locator('[name=maxDurationMinutes]').fill('75');
-    await page.locator('#game-form [name=description]').fill('Resumo sintético confirmado para testar o cadastro.');
-    if (width === 390) await page.screenshot({ path: 'test-output/research-transfer-mobile.png', fullPage: true });
-    // Nova pesquisa com faixa conflitante preserva o valor confirmado até escolha explícita.
-    await page.evaluate(() => {
-      window.candidateFixture.fields = { title: 'Catan', minDurationMinutes: 60, maxDurationMinutes: 120 };
-    });
-    await page.locator('#game-back').click();
-    await page.locator('.research-options').evaluate((element) => (element.open = true));
-    await page.locator('[data-research-refresh]').check();
-    await page.locator('[data-research-search]').click();
-    await page.locator('.research-card').getByRole('button', { name: 'Revisar sugestões', exact: true }).click();
-    const confirm = page.locator('[data-research-review] input[type=checkbox]').last();
-    await confirm.check();
-    assert.equal(await page.locator('[data-research-review] button').isDisabled(), true);
-    assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '75');
-    await page.locator('[data-research-field=minDurationMinutes]').check();
-    assert.equal(await page.locator('[data-research-field=maxDurationMinutes]').isChecked(), true);
-    await page.locator('[data-research-review] button').click();
-    assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '60');
-    assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '120');
-    assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'Resumo sintético confirmado para testar o cadastro.');
+    await page.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
+    await page.locator('.research-card button').click();
+    assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'Resumo corrigido por mim.');
+    assert.equal(await page.locator('[name=recommendedAge]').inputValue(), '');
+    await page.locator('[name=minDurationMinutes]').fill('60');
+    await page.locator('[name=maxDurationMinutes]').fill('120');
     await page.locator('#game-next').click();
     assert.match(await page.locator('#game-summary').textContent(), /60–120 min/);
     await page.locator('[name=confirmed]').check();
@@ -133,15 +114,21 @@ try {
     await page.reload();
     await page.locator('.card-main').click();
     await openGameManagement(page, 'manage-information');
+    assert.match(await page.locator('#game-knowledge-admin').textContent(), /Resumo corrigido por mim/);
     await page.locator('#edit-game').click();
+    await page.waitForFunction(() => document.querySelector('[name=gameType]').value === 'Competitivo');
     await page.locator('#game-next').click();
     assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '60');
     assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '120');
-    assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'Resumo sintético confirmado para testar o cadastro.');
+    assert.equal(await page.locator('#game-form [name=description]').inputValue(), 'Resumo corrigido por mim.');
+    assert.equal(await page.locator('[name=recommendedAge]').inputValue(), '', 'apagamento confirmado prevalece sobre Gemini salvo');
+    assert.equal(await page.evaluate(() => window.savedKnowledgeReads > 0), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    await page.screenshot({ path: 'test-output/metadata-' + width + '.png', fullPage: true });
     assert.deepEqual(errors, []);
     await context.close();
   }
-  console.log('Desktop/celular: pesquisa → confirmação → etapa 2 → publicação → recarga preservam resumo, duração fixa/faixa, categorias e conflitos.');
+  console.log('Desktop/celular: ficha única PDF/fontes/Gemini, edição e apagamentos preservados, salvamento/recarga, desktop/tablet/celular.');
 } finally {
   await browser.close();
 }

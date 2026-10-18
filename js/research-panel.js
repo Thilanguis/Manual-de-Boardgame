@@ -1,10 +1,12 @@
-import { consolidateCandidates, researchSnapshot, factSignature } from './research-knowledge.js';
-import { parallelResearch, normalizedQuery, sourceNames, manualSources, sameWork, matchWarnings, selectedFields, fieldLabels, researchSummary } from './research-client.js';
+import { consolidateMetadata, storedCatalogCandidates } from './metadata-consolidation.js';
+import { consolidateCandidates, researchSnapshot } from './research-knowledge.js';
+import { parallelResearch, normalizedQuery, sourceNames, manualSources, selectedFields, fieldLabels, researchSummary } from './research-client.js';
 import { RESEARCH_PROTOCOL, RESEARCH_VERSION } from './research-contract.js';
 import { recognizePdfImages } from './pdf-ocr.js';
-import { presentCandidate, candidateFacts, resultSummary } from './research-presentation.js';
+import { resultSummary } from './research-presentation.js';
 import { createTextTranslator } from './translation.js';
 import { portugueseCandidate, translateCatalogCandidate, pdfMetadataCandidate } from './catalog-language.js';
+import { savedKnowledgeCandidate } from './research-enrichment.js';
 
 const node = (tag, text = '') => {
   const el = document.createElement(tag);
@@ -29,12 +31,12 @@ export function createResearchPanel({
   getRepository,
   getCurrent,
   getPdf,
-  apply,
   canUse,
   readPreference,
   writePreference,
   onApplied = () => document.querySelector('[data-step-target="2"]')?.click(),
   onSuggestions = () => {},
+  onConsolidated = () => {},
   onOcrPage = () => {},
 }) {
   let controller,
@@ -43,8 +45,9 @@ export function createResearchPanel({
     sources = [],
     candidates = [],
     statuses = new Map(),
-    selected,
     active = false;
+  let chosenIdentity = null;
+  const pendingDetails = new Map();
   let sourcesUntil = 0;
   let detailActive = false;
   let ocrController,
@@ -58,7 +61,7 @@ export function createResearchPanel({
   const appliedCandidates = new Set();
   const candidateKey = (candidate) => `${candidate.source}:${candidate.id}`;
   function notifySuggestions() {
-    onSuggestions([...(ocrCandidate ? [ocrCandidate] : []), ...candidates].filter((candidate) => !appliedCandidates.has(candidateKey(candidate))).length);
+    onSuggestions(consolidateCandidates([...(ocrCandidate ? [ocrCandidate] : []), ...candidates].filter((candidate) => !appliedCandidates.has(candidateKey(candidate)))).length);
   }
   const language = root.querySelector('[data-research-language]'),
     kind = root.querySelector('[data-research-kind]'),
@@ -89,13 +92,16 @@ export function createResearchPanel({
   function reset() {
     cancelWork();
     candidates = [];
+    sourceFailure = '';
+    chosenIdentity = null;
+    pendingDetails.clear();
+    onConsolidated(null);
     snapshot = queryInput = null;
     decisions = [];
     if (aliasesInput) aliasesInput.value = '';
     const refresh = root.querySelector('[data-research-refresh]');
     if (refresh) refresh.checked = false;
     statuses = new Map();
-    selected = null;
     ocrCandidate = null;
     appliedCandidates.clear();
     notifySuggestions();
@@ -172,84 +178,124 @@ export function createResearchPanel({
       }
     }
     list.replaceChildren();
-    const priority = (c) => (c.source === 'ludopedia' ? 0 : c.fields?.title && ['pt-BR', 'pt-br', 'pt'].includes(c.language) ? 1 : getCurrent()?.language === 'fr' && c.language === 'fr' ? 2 : 3);
-    for (const original of consolidateCandidates([...(ocrCandidate ? [ocrCandidate] : []), ...candidates]).sort((a, b) => priority(a) - priority(b))) {
-      const candidate = presentCandidate(original, candidates);
+    const all = [...(ocrCandidate ? [ocrCandidate] : []), ...candidates];
+    const model = consolidateMetadata({ ...getCurrent(), kind: kind.value }, all, chosenIdentity);
+    onConsolidated(model);
+    for (const member of model.members.filter((m) => m.needsDetail)) void enrichDetail(member);
+    const results = model.members.length ? [model] : [];
+    if (model.members.length) {
       const card = node('article');
       card.className = 'research-card';
-      card.dataset.researchSource = candidate.source;
-      const heading = node('h4', candidate.fields.title || getCurrent()?.title || 'Trechos do PDF');
-      const related = candidates.filter((c) => c !== candidate && sameWork(c, candidate));
-      const action = node('button', 'Revisar sugestões');
+      card.append(node('h4', 'Informações reunidas'), node('p', Object.keys(model.fields).length + ' campos disponíveis. Confira e ajuste na etapa 2.'));
+      const action = node('button', 'Conferir informações');
       action.type = 'button';
       action.className = 'button secondary small';
-      action.onclick = () => select(original);
-      const useAll = node('button', 'Usar sugestões');
-      useAll.type = 'button';
-      useAll.className = 'button primary small';
-      useAll.dataset.researchUseAll = '';
-      useAll.onclick = () => select(original, true);
-      card.append(heading);
-      if (candidate.secondaryTitle) card.append(node('p', candidate.secondaryTitle));
-      const source = candidate.url ? link(sourceNames[candidate.source], candidate.url) : node('small', sourceNames[candidate.source]);
-      source.className = 'research-source';
-      card.append(source);
-      if (candidate.contributors?.length > 1) card.append(node('small', `${candidate.contributors.length} fontes · informações reunidas`));
-      if (candidate.fields.description) card.append(node('p', candidate.fields.description));
-      const facts = candidateFacts(candidate),
-        metadata = node('dl');
-      metadata.className = 'research-facts';
-      for (const [label, value] of facts) {
-        const item = node('div');
-        item.append(node('dt', label), node('dd', value));
-        metadata.append(item);
+      action.onclick = () => onApplied({});
+      card.append(action);
+      if (model.pendingTranslations.length) {
+        const details = disclosure('Textos aguardando tradução');
+        for (const pending of model.pendingTranslations) details.append(node('p', fieldLabels[pending.key] + ' · ' + pending.language + ': ' + display(pending.value)));
+        if (globalThis.Translator) {
+          const translate = node('button', 'Traduzir para português');
+          translate.type = 'button';
+          translate.onclick = () => void translateSuggestion({ members: model.members });
+          details.append(translate);
+        }
+        card.append(details);
       }
-      if (facts.length) card.append(metadata);
-      const additional = selectedFields(candidate, {}).filter((field) => field.key !== 'title').length;
-      if (!additional) card.append(node('small', candidate.needsDetail ? 'Dados adicionais ainda não consultados.' : 'Só o título foi encontrado. Sem outros dados para preencher.'));
-      const details = disclosure('Edição, nomes e direitos de uso');
-      for (const field of candidate.pendingTranslations || []) details.append(node('p', `${fieldLabels[field.key]} · original (${field.language}): ${display(field.value)}`));
-      details.append(node('p', candidate.edition ? `Edição: ${candidate.edition}` : 'A fonte não confirmou a edição do seu manual.'));
-      const names = [...new Set(candidate.names.map((name) => name.value))];
-      if (names.length) details.append(node('p', names.join(' · ')));
-      if (candidate.identityNote) details.append(node('p', candidate.identityNote));
-      details.append(node('p', `Uso: ${candidate.license || 'Confira as condições na fonte.'}`));
-      if (candidate.licenseUrl) details.append(link('Licença', candidate.licenseUrl));
-      if (original.fields.description && !candidate.fields.description) details.append(node('p', `Rótulo de identificação: ${original.fields.description}. Não usado como resumo.`));
-      if (candidate.attributionLogo) {
-        const a = link('', candidate.url),
-          img = document.createElement('img');
-        img.src = candidate.attributionLogo;
-        img.alt = 'Powered by BGG';
-        img.width = 150;
-        a.append(img);
-        card.append(a);
-      }
-      if (related.length) details.append(node('p', `Também identificado em ${related.map((c) => sourceNames[c.source]).join(', ')}.`));
-      card.append(details);
-      if (kind.value !== 'unknown' && candidate.kind !== 'unknown' && candidate.kind !== kind.value) {
-        action.disabled = useAll.disabled = true;
-        card.append(node('p', 'Tipo incompatível com o manual; não aplicar.'));
-      }
-      const actions = node('div');
-      actions.className = 'research-actions';
-      actions.append(action, useAll);
-      if (candidate.pendingTranslations?.length) {
-        card.append(node('small', 'Há textos aguardando tradução para português.'));
-        const translate = node('button', 'Traduzir para português');
-        translate.type = 'button';
-        translate.className = 'button secondary small';
-        translate.onclick = () => void translateSuggestion(original);
-        translate.title = 'Tradução neste dispositivo; pode baixar o pacote de idioma. Nenhum texto é enviado a um servidor.';
-        if (globalThis.Translator) actions.append(translate);
-        else card.append(node('small', 'A tradução local não está disponível aqui. Use a revisão para escrever em português.'));
-      }
-      card.append(actions);
       list.append(card);
+    }
+    if (model.ambiguous.length) {
+      const options = disclosure('Conferir qual jogo corresponde ao PDF');
+      for (const group of model.ambiguous) {
+        const action = node('button', (group.fields.title || group.names[0]?.value) + ' · ' + (group.edition || 'edição não confirmada'));
+        action.type = 'button';
+        action.className = 'button secondary small';
+        action.onclick = () => void select(group);
+        options.append(action);
+      }
+      list.append(options);
     }
     const diagnostics = root.querySelector('[data-research-diagnostics]');
     if (diagnostics) diagnostics.textContent = sourceFailure || researchSummary(sources, statuses);
-    status.textContent = sourceFailure ? (getRepository().mode === 'local' ? sourceFailure : 'Não foi possível pesquisar agora. Tente novamente.') : resultSummary(candidates, sources, statuses);
+    status.textContent = sourceFailure
+      ? results.length
+        ? 'Sugestões disponíveis. Não foi possível consultar as fontes externas.'
+        : getRepository().mode === 'local'
+          ? sourceFailure
+          : 'Não foi possível pesquisar agora. Tente novamente.'
+      : resultSummary(results, sources, statuses);
+  }
+  async function loadSavedKnowledge(current, signal, n) {
+    if (!current.id || !current.manual?.sha256 || !getRepository().getKnowledge) return;
+    const timeout = AbortSignal.any([signal, AbortSignal.timeout(1500)]);
+    let abort;
+    try {
+      const record = await Promise.race([
+        getRepository().getKnowledge(current),
+        new Promise((resolve) => {
+          abort = () => resolve(null);
+          if (timeout.aborted) abort();
+          else timeout.addEventListener('abort', abort, { once: true });
+        }),
+      ]);
+      if (timeout.aborted || n !== sequence) return;
+      const suggestion = savedKnowledgeCandidate(record, current);
+      if (suggestion) {
+        candidates.push(suggestion);
+        render();
+      }
+    } catch (error) {
+      if (!timeout.aborted && n === sequence) statuses.set('gemini', { status: 'error', error: error.message });
+    } finally {
+      if (abort) timeout.removeEventListener('abort', abort);
+    }
+  }
+  async function enrichDetail(member) {
+    const key = member.source + ':' + member.id;
+    if (pendingDetails.has(key)) return pendingDetails.get(key);
+    const n = sequence;
+    const signal = AbortSignal.any([controller?.signal || new AbortController().signal, AbortSignal.timeout(2500)]);
+    const task = (async () => {
+      try {
+        const current = getCurrent();
+        const result = await getRepository().research(member.source, { action: 'detail', id: member.id, query: current.title, pdfLanguage: current.language, preferredLanguage: 'pt-BR', kind: kind.value }, { signal, timeoutMs: 2500 });
+        if (n !== sequence || signal.aborted || !canUse()) return;
+        const detail = result.candidates?.find((c) => c.id === member.id);
+        if (detail) {
+          updateCandidate({ ...detail, names: [...member.names, ...(detail.names || [])], fetchedAt: result.fetchedAt || Date.now(), needsDetail: false });
+          render();
+        }
+      } catch (error) {
+        if (n === sequence) {
+          statuses.set(member.source, { status: 'error', error: 'Não foi possível completar os dados desta fonte.' });
+        }
+      }
+    })();
+    pendingDetails.set(key, task);
+    return task;
+  }
+  async function loadExisting() {
+    const current = getCurrent();
+    if (!current || !canUse()) return;
+    cancelWork();
+    chosenIdentity = null;
+    const n = sequence;
+    controller = new AbortController();
+    const signal = controller.signal;
+    candidates = storedCatalogCandidates(current);
+    ocrCandidate = pdfMetadataCandidate(current);
+    render();
+    const input = { query: normalizedQuery(current.title), manualHash: current.manual?.sha256 || '', edition: current.edition || '', kind: 'unknown', preferredLanguage: 'pt-BR' };
+    await Promise.allSettled([
+      loadSavedKnowledge(current, signal, n),
+      (async () => {
+        const cached = await getRepository().findResearch?.(input, { signal: AbortSignal.timeout(1500) });
+        if (n !== sequence || !canUse()) return;
+        for (const candidate of cached?.candidates || []) if (!candidates.some((c) => c.source === candidate.source && c.id === candidate.id)) candidates.push(candidate);
+        render();
+      })(),
+    ]);
   }
   function updateCandidate(next) {
     candidates = candidates.map((c) => (c.source === next.source && c.id === next.id ? next : c));
@@ -311,6 +357,7 @@ export function createResearchPanel({
     controller = new AbortController();
     const signal = controller.signal;
     candidates = [];
+    pendingDetails.clear();
     if (ocrCandidate?.manualHash !== current.manual?.sha256 || ocrCandidate?.pdfMethod === 'text') ocrCandidate = null;
     const extracted = pdfMetadataCandidate(current);
     if (extracted) ocrCandidate = extracted;
@@ -318,7 +365,6 @@ export function createResearchPanel({
     notifySuggestions();
     statuses.clear();
     review.hidden = true;
-    selected = null;
     list.replaceChildren();
     active = true;
     cancel.hidden = false;
@@ -326,10 +372,13 @@ export function createResearchPanel({
     search.setAttribute('aria-busy', 'true');
     status.textContent = 'Pesquisando…';
     const budget = AbortSignal.any([signal, AbortSignal.timeout(expanded ? 10000 : 7000)]);
+    const knowledgeTask = loadSavedKnowledge(current, budget, n);
     try {
       const input = { action: 'search', query: normalizedQuery(current.title), pdfLanguage: current.language, preferredLanguage: language.value, kind: kind.value, expanded, fetchedAt: Date.now() };
       input.alternateTitles = current.sources?.originalTitle ? [{ value: current.sources.originalTitle.excerpt, language: 'other' }] : [];
       input.edition = current.edition || '';
+      input.publisher = current.sources?.publisher?.excerpt || '';
+      input.year = current.sources?.year?.excerpt || '';
       input.gameId = current.id || '';
       input.manualHash = current.manual?.sha256 || '';
       input.alternateTitles.push(...(current.sources?.catalog?.matches || []).flatMap((match) => match.names || []));
@@ -359,8 +408,10 @@ export function createResearchPanel({
       if (cached) {
         queryInput = { ...input, fetchedAt: cached.fetchedAt };
         snapshot = cached;
-        candidates = cached.candidates;
+        candidates = [...candidates.filter((candidate) => candidate.source === 'gemini'), ...cached.candidates];
         decisions = (cached.decisions || []).map((decision) => ({ ...decision, manualHash: decision.manualHash ?? cached.manualHash, edition: decision.edition ?? cached.edition }));
+        await knowledgeTask;
+        if (signal.aborted || n !== sequence) return;
         render();
         status.textContent = `Informações recuperadas · ${new Date(cached.fetchedAt).toLocaleDateString('pt-BR')}.`;
         return;
@@ -379,7 +430,7 @@ export function createResearchPanel({
             const stamped = { ...candidate, fetchedAt: update.fetchedAt || Date.now() };
             const at = candidates.findIndex((c) => c.source === candidate.source && c.id === candidate.id);
             if (at < 0) candidates.push(stamped);
-            else candidates[at] = stamped;
+            else if (!(stamped.needsDetail && candidates[at].needsDetail === false)) candidates[at] = stamped;
           }
         render();
       };
@@ -403,6 +454,8 @@ export function createResearchPanel({
         for (const [id, state] of statuses) if (state.status === 'loading') statuses.set(id, { source: id, status: 'error', error: 'Prazo da pesquisa atingido.' });
         render();
       }
+      await knowledgeTask;
+      await Promise.allSettled([...pendingDetails.values()]);
       if (n === sequence && !signal.aborted) {
         try {
           snapshot = researchSnapshot(input, candidates, decisions);
@@ -425,324 +478,21 @@ export function createResearchPanel({
       }
     }
   }
-  async function select(candidate, acceptAll = false) {
+  function select(candidate) {
     if (!canUse()) return;
-    const initial = getCurrent();
-    detailController?.abort();
-    detailController = new AbortController();
-    const selectionController = detailController;
-    detailActive = true;
-    cancel.hidden = false;
-    const signal = detailController.signal,
-      n = sequence;
-    review.hidden = acceptAll;
-    review.replaceChildren(node('p', 'Preparando as sugestões desta fonte…'));
-    if (acceptAll) status.textContent = 'Preparando sugestões…';
-    try {
-      if (candidate.needsDetail || candidate.members?.some((member) => member.needsDetail)) {
-        const members = await Promise.all(
-          (candidate.members || [candidate]).map(async (member) => {
-            if (!member.needsDetail) return member;
-            const result = await getRepository().research(member.source, { action: 'detail', id: member.id, query: initial.title, pdfLanguage: initial.language, preferredLanguage: language.value, kind: kind.value }, { signal });
-            const detail = result.candidates.find((c) => c.id === member.id);
-            if (!detail) throw new Error('Não foi possível confirmar este jogo nesta fonte.');
-            const next = { ...detail, names: [...member.names, ...detail.names], fetchedAt: result.fetchedAt || Date.now() };
-            candidates = candidates.map((c) => (c.source === next.source && c.id === next.id ? next : c));
-            return next;
-          }),
-        );
-        candidate = consolidateCandidates(members)[0];
-        render();
-      }
-      if (signal.aborted || n !== sequence || !canUse()) return;
-      selected = presentCandidate(candidate, candidates);
-      if (acceptAll && selected.requiresEditionReview) {
-        // Aprovações de outro PDF não autorizam o atalho de aceitação integral.
-        review.hidden = false;
-        showReview();
-        review.scrollIntoView({ block: 'start', behavior: 'smooth' });
-        return;
-      }
-      if (acceptAll) {
-        const fields = selectedFields(selected, initial);
-        if (!fields.length) throw new Error('Esta fonte não trouxe campos para preencher.');
-        if (fields.some((field) => JSON.stringify(field.current) !== JSON.stringify(getCurrent()[field.key]))) throw new Error('Você alterou os dados durante a consulta. Tente usar as sugestões novamente.');
-        const conflicts = fields.filter((field) => field.conflict);
-        if (
-          (conflicts.length || selected.conflicts?.length || selected.source === 'pdf') &&
-          !window.confirm(
-            `Usar todas as sugestões de ${sourceNames[selected.source]}?${conflicts.length ? '\nSubstituir: ' + conflicts.map((field) => fieldLabels[field.key]).join(', ') + '.' : ''}\nConfira o jogo, a edição e os dados na etapa 2 antes de salvar.`,
-          )
-        ) {
-          status.textContent = 'Nenhum campo foi alterado.';
-          return;
-        }
-        if (signal.aborted || n !== sequence) return;
-        finishApplication(Object.fromEntries(fields.map((field) => [field.key, field.value])), selected);
-        return;
-      }
-      showReview();
-      review.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    } catch (error) {
-      if (!signal.aborted && n === sequence) {
-        if (acceptAll) status.textContent = error.message;
-        else review.replaceChildren(node('p', error.message));
-      }
-    } finally {
-      if (selectionController === detailController) {
-        detailActive = false;
-        cancel.hidden = !active;
-      }
-    }
+    chosenIdentity = candidate.source + ':' + candidate.id;
+    render();
+    onApplied({});
   }
-  function finishApplication(values, candidate) {
-    if (!canUse()) throw new Error('Não foi possível aplicar agora. Tente novamente.');
-    if (kind.value !== 'unknown' && candidate.kind !== 'unknown' && kind.value !== candidate.kind) throw new Error('Jogo base e expansão não correspondem. Revise o resultado escolhido.');
-    apply(values, candidate);
-    onApplied(values);
-    const destination = root.closest('form')?.querySelector('[data-game-step="2"]');
-    if (destination?.hidden) throw new Error('Os campos foram preenchidos, mas a etapa 2 não abriu. Use “Conferir dados” no topo para continuar.');
-    decisions.push({
-      manualHash: queryInput?.manualHash || '',
-      edition: queryInput?.edition || '',
-      source: candidate.source,
-      id: candidate.id,
-      fields: Object.keys(values),
-      reviewedAt: Date.now(),
-      reviewedBy: getRepository().session?.user?.uid || 'device',
-      values,
-      facts: Object.entries(values)
-        .map(([key, value]) => ({ ...(candidate.fieldSources?.[key] || candidate), key, value, state: 'confirmed' }))
-        .map(({ source, id, key, value, state, language, url, license }) => ({ source, id, key, value, state, language, url, license })),
-      rejected: selectedFields(candidate, {})
-        .filter((field) => !(field.key in values))
-        .map((field) => field.key),
-    });
-    if (queryInput) {
-      try {
-        snapshot = researchSnapshot(queryInput, candidates, decisions);
-      } catch {
-        snapshot = null;
-      }
-    }
-    appliedCandidates.add(candidateKey(candidate));
-    notifySuggestions();
-    review.hidden = true;
-    status.textContent = 'Campos preenchidos. Confira antes de salvar.';
-  }
-  function showReview() {
-    const current = getCurrent();
-    if (!current || !selected) return;
-    review.replaceChildren();
-    review.append(node('h4', 'Revisar sugestões'), node('p', 'Selecione os campos que deseja usar.'));
-    if (selected.pendingTranslations?.length) {
-      const translations = disclosure('Escrever tradução em português');
-      translations.append(node('p', 'Os originais serão preservados. Categorias e mecânicas: separe por vírgulas.'));
-      const inputs = [];
-      for (const pending of selected.pendingTranslations) {
-        const label = node('label', `${fieldLabels[pending.key]} · ${sourceNames[pending.source] || pending.source}`);
-        label.append(node('p', display(pending.value)));
-        const input = document.createElement('textarea');
-        input.rows = pending.key === 'description' ? 4 : 2;
-        input.maxLength = pending.key === 'description' ? 2000 : 400;
-        input.dataset.manualTranslation = pending.key;
-        label.append(input);
-        translations.append(label);
-        inputs.push([pending, input]);
-      }
-      const save = node('button', 'Adicionar traduções às sugestões');
-      save.type = 'button';
-      save.className = 'button secondary small';
-      save.onclick = () => {
-        for (const [pending, input] of inputs) {
-          if (!input.value.trim()) continue;
-          const member = (selected.members || [selected]).find((m) => m.source === pending.source && m.id === pending.id);
-          const fieldTranslations = {
-            ...member.fieldTranslations,
-            [pending.key]: {
-              sourceValue: pending.value,
-              value: Array.isArray(pending.value)
-                ? input.value
-                    .split(',')
-                    .map((s) => s.trim())
-                    .filter(Boolean)
-                : input.value.trim(),
-              sourceLanguage: pending.language,
-              targetLanguage: 'pt-BR',
-              method: 'manual',
-              createdAt: Date.now(),
-            },
-          };
-          Object.assign(member, { fieldTranslations });
-          updateCandidate(member);
-        }
-        selected = presentCandidate(consolidateCandidates(selected.members || [selected])[0], candidates);
-        showReview();
-      };
-      translations.append(save);
-      review.append(translations);
-    }
-    if (selected.requiresEditionReview) {
-      const warning = node('p', 'A edição deste PDF ainda não foi conferida. Revise os campos antes de usar.');
-      warning.className = 'research-warning';
-      review.append(warning);
-    }
-    const details = disclosure('Origem, edição e direitos de uso');
-    details.append(node('p', `Fonte: ${sourceNames[selected.source]} · ${selected.license || 'consulte as condições de uso'}`));
-    if (selected.url) details.append(link('Consultar a origem', selected.url));
-    if (selected.licenseUrl) details.append(link('Licença do trecho', selected.licenseUrl));
-    if (selected.descriptionLanguage)
-      details.append(node('p', `Idioma do resumo: ${{ pt: 'Português', 'pt-BR': 'Português brasileiro', 'pt-br': 'Português brasileiro', en: 'Inglês', fr: 'Francês' }[selected.descriptionLanguage] || selected.descriptionLanguage}`));
-    const warnings = selected.source === 'pdf' ? ['O OCR pode errar letras e números. Confira os trechos nas páginas indicadas.'] : matchWarnings(selected, { ...current, kind: kind.value }, candidates);
-    if (selected.conflicts?.length) review.append(node('p', 'Esta fonte tem informações divergentes. Confira os campos com o manual.'));
-    for (const warning of warnings) {
-      const p = node('p', warning);
-      p.className = 'research-warning';
-      details.append(p);
-    }
-    review.append(node('p', selected.source === 'pdf' ? 'Confira o texto reconhecido nas páginas do manual.' : 'Confira se o título e a edição correspondem ao seu manual.'), details);
-    const allLabel = node('label'),
-      all = document.createElement('input');
-    all.type = 'checkbox';
-    all.dataset.researchAll = '';
-    allLabel.className = 'research-choice';
-    allLabel.append(all, node('span', 'Selecionar todos'));
-    review.append(allLabel);
-    const choices = [];
-    for (const field of selectedFields(selected, current)) {
-      const label = node('label'),
-        checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = field.checked;
-      if (
-        [...decisions]
-          .reverse()
-          .find((decision) => decision.source === selected.source && decision.id === selected.id)
-          ?.rejected?.includes(field.key)
-      )
-        checkbox.checked = false;
-      if (selected.source === 'pdf') checkbox.checked = false;
-      checkbox.dataset.researchField = field.key;
-      label.className = 'research-choice';
-      const content = node('span');
-      content.append(node('strong', fieldLabels[field.key]), node('span', display(field.value)));
-      if (field.conflict) content.append(node('small', `Substituirá: ${display(field.current)}`));
-      const origin = selected.fieldSources?.[field.key];
-      if (origin) {
-        const originLabel = node('small', `${sourceNames[origin.source] || origin.source} · ${origin.language}`);
-        originLabel.dataset.researchOrigin = field.key;
-        content.append(originLabel);
-      }
-      const alternatives = selected.alternatives?.[field.key] || [];
-      if (new Set(alternatives.map((fact) => factSignature(fact.value))).size > 1) {
-        const select = document.createElement('select');
-        select.dataset.researchAlternative = field.key;
-        select.setAttribute('aria-label', `Origem de ${fieldLabels[field.key]}`);
-        alternatives.forEach((fact, i) => {
-          const option = node('option', `${display(fact.value)} · ${sourceNames[fact.source] || fact.source} (${fact.language})`);
-          option.value = String(i);
-          select.append(option);
-        });
-        select.onchange = () => {
-          const fact = alternatives[Number(select.value)];
-          field.value = fact.value;
-          content.children[1].textContent = display(fact.value);
-          const originLabel = content.querySelector('[data-research-origin]');
-          if (originLabel) originLabel.textContent = `${sourceNames[fact.source] || fact.source} · ${fact.language}`;
-          selected.fieldSources[field.key] = fact;
-          const pairKeys = ['minDurationMinutes', 'maxDurationMinutes'].includes(field.key) ? ['minDurationMinutes', 'maxDurationMinutes'] : ['minPlayers', 'maxPlayers'].includes(field.key) ? ['minPlayers', 'maxPlayers'] : [];
-          for (const [other, box] of choices.filter(([other]) => pairKeys.includes(other.key) && other.key !== field.key)) {
-            const options = selected.alternatives[other.key] || [];
-            const at = options.findIndex((option) => option.source === fact.source && option.id === fact.id && option.language === fact.language);
-            if (at >= 0) {
-              other.value = options[at].value;
-              const otherContent = box.closest('label').querySelector(':scope > span');
-              otherContent.children[1].textContent = display(other.value);
-              const otherOrigin = otherContent.querySelector('[data-research-origin]');
-              if (otherOrigin) otherOrigin.textContent = `${sourceNames[fact.source] || fact.source} · ${fact.language}`;
-              selected.fieldSources[other.key] = options[at];
-              const input = review.querySelector(`[data-research-alternative="${other.key}"]`);
-              if (input) input.value = String(at);
-            }
-            box.checked = false;
-          }
-
-          checkbox.checked = false;
-          checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-        };
-        content.append(select);
-      }
-      label.append(checkbox, content);
-      const evidence = selected.evidence?.[field.key === 'minPlayers' || field.key === 'maxPlayers' ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(field.key) ? 'duration' : field.key];
-      if (evidence) details.append(node('p', `${fieldLabels[field.key]}${evidence.page ? ' · p. ' + evidence.page : ''}: ${evidence.excerpt}`));
-      review.append(label);
-      choices.push([field, checkbox]);
-    }
-    const pairs = [choices.filter(([f]) => ['minPlayers', 'maxPlayers'].includes(f.key)), choices.filter(([f]) => ['minDurationMinutes', 'maxDurationMinutes'].includes(f.key))];
-    for (const [field, reason] of Object.entries(selected.fieldReasons || {})) if (reason && !selected.fields[field]) details.append(node('p', `${fieldLabels[field] || (field === 'durationMinutes' ? 'Duração' : field)}: ${reason}`));
-    for (const pair of pairs) if (pair.some(([field]) => field.conflict)) pair.forEach(([, checkbox]) => (checkbox.checked = false));
-    for (const pair of pairs) for (const [, checkbox] of pair) checkbox.onchange = () => pair.forEach(([, other]) => (other.checked = checkbox.checked));
-    const label = node('label'),
-      confirm = document.createElement('input');
-    confirm.type = 'checkbox';
-    label.className = 'research-choice';
-    label.append(confirm, node('span', 'Conferi o jogo, a edição e os campos selecionados.'));
-    review.append(label);
-    const selectionStatus = node('p'),
-      errorMessage = node('p'),
-      button = node('button', 'Usar campos na etapa 2');
-    selectionStatus.setAttribute('aria-live', 'polite');
-    errorMessage.setAttribute('role', 'alert');
-    errorMessage.hidden = true;
-    button.type = 'button';
-    button.className = 'button primary small';
-    button.disabled = true;
-    function updateSelection() {
-      const count = choices.filter(([, box]) => box.checked).length;
-      all.checked = !!choices.length && count === choices.length;
-      all.indeterminate = count > 0 && count < choices.length;
-      all.disabled = !choices.length;
-      selectionStatus.textContent = count ? `${count} campo(s) selecionado(s).` : 'Selecione ao menos um campo.';
-      button.disabled = !confirm.checked || !count;
-    }
-    all.onchange = () => {
-      choices.forEach(([, checkbox]) => (checkbox.checked = all.checked));
-      updateSelection();
-    };
-    review.addEventListener('change', updateSelection, { signal: detailController.signal });
-    updateSelection();
-    review.append(selectionStatus, errorMessage, button);
-    button.onclick = () => {
-      if (!canUse()) {
-        errorMessage.textContent = 'Não foi possível aplicar agora. Aguarde a operação em andamento e tente novamente.';
-        errorMessage.hidden = false;
-        return;
-      }
-      if (!confirm.checked) return;
-      if (kind.value !== 'unknown' && selected.kind !== 'unknown' && kind.value !== selected.kind) {
-        errorMessage.textContent = 'Jogo base e expansão não correspondem. Revise o resultado escolhido.';
-        errorMessage.hidden = false;
-        return;
-      }
-      const values = Object.fromEntries(choices.filter(([, box]) => box.checked).map(([field]) => [field.key, field.value]));
-      if (!Object.keys(values).length) return;
-      const latest = getCurrent();
-      if (choices.some(([field, box]) => box.checked && JSON.stringify(field.current) !== JSON.stringify(latest[field.key]))) {
-        showReview();
-        const warning = node('p', 'Você alterou os dados enquanto revisava. Confira a seleção novamente.');
-        warning.setAttribute('role', 'alert');
-        review.prepend(warning);
-        warning.scrollIntoView({ block: 'center' });
-        return;
-      }
-      // Nenhum campo muda enquanto o administrador não confirmar explicitamente.
-      try {
-        finishApplication(values, selected);
-      } catch (error) {
-        errorMessage.textContent = error.message;
-        errorMessage.hidden = false;
-      }
-    };
+  function confirmFields(current) {
+    if (!queryInput) return;
+    const model = consolidateMetadata(current, [...(ocrCandidate ? [ocrCandidate] : []), ...candidates], chosenIdentity);
+    const facts = Object.entries(model.alternatives).flatMap(([key, options]) =>
+      options.filter((fact) => JSON.stringify(fact.value) === JSON.stringify(current[key])).flatMap((fact) => (fact.origins || [fact]).map((origin) => ({ ...origin, key, state: 'confirmed' }))),
+    );
+    decisions.push({ manualHash: current.manual.sha256, edition: current.edition || '', reviewedAt: Date.now(), reviewedBy: getRepository().session?.user?.uid || 'device', facts });
+    queryInput = { ...queryInput, edition: current.edition || '' };
+    snapshot = researchSnapshot(queryInput, candidates, decisions);
   }
   search.onclick = () => void run(false);
   expand.onclick = () => void run(true);
@@ -811,14 +561,15 @@ export function createResearchPanel({
   function invalidate() {
     snapshot = queryInput = null;
     decisions = [];
+    chosenIdentity = null;
+    onConsolidated(null);
     cancelWork('Dados da busca alterados. Pesquise novamente.');
     candidates = [];
     statuses.clear();
-    selected = null;
     appliedCandidates.clear();
     notifySuggestions();
     list.replaceChildren();
     review.hidden = true;
   }
-  return { snapshot: () => snapshot, reset, run, runOcr, cancel: cancelWork, invalidate, isBusy: () => active || ocrActive };
+  return { snapshot: () => snapshot, confirmFields, reset, run, loadExisting, runOcr, cancel: cancelWork, invalidate, isBusy: () => active || ocrActive };
 }

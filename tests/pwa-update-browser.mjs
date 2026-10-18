@@ -9,7 +9,8 @@ const require = createRequire(resolve(process.env.ACERVO_TEST_MODULES, 'package.
 const { chromium } = require('playwright');
 const root = resolve('.');
 let revision = 0;
-const sw = await readFile('service-worker.js', 'utf8');
+// Simula o comportamento do site hospedado; localhost tem teste próprio de retirada.
+const sw = (await readFile('service-worker.js', 'utf8')).replace(/const LOCAL_DEVELOPMENT = .*;/, 'const LOCAL_DEVELOPMENT = false;');
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname;
   const index = `<!doctype html><html><body><p id="release">${revision}</p><input id="draft"/><p id="notice"></p><button id="update" hidden>Atualizar</button><script type="module">
@@ -27,7 +28,7 @@ const server = createServer(async (req, res) => {
         : path === '/service-worker.js'
           ? sw.replace(/const VERSION = '[^']+'/, `const VERSION = 'acervo-v-fixture-${revision}'`)
           : path === '/js/pwa.js'
-            ? 'globalThis.__pwaBuild=' + revision + ';\n' + (await readFile(resolve(root, '.' + path), 'utf8'))
+            ? 'globalThis.__pwaBuild=' + revision + ';\n' + (await readFile(resolve(root, '.' + path), 'utf8')).replace("if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname))", 'if (false)')
             : await readFile(resolve(root, '.' + path));
     const type =
       path === '/' || path.endsWith('.html')

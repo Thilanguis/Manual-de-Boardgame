@@ -1,3 +1,4 @@
+import { columnLayout } from './rule-layout.js';
 import { loadPdf } from './pdf.js';
 import { linesFromItems } from './recognition.js';
 import { normalizeText } from './model.js';
@@ -79,7 +80,7 @@ export async function analyzePdf(blob, game, { signal, onProgress = () => {}, pr
         text = lines.map((l) => l.text).join('\n');
       textBytes += new TextEncoder().encode(text).length - new TextEncoder().encode(pages[number - 1].text).length;
       if (textBytes > 20000000) throw new Error('O texto ultrapassa o limite de 20 MB desta versão. Nenhum índice parcial será publicado.');
-      pages[number - 1] = { page: number, text, extracted: true, method: 'pdf-text' };
+      pages[number - 1] = { page: number, text, searchLayout: columnLayout(content.items, page.getViewport({ scale: 1 }).width), extracted: true, method: 'pdf-text' };
       headings.push(...detectHeadings(lines, number, outline));
       // Sumários impressos só oferecem referências quando a página física é inequívoca.
       for (const l of lines) {

@@ -1,0 +1,1 @@
+This folder contains the built output assets for the worker "acervo-development-only" generated at 2026-10-18T00:44:34.605Z.

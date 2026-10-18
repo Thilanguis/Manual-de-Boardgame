@@ -685,8 +685,9 @@ label,
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-#detail-description.expanded {
+.detail-content > p#detail-description.expanded {
   display: block;
+  -webkit-line-clamp: unset;
   overflow: visible;
 }
 #detail-description-toggle {
@@ -710,10 +711,58 @@ label,
   align-items: center;
   gap: 12px;
   justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.document-reading-info {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.document-reading-info strong {
+  display: block;
+  font-size: 14px;
+}
+.document-reading-row .button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .document-reading-row p {
   font-size: 13px;
   color: var(--muted);
+  margin: 4px 0 0;
+}
+.reader-document-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #141417;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.reader-document-picker span {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.reader-document-picker select {
+  width: 100%;
+  min-width: 0;
+  max-width: 640px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #1b1b20;
+  color: var(--text);
+  font: inherit;
+}
+@media (max-width: 600px) {
+  .reader-document-picker {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+  }
 }
 .knowledge-section {
   border-top: 1px solid var(--line);
@@ -722,6 +771,33 @@ label,
 .knowledge-section textarea {
   width: 100%;
   min-height: 120px;
+}
+.rules-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+.rule-reference {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.rules-result-group > h3 {
+  margin: 20px 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.knowledge-details {
+  margin-top: 16px;
+}
+.knowledge-details > summary {
+  cursor: pointer;
+}
+.detail-actions {
+  flex-wrap: wrap;
 }
 .knowledge-section textarea,
 .knowledge-section select {
@@ -1212,3 +1288,58 @@ body:not(.access-approved) > #reader {
   align-self: start;
   margin-bottom: 1rem;
 }
+.registration-pdfs {
+  min-width: 0;
+  margin: 0 0 20px;
+  border: 1px solid var(--border, #333338);
+  border-radius: 10px;
+  padding: 16px;
+}
+.registration-pdfs > p, .registration-pdf-row > small {
+  overflow-wrap: anywhere;
+}
+.registration-pdf-row {
+  display: grid;
+  gap: 10px;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border, #333338);
+}
+.registration-pdf-row .form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+.registration-pdf-row label { display: grid; gap: 6px; min-width: 0; }
+.document-link-pending {
+  padding: 14px;
+  margin: 12px 0;
+  border: 1px solid #ed334b55;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .registration-pdf-row .form-row { grid-template-columns: minmax(0, 1fr); }
+}
+.metadata-origin {
+  color: var(--muted, #b7b2bf);
+  font-size: .78rem;
+  margin: -.3rem 0 .8rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.metadata-origin summary { cursor: pointer; }
+.metadata-origin > div { padding: .65rem; border-left: 2px solid #454149; margin-top: .5rem; }
+.metadata-origin p { white-space: pre-wrap; margin: 0 0 .35rem; }
+.metadata-origin small, .metadata-origin a { display: block; }
+.metadata-conflict summary { color: #f4bc8a; }
+.fields-row > .metadata-origin { grid-column: 1 / -1; }
+.consolidated-information { margin-block: 1rem; }
+.consolidated-information small { color: var(--muted, #b7b2bf); }
+.rule-result .rule-preview p { margin-block: .65rem; line-height: 1.6; }
+.rule-result ul, .rule-result ol { padding-left: 1.4rem; }
+.rule-result li { margin-block: .35rem; line-height: 1.6; }
+.rules-more { margin-block: 1rem; }
+.rules-more > summary { cursor: pointer; color: var(--muted); padding-block: .5rem; }
+.rules-related-notice { color: var(--muted); }

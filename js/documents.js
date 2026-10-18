@@ -5,6 +5,15 @@ export function gameDocuments(game) {
   return game.manual ? [{ id: 'main', name: String(game.manual.name || 'Manual principal').slice(0, 160), documentType: 'principal', language: game.language || 'pt-BR', edition: game.edition || '', manual: game.manual }] : [];
 }
 export const primaryDocumentId = (game) => game.primaryDocumentId || 'main';
+export function documentName(document) {
+  const name = String(document?.name || '').trim();
+  const filename = String(document?.manual?.name || '').trim();
+  return (name && !/^manual (principal|de regras)$/i.test(name) ? name : filename || name || 'Manual')
+    .replace(/\.pdf$/i, '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 export const documentGame = (game, document) => ({ ...game, manual: document.manual, language: document.language, documentId: document.id });
 export function findDocument(game, id = primaryDocumentId(game)) {
   return gameDocuments(game).find((doc) => doc.id === id);

@@ -13,12 +13,12 @@ export const DEV_CONFIG = {
   maxPdfBytes: 52428800,
 };
 export const loopback = (hostname) => ['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname);
+export const developmentHost = (hostname) => loopback(hostname) || /^(?:127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(hostname) || /(?:\.localhost|\.local)$/.test(hostname) || /^\[?(?:f[cd][0-9a-f]{2}:|fe80:)/i.test(hostname);
 export function assertIsolatedConfiguration(config, hostname) {
-  if (!loopback(hostname)) {
-    if (config.emulators || config.development) throw new Error('O ambiente de desenvolvimento só funciona neste computador.');
-    return;
-  }
-  if (!config.development && !config.emulators && config.firebase?.projectId === 'manual-de-boardgame') return;
+  const testServer = globalThis.document?.querySelector('meta[name="acervo-environment"]')?.content === 'isolated';
+  const isolated = testServer || config.development || config.emulators || config.firebase?.projectId === 'demo-acervo';
+  if (!isolated) return;
+  if (!developmentHost(hostname)) throw new Error('O ambiente de desenvolvimento só funciona neste computador.');
   const local = (value) => {
     try {
       const url = new URL(value);
