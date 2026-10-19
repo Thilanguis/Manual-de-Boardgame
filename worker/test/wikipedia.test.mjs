@@ -4,6 +4,17 @@ import { wikipedia } from '../src/catalog/wikipedia.js';
 import { wikidata } from '../src/catalog/wikidata.js';
 const claim = (value) => ({ mainsnak: { snaktype: 'value', datavalue: { value } }, rank: 'normal' });
 const board = { id: 'Q17271', labels: { 'pt-br': { value: 'Colonizadores de Catan', language: 'pt-br' } }, claims: { P31: [claim({ id: 'Q131436' })], P2339: [claim('13')] } };
+
+test('Wikipédia consulta alias inglês em vez de repetir apenas o título brasileiro', async () => {
+  const searched = [];
+  await wikipedia({ query: 'Descent Lendas da Escuridão', preferredLanguage: 'pt-BR', alternateTitles: [{ value: 'Descent: Legends of the Dark', language: 'en', origin: 'gemini-hint' }] }, async (url) => {
+    const u = new URL(url);
+    searched.push({ host: u.hostname, query: u.searchParams.get('gsrsearch') });
+    return { query: { pages: [] } };
+  });
+  assert.equal(searched.find((q) => q.host === 'en.wikipedia.org').query, 'Descent: Legends of the Dark');
+  assert.equal(searched.length, 3);
+});
 test('Wikipédia importa descrição licenciada somente de artigo vinculado ao jogo, com autores e licença', async () => {
   const input = { query: 'Colonizadores de Catan', pdfLanguage: 'pt-BR', preferredLanguage: 'pt-BR', interactive: true };
   const result = await wikipedia(input, async (url) => {

@@ -27,7 +27,7 @@ function legacyRange(value) {
     last = parts.length === 2 ? scalar(parts[1]) : first;
   const min = minutes(first, last?.hours),
     max = minutes(last, first?.hours);
-  return min != null && max != null && min <= max ? { minDurationMinutes: min, maxDurationMinutes: max } : {};
+  return min != null && max != null ? { minDurationMinutes: Math.min(min, max), maxDurationMinutes: Math.max(min, max) } : {};
 }
 export function durationSuggestion(fields = {}) {
   const legacy = legacyRange(fields.durationMinutes);
@@ -36,9 +36,11 @@ export function durationSuggestion(fields = {}) {
   if (hasMin || hasMax) {
     const min = minutes(scalar(fields.minDurationMinutes)),
       max = minutes(scalar(fields.maxDurationMinutes));
-    if (min != null && max != null && min > max) return {};
+    if (min != null && max != null) return { minDurationMinutes: Math.min(min, max), maxDurationMinutes: Math.max(min, max) };
     // Completa um limite ausente somente quando a própria fonte também informa o intervalo completo, sem divergência.
     if (legacy.minDurationMinutes != null && (!hasMin || min === legacy.minDurationMinutes) && (!hasMax || max === legacy.maxDurationMinutes)) return legacy;
+    const single = min ?? max;
+    if (single != null && hasMin !== hasMax && !fields.durationBound && legacy.minDurationMinutes == null) return { minDurationMinutes: single, maxDurationMinutes: single };
     return { ...(min != null ? { minDurationMinutes: min } : {}), ...(max != null ? { maxDurationMinutes: max } : {}) };
   }
   return legacy;

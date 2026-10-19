@@ -8,6 +8,19 @@ const text = (tag, value) => {
   return el;
 };
 const display = (value) => (Array.isArray(value) ? value.join(', ') : String(value ?? ''));
+const originsFor = (fact) => (fact.origins?.length ? fact.origins.flatMap(originsFor) : [fact]);
+const originLabel = (origins) => [...new Set(origins.map((fact) => sourceNames[fact.source] || fact.source))].join(' · ');
+function attachOrigin(input, helper) {
+  const label = input.closest('label');
+  let wrapper = label.parentElement;
+  if (!wrapper.classList.contains('field-with-origin')) {
+    wrapper = text('div', '');
+    wrapper.className = 'field-with-origin';
+    label.before(wrapper);
+    wrapper.append(label);
+  }
+  wrapper.append(helper);
+}
 
 // A ficha existente é a revisão. Não há uma segunda lista de campos aprováveis.
 export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () => {} }) {
@@ -28,10 +41,18 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
       form.elements.namedItem('title').dispatchEvent(new Event('input', { bubbles: true }));
       return;
     }
-    if (!metadataKeys.includes(event.target.name)) return;
+    if (!metadataKeys.includes(event.target.name) && event.target.name !== 'language') return;
     dirty.add(event.target.name);
     onManualEdit(event.target.name, event.target.value);
     render();
+  });
+  form.addEventListener('change', (event) => {
+    const pairs = { minDurationMinutes: 'maxDurationMinutes', maxDurationMinutes: 'minDurationMinutes' };
+    const other = form.elements.namedItem(pairs[event.target.name] || '');
+    const value = Number(event.target.value);
+    if (!other || other.value !== '' || !event.target.value || !Number.isInteger(value) || value < 1 || value > 1440) return;
+    other.value = String(value);
+    other.dispatchEvent(new Event('input', { bubbles: true }));
   });
   function render() {
     form.querySelectorAll('[data-metadata-field]').forEach((el) => el.remove());
@@ -44,7 +65,7 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
     const review = text('section', '');
     review.dataset.metadataReview = '';
     review.className = 'metadata-review';
-    const count = Object.keys(automatic).filter((key) => factSignature(current[key]) === factSignature(automatic[key])).length;
+    const count = Object.keys(automatic).filter((key) => !protectedField(key) && factSignature(current[key]) === factSignature(automatic[key])).length;
     if (count || grouped.length)
       review.append(
         text(
@@ -61,52 +82,49 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
       const helper = text('details', '');
       helper.dataset.metadataField = key;
       helper.className = 'metadata-origin';
-      const conflict = model.consistency[key] === 'conflict';
       const requiresDecision = needed.includes(key);
       if (requiresDecision && !grouped.includes(key)) continue;
-      helper.classList.toggle('metadata-conflict', conflict);
+      helper.classList.toggle('metadata-conflict', requiresDecision);
       const origin = model.fieldSources[key];
       const same = factSignature(current[key]) === factSignature(model.fields[key]);
+      const selectedOrigins = facts.filter((fact) => factSignature(fact.value) === factSignature(model.fields[key])).flatMap(originsFor);
+      const originText = originLabel(selectedOrigins.length ? selectedOrigins : originsFor(origin));
+      const reference = origin.evidence?.page ? `, página ${origin.evidence.page}` : '';
       helper.append(
         text(
           'summary',
           requiresDecision
             ? `${fieldLabels[key]} · escolha o valor`
-            : dirty.has(key)
-              ? 'Sua edição foi preservada · ver fontes'
-              : ['consistent', 'consensus'].includes(model.consistency[key])
-                ? 'Fontes concordam · ver alternativas'
-                : model.consistency[key] === 'manual-preferred'
-                  ? 'Manual desta edição · ver alternativas'
-                  : !same
-                    ? 'Sugestão disponível · ver origem'
-                    : `Origem: ${origin.origins?.length > 1 ? 'fontes reunidas' : sourceNames[origin.source] || origin.source}`,
+            : protectedField(key)
+              ? 'Sua correção foi preservada · ver fontes'
+              : !same
+                ? `Sugestão disponível · origem: ${originText}${reference}`
+                : `Origem: ${originText}${reference}${['consistent', 'consensus'].includes(model.consistency[key]) ? ' · fontes concordam' : model.consistency[key] === 'manual-preferred' ? ' · manual desta edição' : ''}`,
         ),
       );
       const unique = facts.filter((f, i) => facts.findIndex((other) => factSignature(f.value) === factSignature(other.value)) === i);
       for (const fact of unique) {
         const row = text('div', ''),
-          origins = fact.origins || facts.filter((f) => factSignature(f.value) === factSignature(fact.value)),
-          label = [...new Set(origins.map((f) => sourceNames[f.source] || f.source))].join(' · ');
-        row.append(text('p', display(fact.value)), text('small', `${label}${fact.evidence?.page ? ` · página ${fact.evidence.page}` : ''}${fact.editionUnconfirmed ? ' · edição não confirmada pela fonte' : ''}`));
-        if (fact.url && /^https:\/\//.test(fact.url)) {
-          const link = text('a', 'Consultar fonte ↗');
-          link.href = fact.url;
-          link.target = '_blank';
-          link.rel = 'noopener noreferrer';
-          row.append(link);
-        }
-        if (fact.license) row.append(text('small', fact.license));
-        for (const [label, url] of [
-          ['Licença', fact.licenseUrl],
-          ['Autores e histórico', fact.authorsUrl],
-        ]) {
-          if (!String(url || '').startsWith('https://')) continue;
-          const link = text('a', label + ' ↗');
-          link.href = url;
-          link.target = '_blank';
-          link.rel = 'noopener noreferrer';
-          row.append(link);
+          origins = facts
+            .filter((f) => factSignature(f.value) === factSignature(fact.value))
+            .flatMap(originsFor)
+            .filter((f, i, all) => all.findIndex((other) => other.source === f.source && other.id === f.id && other.evidence?.page === f.evidence?.page && other.url === f.url) === i);
+        row.append(text('p', display(fact.value)));
+        for (const source of origins) {
+          row.append(text('small', `${sourceNames[source.source] || source.source}${source.evidence?.page ? ` · página ${source.evidence.page}` : ''}${source.editionUnconfirmed ? ' · edição não confirmada pela fonte' : ''}`));
+          for (const [label, url] of [
+            ['Consultar fonte', source.url],
+            ['Licença', source.licenseUrl],
+            ['Autores e histórico', source.authorsUrl],
+          ]) {
+            if (!String(url || '').startsWith('https://')) continue;
+            const link = text('a', label + ' ↗');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            row.append(link);
+          }
+          if (source.license) row.append(text('small', source.license));
         }
         if (requiresDecision || factSignature(current[key]) !== factSignature(fact.value)) {
           const button = text('button', 'Usar este valor');
@@ -144,15 +162,17 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
         continue;
       }
       // Não colocar controles interativos dentro de labels de inputs.
-      const label = input.closest('label');
-      let wrapper = label.parentElement;
-      if (!wrapper.classList.contains('field-with-origin')) {
-        wrapper = text('div', '');
-        wrapper.className = 'field-with-origin';
-        label.before(wrapper);
-        wrapper.append(label);
-      }
-      wrapper.append(helper);
+      attachOrigin(input, helper);
+    }
+    // O idioma pertence ao PDF, não aos metadados dos catálogos/Gemini.
+    const language = form.elements.namedItem('language');
+    if (language && (protectedField('language') || (current.language !== 'other' && /^PDF/i.test(current.sources?.language?.source || '')))) {
+      const helper = text('details', '');
+      helper.className = 'metadata-origin';
+      helper.dataset.metadataField = 'language';
+      helper.append(text('summary', protectedField('language') ? 'Sua correção foi preservada · ver origem' : 'Origem: PDF · idioma sugerido pelo texto do manual'));
+      helper.append(text('small', protectedField('language') ? 'O idioma que você informou tem prioridade.' : 'Identificação automática do texto do PDF. Confira e corrija se necessário.'));
+      attachOrigin(language, helper);
     }
   }
   return {

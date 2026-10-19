@@ -26,16 +26,20 @@ const key = (value) => normalizeText(value).replace(/^(?:o|a|os|as|the|le|les) /
 // Pistas de descoberta, nunca equivalências de identidade. Um prefixo de franquia
 // ou nome próprio pode localizar títulos traduzidos, mas não autoriza aplicá-los.
 export function discoveryQueries(value) {
-  const title = String(value || '').replace(/[™®]/g, '').trim();
+  const title = String(value || '')
+    .replace(/[™®]/g, '')
+    .trim();
   const prefix = title.split(/[:：]/)[0].trim();
   const last = title.match(/[\p{L}\d]{5,}$/u)?.[0];
   const generic = /^(?:jogo|game|board|manual|regras|rules|edition|edicao|expansion|expansao|dark|escuridao|sociedade|fellowship)$/;
-  return [...new Set([...(prefix !== title && normalizeText(prefix).length >= 4 ? [prefix] : []), ...(prefix === title && last ? [last] : [])])]
-    .filter((q) => !generic.test(normalizeText(q)) && normalizeText(q) !== normalizeText(title)).slice(0, 1);
+  const franchise = title.match(/^([\p{L}\d]{4,})\s+\S+\s+\S+/u)?.[1];
+  return [...new Set([...(prefix !== title && normalizeText(prefix).length >= 4 ? [prefix] : []), ...(prefix === title && franchise && !generic.test(normalizeText(franchise)) ? [franchise] : []), ...(prefix === title && last ? [last] : [])])]
+    .filter((q) => !generic.test(normalizeText(q)) && normalizeText(q) !== normalizeText(title))
+    .slice(0, 1);
 }
 
 export function titleMatches(candidate, input) {
-  const terms = [input.query, ...(input.alternateTitles || []).map((n) => n.value)].map(normalizeText).filter(Boolean);
+  const terms = [input.query, ...(input.alternateTitles || []).filter((n) => n.origin !== 'gemini-hint').map((n) => n.value)].map(normalizeText).filter(Boolean);
   return (candidate.names || []).some((n) => terms.includes(normalizeText(n.value)));
 }
 export function reviewedIdentity(title, metadata = '') {

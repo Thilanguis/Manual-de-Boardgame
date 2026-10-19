@@ -1,4 +1,5 @@
 // A chave é obtida novamente do servidor após validar a conta. Nunca persiste no navegador.
+import { readablePage } from './text-quality.js';
 let required = false,
   key = null,
   uid = '',
@@ -46,7 +47,7 @@ export async function privateValue(name, value) {
       data: await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(id) }, activeKey, new TextEncoder().encode(JSON.stringify(value))),
       savedAt: Date.now(),
       family: name.startsWith('translation:') ? 'translation' : 'index',
-      pinned: name.startsWith('index:preparation:') || value.analysisComplete === false || (value.pages && value.pages.some((p) => p.text.trim().length < 40 && !p.ocrStatus)),
+      pinned: name.startsWith('index:preparation:') || value.analysisComplete === false || (value.pages && value.pages.some((p) => !readablePage(p) && !p.ocrStatus)),
     };
   }
   if (generation !== current) return null;

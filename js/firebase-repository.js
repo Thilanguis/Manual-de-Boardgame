@@ -77,9 +77,9 @@ export async function createFirebaseRepository(config) {
       requireRead();
       return files.knowledge(game, undefined, options);
     },
-    generateKnowledge(game, { force = false, reuseOnly = false, expectedIdentity, requestId = crypto.randomUUID() } = {}) {
+    generateKnowledge(game, { force = false, reuseOnly = false, includePublic = false, research, expectedIdentity, requestId = crypto.randomUUID() } = {}) {
       requireWrite(force ? 'edit' : undefined);
-      return files.knowledge(game, { force, reuseOnly, requestId, ...(expectedIdentity ? { expectedIdentity } : {}) });
+      return files.knowledge(game, { force, reuseOnly, requestId, ...(includePublic ? { includePublic: true, ...(research ? { research } : {}) } : {}), ...(expectedIdentity ? { expectedIdentity } : {}) });
     },
     reviewKnowledge(game, revision, sections) {
       requireWrite('edit');

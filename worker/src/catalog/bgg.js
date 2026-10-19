@@ -4,7 +4,9 @@ import { facts, positive, text } from './io.js';
 
 const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: false });
 export async function bgg(input, io) {
-  const endpoint = input.action === 'detail' ? `thing?id=${input.id}&type=boardgame,boardgameexpansion` : `search?type=${input.kind === 'expansion' ? 'boardgameexpansion' : 'boardgame,boardgameexpansion'}&query=${encodeURIComponent(input.query)}`;
+  const query = input.alternateTitles?.find((n) => n.language === 'en')?.value || input.query;
+  if (input.action === 'search') input.diagnostics = { complete: true, queries: [{ query, language: 'en', reason: query === input.query ? 'título informado' : 'nome alternativo para descoberta; identidade ainda exige confirmação' }], failures: [] };
+  const endpoint = input.action === 'detail' ? `thing?id=${input.id}&type=boardgame,boardgameexpansion` : `search?type=${input.kind === 'expansion' ? 'boardgameexpansion' : 'boardgame,boardgameexpansion'}&query=${encodeURIComponent(query)}`;
   const data = parser.parse(await io(`https://boardgamegeek.com/xmlapi2/${endpoint}`, { xml: true }));
   const items = asArray(data.items?.item).filter((v) => ['boardgame', 'boardgameexpansion'].includes(v['@_type']));
   return items
@@ -34,8 +36,31 @@ export async function bgg(input, io) {
           minDurationMinutes: minTime,
           maxDurationMinutes: maxTime,
           recommendedAge: positive(item.minage?.['@_value'], 100),
+          tags: asArray(item.link)
+            .filter((link) => link['@_type'] === 'boardgamecategory')
+            .map((link) => text(link['@_value'], 40))
+            .filter(Boolean)
+            .slice(0, 8),
+          mechanics: asArray(item.link)
+            .filter((link) => link['@_type'] === 'boardgamemechanic')
+            .map((link) => text(link['@_value'], 40))
+            .filter(Boolean)
+            .slice(0, 8),
         },
-        { names: names.slice(0, 40), kind: item['@_type'] === 'boardgameexpansion' ? 'expansion' : 'base', identifiers: { bgg: id }, language: 'unknown', license: 'BGG · API autorizada; fatos com atribuição', needsDetail: input.action !== 'detail' },
+        {
+          names: names.slice(0, 40),
+          kind: item['@_type'] === 'boardgameexpansion' ? 'expansion' : 'base',
+          identifiers: { bgg: id },
+          publicationYear: positive(item.yearpublished?.['@_value'], 2100),
+          creators: asArray(item.link)
+            .filter((link) => link['@_type'] === 'boardgamedesigner')
+            .map((link) => text(link['@_value'], 100))
+            .filter(Boolean)
+            .slice(0, 12),
+          language: 'en',
+          license: 'BGG · API autorizada; fatos com atribuição',
+          needsDetail: input.action !== 'detail',
+        },
       );
       // Descrições autorais e imagens não são copiadas sem licença específica.
     })

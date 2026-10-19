@@ -1,5 +1,5 @@
 import { consolidateCandidates, factSignature, researchName } from './research-knowledge.js';
-import { sameWork } from './research-client.js';
+import { sameWork, linkCatalogIdentities } from './research-client.js';
 import { reviewedIdentity } from './game-identities.js';
 import { resolveMetadataConsensus, independenceFor } from './metadata-consensus.js';
 
@@ -17,7 +17,7 @@ const signature = (value) => (Array.isArray(value) ? JSON.stringify([...new Set(
 export function consolidateMetadata(game, input, chosen = null) {
   const hash = game.manual?.sha256;
   const manual = input.filter((c) => ['pdf', 'gemini'].includes(c.source) && hash && c.manualHash === hash && compatible(game, c));
-  const external = input.filter((c) => !['pdf', 'gemini'].includes(c.source) && compatible(game, c));
+  const external = linkCatalogIdentities(input.filter((c) => !['pdf', 'gemini'].includes(c.source) && compatible(game, c)));
   const buckets = [];
   for (const candidate of external) {
     const bucket = buckets.find((items) => items.every((other) => compatible(candidate, other) && sameWork(candidate, other)));
@@ -58,7 +58,7 @@ export function consolidateMetadata(game, input, chosen = null) {
         quality: member.quality || 'catalog',
         manualHash: member.manualHash || '',
         edition: member.edition || '',
-        editionUnconfirmed: !['pdf', 'gemini'].includes(member.source) && (!game.edition || !member.edition || !!member.requiresEditionReview),
+        editionUnconfirmed: member.evidence?.[key]?.editionUnconfirmed ?? (!['pdf', 'gemini'].includes(member.source) && (!game.edition || !member.edition || !!member.requiresEditionReview)),
       };
       (alternatives[key] ||= []).push(fact);
       if (!(key in fields)) {
@@ -94,6 +94,13 @@ export function consolidateMetadata(game, input, chosen = null) {
         fieldSources[key] = pt;
       }
     }
+    if (key === 'description') {
+      const summary = facts.find((f) => f.generated && /^pt/i.test(f.language || '') && String(f.evidence?.excerpt || '').trim().length >= 8);
+      if (summary) {
+        fields[key] = summary.value;
+        fieldSources[key] = summary;
+      }
+    }
   }
   const resolutions = resolveMetadataConsensus(alternatives, fields, fieldSources, consistency);
   return { fields, fieldSources, alternatives, consistency, resolutions, members, ambiguous: !selected && groups.length > 0 ? groups : [], pendingTranslations: members.flatMap((c) => consolidateCandidates([c])[0].pendingTranslations || []) };
@@ -109,7 +116,8 @@ export function metadataUpdates(model, game, dirty = new Set(), automatic = {}) 
     // Classificações extraídas automaticamente do PDF podem ser completadas,
     // sem remover nenhum termo existente nem tocar em listas editadas/conferidas.
     const extendsPdfList = ['tags', 'mechanics'].includes(key) && /^PDF/i.test(origin?.source || '') && Array.isArray(game[key]) && Array.isArray(value) && game[key].every((item) => value.some((v) => researchName(item) === researchName(v)));
-    if (!equal(game[key], value) && (emptyValue(game[key]) || extendsPdfList || (key in automatic && equal(game[key], automatic[key])))) values[key] = value;
+    const improvesPdfSummary = key === 'description' && /^PDF/i.test(origin?.source || '') && model.fieldSources[key]?.generated;
+    if (!equal(game[key], value) && (emptyValue(game[key]) || extendsPdfList || improvesPdfSummary || (key in automatic && equal(game[key], automatic[key])))) values[key] = value;
   }
   // Não completar metade de uma faixa com outro valor sem conferência.
   for (const pair of [

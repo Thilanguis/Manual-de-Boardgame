@@ -48,15 +48,18 @@ try {
       panel.open({ id: 'fixture' });
     });
     await page.getByRole('button', { name: 'Atualizar conhecimento com IA' }).click();
-    await page.waitForFunction((text) => document.querySelector('.knowledge-status').textContent === text, message);
+    await page.waitForFunction(
+      (text) => document.querySelector('.knowledge-status').textContent === text,
+      reason === 'provider' ? message : 'O limite interno do Acervo foi removido. Solicite uma nova análise para completar as informações. O conhecimento salvo foi preservado.',
+    );
     assert.equal(generations, 1);
-    assert.equal(await page.getByRole('button', { name: 'Atualizar conhecimento com IA' }).isDisabled(), reason !== 'provider');
+    assert.equal(await page.getByRole('button', { name: 'Atualizar conhecimento com IA' }).isDisabled(), false);
     assert.equal(await page.locator('textarea').inputValue(), 'Conteúdo já revisado e salvo.');
-    if (reason !== 'provider') assert.match(await page.locator('#knowledge').textContent(), /Nova tentativa disponível em/);
+    if (reason !== 'provider') assert.doesNotMatch(await page.locator('#knowledge').textContent(), /Nova tentativa disponível em|5 gerações/);
     assert.doesNotMatch(await page.locator('#knowledge').textContent(), /Drive não respondeu/);
     await context.close();
   }
-  console.log('Chrome: limites por minuto/dia/provedor mostram mensagem persistente, preservam texto salvo e não repetem a geração.');
+  console.log('Chrome: bloqueios internos legados liberados; cota do provedor preservada; nenhuma repetição automática e texto salvo intacto.');
 } finally {
   await browser.close();
 }

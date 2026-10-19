@@ -10,6 +10,7 @@ import { queryCatalog, researchCapabilities } from './catalog/index.js';
 import { RESEARCH_VERSION, RESEARCH_PROTOCOL, RESEARCH_QUERY_VERSION } from '../../js/research-contract.js';
 import { knowledgeEndpoint } from './game-knowledge.js';
 import { draftKnowledgeEndpoint } from './draft-knowledge.js';
+import { DRAFT_REQUEST_BYTES, KNOWLEDGE_REQUEST_BYTES } from './knowledge-limits.js';
 export { KnowledgeStore } from './game-knowledge.js';
 
 const CHUNK_LIMIT = 8 * 1024 * 1024,
@@ -18,7 +19,7 @@ const xmlParser = new XMLParser({ ignoreAttributes: false, processEntities: true
 const bggCache = new Map();
 const gameIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
-async function readJSON(request, limit = JSON_LIMIT) {
+async function readJSON(request, limit = JSON_LIMIT, label = '') {
   if (!request.body) throw new ApiError(400, 'Envie os dados da operação.');
   const reader = request.body.getReader();
   let size = 0,
@@ -29,7 +30,9 @@ async function readJSON(request, limit = JSON_LIMIT) {
     size += value.length;
     if (size > limit) {
       await reader.cancel();
-      throw new ApiError(413, 'Dados da operação muito grandes.');
+      throw Object.assign(new ApiError(413, label ? `${label} excedem o limite de ${limit.toLocaleString('pt-BR')} bytes. Nenhuma geração foi iniciada; os dados já encontrados foram preservados.` : 'Dados da operação muito grandes.'), {
+        reason: 'request-size-limit',
+      });
     }
     parts.push(value);
   }
@@ -419,7 +422,12 @@ export async function handleRequest(request, env, ctx) {
         maxPdfBytes: Math.min(MAX_PDF_BYTES, Number(env.MAX_PDF_BYTES || MAX_PDF_BYTES)),
         knowledgeProtocol: 1,
         manualKnowledgeProtocol: env.KNOWLEDGE_FROM_MANUAL === 'true' ? 1 : 0,
-        profileMetadataProtocol: 1,
+        profileMetadataProtocol: 2,
+        profileDiscoveryProtocol: 1,
+        profileDiscoveryModel: 'gemini-2.5-flash-lite',
+        profileDiscoveryLimits: { perAnalysis: 1, perMinute: null, perDay: null },
+        knowledgeInternalQuota: false,
+        googleSearchGrounding: false,
         knowledgeReuseProtocol: 1,
         informationIdentityProtocol: 1,
         knowledgeConfigured: !!(env.GAME_KNOWLEDGE && env.GEMINI_API_KEY),
@@ -438,8 +446,9 @@ export async function handleRequest(request, env, ctx) {
       identity.profile = access;
       const research = /^\/v1\/research\/(wikidata|wikipedia|ludopedia|bgg)$/.exec(url.pathname);
       const knowledge = /^\/v1\/games\/([a-f0-9-]{36})\/knowledge$/.exec(url.pathname);
-      if (url.pathname === '/v1/research/draft-knowledge' && request.method === 'POST') response = await draftKnowledgeEndpoint(request, env, identity, await readJSON(request, 1000000), ctx);
-      else if (knowledge && ['GET', 'POST'].includes(request.method)) response = await knowledgeEndpoint(request, env, identity, knowledge[1], request.method === 'POST' ? await readJSON(request) : null, ctx);
+      if (url.pathname === '/v1/research/draft-knowledge' && request.method === 'POST') response = await draftKnowledgeEndpoint(request, env, identity, await readJSON(request, DRAFT_REQUEST_BYTES, 'Os dados dos manuais'), ctx);
+      else if (knowledge && ['GET', 'POST'].includes(request.method))
+        response = await knowledgeEndpoint(request, env, identity, knowledge[1], request.method === 'POST' ? await readJSON(request, KNOWLEDGE_REQUEST_BYTES, 'Os dados da análise ou correção') : null, ctx);
       else if (url.pathname === '/v1/research/sources' && request.method === 'GET') response = json(researchCapabilities(env));
       else if (research && request.method === 'POST') {
         const input = await readJSON(request);
@@ -472,7 +481,10 @@ export async function handleRequest(request, env, ctx) {
     }
   } catch (error) {
     // Não registrar tokens, cabeçalhos de autorização, respostas OAuth ou tickets.
-    response = json({ error: error instanceof ApiError ? error.message : 'Não foi possível concluir a operação. Tente novamente.' }, error instanceof ApiError ? error.status : 502);
+    response = json(
+      { error: error instanceof ApiError ? error.message : 'Não foi possível concluir a operação. Tente novamente.', ...(error instanceof ApiError && error.reason ? { reason: error.reason } : {}) },
+      error instanceof ApiError ? error.status : 502,
+    );
   }
   const headers = new Headers(response.headers);
   for (const [key, value] of Object.entries(cors)) headers.set(key, value);

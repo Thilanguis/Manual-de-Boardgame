@@ -55,6 +55,7 @@ export function createDriveStorage(config, getToken, getUid) {
       const data = await response.json().catch(() => ({}));
       const error = new Error(data.error || data.message || 'Não foi possível concluir a solicitação.');
       error.status = response.status;
+      if (data.reason) error.reason = data.reason;
       if (data.status === 'quota') error.record = data;
       throw error;
     }

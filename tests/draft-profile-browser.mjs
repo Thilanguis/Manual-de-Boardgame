@@ -10,13 +10,19 @@ pdf.addPage().drawText('Jogo de teste para 2 a 4 jogadores. Duracao: 30 a 60 min
 const bytes = Buffer.from(await pdf.save());
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 let requests = 0;
+let holdResponse = false,
+  releaseResponse;
 try {
   const context = await browser.newContext({ serviceWorkers: 'block' });
   await context.route('**/*', (r) => (['localhost', '127.0.0.1'].includes(new URL(r.request().url()).hostname) ? r.continue() : r.abort()));
   await context.route('**/js/app.js', (r) => r.fulfill({ contentType: 'text/javascript', body: '' }));
   await context.route('**/__draft_fixture', async (r) => {
     requests++;
-    await new Promise((done) => setTimeout(done, 30));
+    if (holdResponse)
+      await new Promise((done) => {
+        releaseResponse = done;
+      });
+    else await new Promise((done) => setTimeout(done, 30));
     await r.fulfill({ json: { status: 'ready', knowledge: null } });
   });
   const page = await context.newPage();
@@ -78,7 +84,37 @@ try {
   });
   assert.equal(requests, 1, 'IA indisponível não impede análise local nem chama o provedor');
   assert.equal(await page.evaluate(() => indexes), 1);
-  console.log('Rascunho: três consumidores, edição de título e reload fazem uma chamada; cache privado por versão reutilizado; jogo salvo não gera novamente.');
+  const original = await page.evaluate(() => structuredClone(current));
+  for (const changed of ['title', 'edition', 'manual']) {
+    await page.evaluate(
+      async ({ original, changed }) => {
+        current = structuredClone(original);
+        records = 0;
+        repository.session.user.uid = `pending-${changed}`;
+        repository.session.storageStatus.manualAiEnabled = true;
+        await (await import('/js/private-cache.js')).unlockPrivateCache(repository.session.user.uid, new Uint8Array(32).fill(7));
+      },
+      { original, changed },
+    );
+    holdResponse = true;
+    const sent = page.waitForRequest('**/__draft_fixture');
+    await page.evaluate(() => {
+      globalThis.pending = client.prepare({ retry: true });
+    });
+    await sent;
+    while (!releaseResponse) await new Promise((resolve) => setTimeout(resolve, 5));
+    await page.evaluate((changed) => {
+      if (changed === 'manual') current.manual.sha256 = 'b'.repeat(64);
+      else current[changed] = 'Outra identidade';
+    }, changed);
+    releaseResponse();
+    releaseResponse = null;
+    holdResponse = false;
+    await page.evaluate(() => pending);
+    assert.equal(await page.evaluate(() => records), 0, `resposta pendente não aplica após mudar ${changed}`);
+  }
+  assert.equal(requests, 4);
+  console.log('Rascunho: consumidores e reload reutilizam cache; abrir/editar jogo salvo não gera; respostas pendentes após mudança de título, edição e PDF são descartadas.');
 } finally {
   await browser.close();
 }

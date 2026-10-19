@@ -1,13 +1,13 @@
 import { catalogPlans } from './io.js';
 import { wikidataEntities } from './wikidata.js';
-import { queryVariants } from '../../../js/game-identities.js';
+import { queryVariants, titleMatches } from '../../../js/game-identities.js';
 import { normalizeText } from '../../../js/model.js';
+import { wikiInfobox } from './wiki-infobox.js';
 
 export async function wikipedia(input, io) {
   const diagnostics = (input.diagnostics = { queries: [], failures: [], complete: true, returned: 0 });
-  const plans = queryVariants(input)
-    .filter((v, i, all) => all.findIndex((p) => p.language === v.language) === i)
-    .slice(0, 3);
+  const variants = queryVariants(input);
+  const plans = ['pt', 'en', 'fr'].map((language) => variants.find((v) => v.language === language && language !== 'pt' && normalizeText(v.query) !== normalizeText(input.query)) || variants.find((v) => v.language === language)).filter(Boolean);
   const responses = await catalogPlans(plans, async (plan) => {
     const url = new URL(`https://${plan.language}.wikipedia.org/w/api.php`);
     url.search = new URLSearchParams({
@@ -18,7 +18,10 @@ export async function wikipedia(input, io) {
       gsrsearch: plan.query,
       gsrnamespace: '0',
       gsrlimit: '3',
-      prop: 'pageprops|extracts|info',
+      prop: 'pageprops|extracts|info|revisions',
+      rvprop: 'ids|content',
+      rvslots: 'main',
+      rvsection: '0',
       exintro: '1',
       explaintext: '1',
       exlimit: '3',
@@ -42,6 +45,8 @@ export async function wikipedia(input, io) {
     const articles = pages.filter((p) => p.pageprops.wikibase_item === entity.id);
     const article = articles.find((p) => p.language === (input.preferredLanguage === 'pt-BR' ? 'pt' : input.preferredLanguage)) || articles.find((p) => p.language === input.pdfLanguage) || articles[0];
     if (!article) continue;
+    const revision = article.revisions?.[0];
+    const infobox = wikiInfobox(revision?.slots?.main?.content || revision?.['*']);
     // Correspondência precisa existir em nomes da entidade ou título do artigo.
     const query = normalizeText(input.query),
       names = [article.title, ...entity.names.map((n) => n.value)].map(normalizeText);
@@ -59,18 +64,24 @@ export async function wikipedia(input, io) {
       ...entity,
       names: [...entity.names, { value: article.title, language: article.language, origin: 'artigo vinculado ao mesmo item Wikidata' }],
       source: 'wikipedia',
+      discoveryOnly: !titleMatches(entity, input),
       url: url.href,
-      fields: { title: article.title, ...(description ? { description } : {}) },
+      fields: { title: article.title, ...(description ? { description } : {}), ...infobox.fields },
+      fieldEvidence: Object.fromEntries(
+        Object.entries(infobox.evidence).map(([key, excerpt]) => [key, { excerpt, ...(revision?.revid ? { revision: revision.revid, url: `https://${article.language}.wikipedia.org/w/index.php?oldid=${revision.revid}` } : {}) }]),
+      ),
       language: article.language,
       descriptionLanguage: article.language,
       fieldLanguages: { title: article.language, description: article.language },
       license: 'CC BY-SA 4.0',
       licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0/',
       authorsUrl: url.href + '&action=history',
-      attribution: 'Autores da Wikipédia · trecho da introdução',
+      attribution: 'Autores da Wikipédia · introdução e fatos da ficha técnica',
       modified: true,
       fieldReasons: Object.fromEntries(
-        ['minPlayers', 'maxPlayers', 'recommendedAge', 'durationMinutes', 'mechanics', 'tags', 'gameType', 'edition'].map((field) => [field, 'Este conector utiliza somente título e introdução do artigo; este campo não foi extraído.']),
+        ['minPlayers', 'maxPlayers', 'recommendedAge', 'minDurationMinutes', 'maxDurationMinutes', 'mechanics', 'tags', 'gameType', 'edition']
+          .filter((field) => infobox.fields[field] == null)
+          .map((field) => [field, 'Este campo não foi extraído: a ficha técnica não fornece um valor inequívoco utilizável.']),
       ),
     });
   }

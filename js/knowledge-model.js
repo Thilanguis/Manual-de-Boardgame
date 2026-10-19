@@ -1,18 +1,19 @@
 import { normalizeText } from './model.js';
-import { findDocument } from './documents.js';
-import { validateProfile } from './profile-facts.js';
+import { findDocument, gameDocuments } from './documents.js';
+import { validateProfile, profileCoverageComplete, profileSourceMatches } from './profile-facts.js';
 import { knowledgeMatchesIdentity } from './information-identity.js';
 
 export function hasStructuredProfile(knowledge, game) {
   if (!knowledge || !knowledgeMatchesIdentity(knowledge, game)) return false;
   if (!Array.isArray(knowledge.sources)) return false;
-  const sources = knowledge.sources.filter((s) => s && (!s.pages || findDocument(game, s.documentId || 'main')?.manual.sha256 === s.sourceHash));
+  const sources = knowledge.sources.filter((s) => s && profileSourceMatches(s, gameDocuments(game)) && (!s.pages || findDocument(game, s.documentId || 'main')?.manual.sha256 === s.sourceHash));
   if (!sources.length) return false;
   if (Object.keys(validateProfile(knowledge.profile, sources)).length) return true;
   // Uma análise nova pode concluir legitimamente que nenhum campo foi encontrado.
   // Só um marcador do servidor distingue esse caso de um profile legado vazio.
-  return knowledge.profileAnalysis?.version === 1 && knowledge.profileAnalysis.complete === true && !!knowledge.profile && Object.keys(knowledge.profile).length === 0 && sources.length === knowledge.sources.length;
+  return knowledge.profileAnalysis?.version >= 2 && knowledge.profileAnalysis.complete === true && !!knowledge.profile && Object.keys(knowledge.profile).length === 0 && sources.length === knowledge.sources.length;
 }
+export const hasCompleteProfile = (knowledge, game) => profileCoverageComplete(knowledge) && hasStructuredProfile(knowledge, game);
 
 export const KNOWLEDGE_TOPICS = {
   'visao-geral': 'Visão geral',
@@ -40,10 +41,21 @@ export function usableKnowledge(knowledge, game) {
     if (section.review === 'rejected' || !section.text?.trim()) return false;
     const source = sources.find((source) => source.id === section.sourceId);
     if (!source || !section.quote || !normalizeText(section.quote)) return false;
+    if (source.profileOnly) return false;
     if (source.pages) {
       const document = findDocument(game, section.documentId || source.documentId || 'main');
       const page = source.pages.find((page) => page.page === section.page);
-      return !!document && (source.documentId || 'main') === document.id && source.sourceHash === document.manual.sha256 && (section.sourceHash || source.sourceHash) === document.manual.sha256 && Number.isInteger(section.page) && section.page >= 1 && section.page <= document.manual.pages && !!page && normalizeText(page.text).includes(normalizeText(section.quote));
+      return (
+        !!document &&
+        (source.documentId || 'main') === document.id &&
+        source.sourceHash === document.manual.sha256 &&
+        (section.sourceHash || source.sourceHash) === document.manual.sha256 &&
+        Number.isInteger(section.page) &&
+        section.page >= 1 &&
+        section.page <= document.manual.pages &&
+        !!page &&
+        normalizeText(page.text).includes(normalizeText(section.quote))
+      );
     }
     return normalizeText(JSON.stringify(source.facts || {})).includes(normalizeText(section.quote));
   });
@@ -64,15 +76,19 @@ export function verifiedKnowledgeFields(knowledge, game) {
   const usable = usableKnowledge(knowledge, game);
   if (!usable) return {};
   const verifiedProfile = validateProfile(knowledge.profile, usable.sources);
-  return Object.fromEntries(Object.entries(knowledge.fields || {}).filter(([key, fact]) => {
-    const source = usable.sources.find((source) => source.id === fact.sourceId);
-    if (!source) return false;
-    if (source.pages && findDocument(game, source.documentId || 'main')?.manual.sha256 !== source.sourceHash) return false;
-    if (verifiedProfile[key] && JSON.stringify(verifiedProfile[key].value) === JSON.stringify(fact.value)) return true;
-    if (key === 'description') return usable.sections.some((section) => section.topic === 'visao-geral' && section.sourceId === fact.sourceId && section.text === fact.value);
-    const original = source.facts?.[key] ?? (['minDurationMinutes', 'maxDurationMinutes'].includes(key) ? source.facts?.durationMinutes : undefined);
-    return original !== undefined && JSON.stringify(original) === JSON.stringify(fact.value);
-  }));
+  return Object.fromEntries(
+    Object.entries(knowledge.fields || {}).filter(([key, fact]) => {
+      const source = usable.sources.find((source) => source.id === fact.sourceId);
+      if (!source) return false;
+      if (!profileSourceMatches(source, gameDocuments(game))) return false;
+      if (source.profileEligible === false || (source.profileOnly && source.profileSpecificEligible === false && /Players$|DurationMinutes$|^recommendedAge$|^edition$/.test(key))) return false;
+      if (source.pages && findDocument(game, source.documentId || 'main')?.manual.sha256 !== source.sourceHash) return false;
+      if (verifiedProfile[key] && JSON.stringify(verifiedProfile[key].value) === JSON.stringify(fact.value)) return true;
+      if (key === 'description') return usable.sections.some((section) => section.topic === 'visao-geral' && section.sourceId === fact.sourceId && section.text === fact.value);
+      const original = source.facts?.[key] ?? (['minDurationMinutes', 'maxDurationMinutes'].includes(key) ? source.facts?.durationMinutes : undefined);
+      return original !== undefined && JSON.stringify(original) === JSON.stringify(fact.value);
+    }),
+  );
 }
 
 export function emptyKnowledgeFields(game, fields) {

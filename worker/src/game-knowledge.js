@@ -4,8 +4,13 @@ import { queryCatalog } from './catalog/index.js';
 import { normalizeText } from '../../js/model.js';
 import { gameDocuments } from '../../js/documents.js';
 import { collectManualKnowledge, synthesisSources, manualPassages } from './manual-knowledge.js';
-import { PROFILE_INSTRUCTION, profileSchema, validateProfile } from '../../js/profile-facts.js';
+import { PROFILE_INSTRUCTION, profileSchema, inspectProfile } from '../../js/profile-facts.js';
 import { reusableDraftKnowledge } from './draft-knowledge.js';
+import { reserveProfileBudget } from './profile-budget.js';
+import { discoverProfileNames, missingProfileFacts } from './profile-discovery.js';
+import { KNOWLEDGE_OUTPUT_TOKENS, checkKnowledgeSources, fitsKnowledgeRecord } from './knowledge-limits.js';
+import { readKnowledgeResponse, providerRequestError } from './knowledge-response.js';
+import { currentKnowledgeStatus } from '../../js/knowledge-status.js';
 
 export const KNOWLEDGE_MODEL = 'gemini-3.5-flash-lite';
 export const TOPICS = ['visao-geral', 'objetivo', 'mecanicas', 'componentes', 'preparacao', 'turnos', 'acoes', 'pontuacao', 'vitoria', 'conceitos', 'estrategias', 'perguntas'];
@@ -44,6 +49,10 @@ export function validateSynthesis(raw, sources) {
     rejected = [];
   for (const item of raw.sections) {
     const source = sources.find((s) => s.id === item.sourceId);
+    if (source?.profileOnly) {
+      rejected.push('Uma fonte complementar da ficha não pode fornecer regras do manual.');
+      continue;
+    }
     const page = source?.pages?.find((p) => p.page === item.page);
     const passage = page && manualPassages(page, source.id).find((p) => p.id === item.evidenceId);
     const quote = source?.pages ? passage?.text : item.quote;
@@ -91,6 +100,8 @@ export function knowledgeFields(knowledge) {
   for (const key of [...numeric, 'mechanics', 'tags', 'gameType']) {
     const facts = knowledge.sources.filter(
       (s) =>
+        s.profileEligible !== false &&
+        (!s.profileOnly || s.profileSpecificEligible !== false || !numeric.includes(key)) &&
         s.facts?.[key] != null &&
         (numeric.includes(key)
           ? Number.isInteger(s.facts[key]) && s.facts[key] > 0 && s.facts[key] <= 1440
@@ -145,7 +156,7 @@ export class KnowledgeStore {
     if (request.method === 'GET')
       return this.storage.transaction(async (tx) => {
         const key = `job:${url.searchParams.get('key')}`,
-          record = await tx.get(key);
+          record = currentKnowledgeStatus(await tx.get(key));
         if (record?.status === 'running' && record.expires <= Date.now()) {
           record.status = 'attention';
           record.message = 'A geração foi interrompida. Atualize o conhecimento para tentar novamente.';
@@ -156,14 +167,16 @@ export class KnowledgeStore {
     const input = await request.json();
     return this.storage.transaction(async (tx) => {
       const key = `job:${input.key}`,
-        old = await tx.get(key),
+        old = currentKnowledgeStatus(await tx.get(key)),
         now = Date.now();
+      if (url.pathname === '/profile-budget') return json(await reserveProfileBudget(tx, old, input, now));
       if (url.pathname === '/adopt') {
         if (old?.knowledge || old?.status === 'running') return json(old);
         const latestKey = input.gameId ? await tx.get(`latest:${input.gameId}`) : null;
         const prior = latestKey ? await tx.get(latestKey) : null;
         const knowledge = preserveKnowledgeCorrections(input.knowledge, prior?.knowledge, input.documents || []);
         const record = { status: 'ready', knowledge, revision: (old?.revision || 0) + 1, message: '', expires: 0 };
+        if (!fitsKnowledgeRecord(record)) return json({ error: 'O conhecimento excede o limite de armazenamento por análise. O conteúdo salvo foi preservado.', reason: 'knowledge-storage-limit' }, 413);
         await tx.put(key, record);
         if (input.gameId) await tx.put(`latest:${input.gameId}`, key);
         return json(record);
@@ -185,33 +198,22 @@ export class KnowledgeStore {
         // Falhas e execuções interrompidas nunca entram em um ciclo de novas chamadas.
         if (old && !input.force && !['pending_configuration', 'waiting_index'].includes(old.status))
           return json({ claimed: false, record: old.status === 'running' ? { ...old, status: 'attention', message: 'A geração foi interrompida. Atualize o conhecimento para tentar novamente.' } : old });
-        const day = new Date(now).toISOString().slice(0, 10),
-          quota = (await tx.get('quota')) || { day, count: 0, recent: [] };
-        if (quota.day !== day) {
-          quota.day = day;
-          quota.count = 0;
-        }
-        quota.recent = quota.recent.filter((t) => t > now - 60000);
-        if (quota.count >= 5 || quota.recent.length >= 2) {
-          const daily = quota.count >= 5;
-          const retryAt = daily ? Date.parse(`${day}T00:00:00Z`) + 86400000 : Math.min(...quota.recent) + 60000;
-          const record = {
-            ...old,
-            status: 'quota',
-            reason: 'app-rate-limit',
-            quotaScope: daily ? 'day' : 'minute',
-            retryAt,
-            message: daily ? 'O limite diário do Acervo foi atingido (5 gerações). O conhecimento já salvo continua disponível.' : 'Há várias gerações recentes. Aguarde um minuto antes de tentar novamente.',
-            revision: old?.revision || 0,
-          };
-          await tx.put(key, record);
-          return json(record, 429);
-        }
-        quota.count++;
-        quota.recent.push(now);
-        await tx.put('quota', quota);
         await tx.put(requestKey, true);
-        const record = { ...old, status: 'running', reason: '', quotaScope: '', retryAt: 0, message: 'Preparando conhecimento do jogo…', requestId: input.requestId, lease: crypto.randomUUID(), expires: now + 120000, revision: old?.revision || 0 };
+        const record = {
+          ...old,
+          profileBudgetReserved: false,
+          status: 'running',
+          generation: null,
+          provider: null,
+          reason: '',
+          quotaScope: '',
+          retryAt: 0,
+          message: 'Preparando conhecimento do jogo…',
+          requestId: input.requestId,
+          lease: crypto.randomUUID(),
+          expires: now + 120000,
+          revision: old?.revision || 0,
+        };
         await tx.put(key, record);
         return json({ claimed: true, record });
       }
@@ -229,11 +231,19 @@ export class KnowledgeStore {
           diagnostics: input.diagnostics || old.diagnostics || [],
           status: input.status,
           reason: input.reason || '',
+          generation: input.generation || input.knowledge?.generation || null,
+          provider: input.provider || null,
           retryAt: input.retryAt || 0,
           message: input.message || '',
           revision: old.revision + 1,
           expires: 0,
         };
+        if (!fitsKnowledgeRecord(record)) {
+          record.knowledge = old.knowledge;
+          record.status = 'attention';
+          record.reason = 'knowledge-storage-limit';
+          record.message = 'O conhecimento gerado excede o limite de armazenamento por análise. O conteúdo anterior foi preservado. Nenhuma repetição automática foi feita.';
+        }
         await tx.put(key, record);
         if (input.knowledge && input.gameId) await tx.put(`latest:${input.gameId}`, key);
         return json(record);
@@ -250,6 +260,7 @@ export class KnowledgeStore {
         }
         old.revision++;
         old.knowledge.reviewedAt = now;
+        if (!fitsKnowledgeRecord(old)) return json({ error: 'As correções excedem o limite de armazenamento por análise. O conteúdo salvo foi preservado.', reason: 'knowledge-storage-limit' }, 413);
         await tx.put(key, old);
         if (input.gameId) await tx.put(`latest:${input.gameId}`, key);
         return json(old);
@@ -259,14 +270,23 @@ export class KnowledgeStore {
   }
 }
 
-export async function collectPublicKnowledge(game, env, identity, fetcher = fetch) {
-  const matches = (game.sources?.catalog?.matches || []).filter((m) => ['wikidata', 'wikipedia'].includes(m.source));
-  const kind = /expans/.test(normalizeText(game.gameType || '')) ? 'expansion' : 'unknown';
-  const input = { action: 'search', query: game.title.slice(0, 160), preferredLanguage: 'pt-BR', kind, alternateTitles: matches.flatMap((m) => m.names || []).slice(0, 6) };
-  const responses = await Promise.allSettled(['wikidata', 'wikipedia'].map((source) => queryCatalog(source, input, env, identity, null, fetcher, { background: true })));
-  const diagnostics = responses.map((r, i) => ({ source: ['wikidata', 'wikipedia'][i], state: r.status === 'fulfilled' ? 'ok' : 'failed', count: r.status === 'fulfilled' ? r.value.candidates.length : 0 }));
-  const names = [game.title, ...matches.flatMap((m) => (m.names || []).map((n) => n.value))].map(normalizeText);
-  const candidates = responses
+export async function collectPublicKnowledge(game, env, identity, fetcher = fetch, { profileOnly = false, alreadyAuthorized = false, interactive = false } = {}) {
+  const matches = (game.sources?.catalog?.matches || []).filter((m) => ['wikidata', 'wikipedia'].includes(m.source) && (!m.manualHash || m.manualHash === game.manual?.sha256));
+  const hints = Array.isArray(game.research?.alternateTitles) ? game.research.alternateTitles.filter((n) => n && typeof n.value === 'string' && n.value.length >= 2 && n.value.length <= 160).slice(0, 6) : [];
+  const kind = ['base', 'expansion'].includes(game.research?.kind) ? game.research.kind : /expans/.test(normalizeText(game.gameType || '')) ? 'expansion' : 'unknown';
+  const input = {
+    action: 'search',
+    query: game.title.slice(0, 160),
+    edition: game.edition || '',
+    pdfLanguage: game.language,
+    preferredLanguage: ['pt-BR', 'en', 'fr'].includes(game.research?.preferredLanguage) ? game.research.preferredLanguage : 'pt-BR',
+    kind,
+    alternateTitles: [...matches.flatMap((m) => m.names || []), ...hints].slice(0, 6),
+  };
+  const responses = await Promise.allSettled(['wikidata', 'wikipedia'].map((source) => queryCatalog(source, input, env, identity, null, fetcher, { background: !interactive, alreadyAuthorized })));
+  const diagnostics = responses.map((r, i) => ({ source: ['wikidata', 'wikipedia'][i], state: r.status === 'fulfilled' && r.value.diagnostics?.complete !== false ? 'ok' : 'failed', count: r.status === 'fulfilled' ? r.value.candidates.length : 0 }));
+  const names = [game.title, ...matches.flatMap((m) => (m.names || []).map((n) => n.value)), ...(game.confirmedManualNames || [])].map(normalizeText);
+  let candidates = responses
     .filter((r) => r.status === 'fulfilled')
     .flatMap((r) => r.value.candidates)
     .filter((c) => {
@@ -282,6 +302,10 @@ export async function collectPublicKnowledge(game, env, identity, fetcher = fetc
       );
     })
     .slice(0, 4);
+  if (profileOnly && new Set(candidates.map((c) => c.identifiers?.wikidata || c.id)).size > 1) {
+    diagnostics.push({ source: 'identity', state: 'ambiguous', count: 0 });
+    candidates = [];
+  }
   const sources = await Promise.all(
     candidates.map(async (c) => {
       const source = {
@@ -292,9 +316,22 @@ export async function collectPublicKnowledge(game, env, identity, fetcher = fetc
         license: c.license,
         licenseUrl: c.licenseUrl || '',
         authorsUrl: c.authorsUrl || '',
+        ...(c.fieldEvidence ? { fieldEvidence: c.fieldEvidence } : {}),
         fetchedAt: Date.now(),
-        edition: c.fields?.edition || '',
-        scope: c.fields?.edition && game.edition && normalizeText(c.fields.edition) === normalizeText(game.edition) ? 'edition-confirmed' : game.edition ? 'general-work-only' : 'edition-unconfirmed',
+        edition: c.fields?.edition || c.edition || '',
+        scope: profileOnly ? 'work-metadata' : c.fields?.edition && game.edition && normalizeText(c.fields.edition) === normalizeText(game.edition) ? 'edition-confirmed' : game.edition ? 'general-work-only' : 'edition-unconfirmed',
+        ...(profileOnly
+          ? {
+              profileOnly: true,
+              profileEligible: true,
+              profileSpecificEligible: !(c.fields?.edition || c.edition) || !game.edition || normalizeText(c.fields?.edition || c.edition) === normalizeText(game.edition),
+              editionConfirmed: !!game.edition && normalizeText(c.fields?.edition || c.edition) === normalizeText(game.edition),
+              catalogSource: c.source,
+              catalogId: c.id,
+              kind: c.kind || 'unknown',
+              independenceKey: 'wikimedia',
+            }
+          : {}),
         originalTitles: (c.names || []).slice(0, 32),
         identifiers: c.identifiers || {},
         facts: { ...c.fields },
@@ -322,6 +359,37 @@ export async function collectPublicKnowledge(game, env, identity, fetcher = fetc
   return { sources, diagnostics };
 }
 
+export async function collectProfileKnowledge(game, manual, env, identity, fetcher = fetch, { reserve } = {}) {
+  const hints = Array.isArray(game.research?.alternateTitles) ? game.research.alternateTitles.slice(0, 6) : [];
+  const confirmedManualNames = hints
+    .filter((n) => typeof n?.value === 'string' && n.value.length <= 160 && normalizeText(n.value).length >= 2 && manual.sources.some((s) => s.pages?.some((p) => normalizeText(p.text).includes(normalizeText(n.value)))))
+    .map((n) => n.value);
+  let publicData = await collectPublicKnowledge({ ...game, confirmedManualNames }, env, identity, fetcher, { profileOnly: true, alreadyAuthorized: true, interactive: true });
+  let discovery;
+  if (reserve) {
+    const fields = knowledgeFields({ sources: [...manual.sources, ...publicData.sources], profile: {}, sections: [] });
+    if (publicData.diagnostics.some((d) => d.state === 'ambiguous')) discovery = { version: 1, status: 'ambiguous', hints: [], missing: missingProfileFacts(fields) };
+    else discovery = await discoverProfileNames(game, fields, env, fetcher, reserve);
+    if (discovery.hints.length) {
+      const resolved = await collectPublicKnowledge({ ...game, confirmedManualNames, research: { ...game.research, alternateTitles: [...discovery.hints, ...(game.research?.alternateTitles || [])].slice(0, 6) } }, env, identity, fetcher, {
+        profileOnly: true,
+        alreadyAuthorized: true,
+        interactive: true,
+      });
+      const dedup = new Map([...publicData.sources, ...resolved.sources].map((s) => [s.id, s]));
+      publicData = { sources: [...dedup.values()].slice(0, 8), diagnostics: [...publicData.diagnostics, ...resolved.diagnostics] };
+      discovery.confirmedHints = discovery.hints.filter((h) => resolved.sources.some((s) => s.originalTitles?.some((n) => normalizeText(n.value) === normalizeText(h.value))));
+      discovery.status = discovery.confirmedHints.length ? 'confirmed' : 'unconfirmed';
+    }
+  }
+  const hashes = manual.sources.filter((s) => s.pages).map((s) => s.sourceHash);
+  return {
+    sources: [...manual.sources, ...publicData.sources.map((s) => ({ ...s, contextManualHashes: hashes }))],
+    diagnostics: [...(manual.diagnostics || []), ...publicData.diagnostics],
+    ...(discovery ? { discovery } : {}),
+  };
+}
+
 const outputSchema = {
   type: 'object',
   properties: {
@@ -340,8 +408,11 @@ const outputSchema = {
 };
 export async function synthesizePublicKnowledge(game, sources, env, fetcher = fetch) {
   if (!sources.length) throw new ApiError(422, 'Não foram encontradas fontes públicas suficientes para este jogo.');
+  checkKnowledgeSources(sources);
   if ((env.GEMINI_MODEL || KNOWLEDGE_MODEL) !== KNOWLEDGE_MODEL) throw new ApiError(503, 'O modelo gratuito precisa ser conferido pelo proprietário.');
   const fromManual = sources.some((source) => source.pages);
+  const mixed = fromManual && sources.some((source) => source.profileOnly);
+  if (fromManual && !sources.some((s) => s.pages?.some((p) => manualPassages(p, s.id).length))) throw new ApiError(422, 'Não há texto legível suficiente para a IA. Recupere as páginas por OCR local; nenhuma geração foi iniciada.');
   let schema = outputSchema;
   if (fromManual) {
     const properties = { ...outputSchema.properties.sections.items.properties };
@@ -350,7 +421,15 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
     schema = { ...outputSchema, properties: { ...outputSchema.properties, sections: { type: 'array', items: { type: 'object', properties, required: ['topic', 'title', 'text', 'sourceId', 'page', 'evidenceId'] } } } };
   }
   // Seções e seu prompt permanecem intactos. A ficha usa a mesma resposta.
-  schema = { ...schema, properties: { ...schema.properties, metadata: profileSchema(fromManual) } };
+  const hintsSchema = {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: { value: { type: 'string' }, language: { type: 'string', enum: ['pt-BR', 'en', 'fr'] }, sourceId: { type: 'string' }, page: { type: 'integer' }, evidenceId: { type: 'string' }, excerpt: { type: 'string' } },
+      required: ['value', 'language', 'sourceId', 'page', 'evidenceId', 'excerpt'],
+    },
+  };
+  schema = { ...schema, required: [...schema.required, 'metadata'], properties: { ...schema.properties, metadata: profileSchema(fromManual, mixed), ...(fromManual ? { identityHints: hintsSchema } : {}) } };
   // O envio do texto dos manuais foi autorizado pelo proprietário; nunca envia credenciais.
   const body = {
     systemInstruction: {
@@ -361,9 +440,16 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
       ],
     },
     contents: [{ role: 'user', parts: [{ text: JSON.stringify({ game: { title: game.title, edition: game.edition || '' }, sources: synthesisSources(sources) }) }] }],
-    generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.1, maxOutputTokens: 6500, thinkingConfig: { thinkingLevel: 'minimal' } },
+    generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.1, maxOutputTokens: KNOWLEDGE_OUTPUT_TOKENS, thinkingConfig: { thinkingLevel: 'minimal' } },
   };
-  body.systemInstruction.parts.push({ text: PROFILE_INSTRUCTION + ' Em excerpt, copie um trecho literal curto que sustente apenas o campo correspondente, dentro da evidência indicada.' });
+  body.systemInstruction.parts.push({
+    text:
+      PROFILE_INSTRUCTION +
+      (mixed
+        ? ' Somente para metadata, use também as fontes públicas profileOnly fornecidas para completar o que falta no manual. Para essas fontes cite sourceId, quote literal de até 240 caracteres e excerpt: copie somente o fato ou a passagem que sustenta o campo. Números devem corresponder exatamente aos fatos ou ao texto, sem estimativas. Classifique tipo, categorias e mecânicas a partir das ações descritas. Uma fonte geral sem edição pode sugerir dados da obra, sem confirmar uma edição. As fontes públicas complementares NÃO podem fornecer seções de regras: essas continuam exclusivamente vinculadas aos manuais com page e evidenceId.'
+        : '') +
+      ' Em excerpt, copie um trecho literal curto que sustente apenas o campo correspondente, dentro da evidência indicada. Em identityHints, inclua somente nomes alternativos escritos literalmente no manual, com idioma e referência; não traduza nomes nem declare equivalências. Essas pistas serão verificadas em fontes independentes.',
+  });
   body.contents[0].parts.push({
     text: JSON.stringify({
       metadataContext: sources.map((s) => ({ sourceId: s.id, documentType: s.documentType || 'principal', edition: s.edition || '', eligible: s.profileEligible !== false })),
@@ -382,18 +468,8 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
     throw new ApiError(504, 'A geração não terminou. Atualize o conhecimento para tentar novamente.');
   }
   if (!response.ok) {
-    const error = new ApiError(
-      response.status === 429 ? 429 : 502,
-      response.status === 429
-        ? 'A cota gratuita da IA foi atingida. Tente novamente mais tarde.'
-        : response.status === 403 || response.status === 401
-          ? 'A IA não foi autorizada. Confira a chave e o acesso ao modelo.'
-          : response.status === 404
-            ? 'O modelo não está disponível para esta chave. Confira a configuração.'
-            : 'O serviço de IA não concluiu a geração.',
-    );
-    if (response.status === 429) error.reason = 'provider-rate-limit';
-    throw error;
+    const payload = await boundedJSON(response).catch(() => null);
+    throw providerRequestError(response.status, payload);
   }
   let payload;
   try {
@@ -401,26 +477,22 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
   } catch {
     throw new ApiError(502, 'A resposta da IA não pôde ser validada.');
   }
-  if (payload.candidates?.[0]?.finishReason !== 'STOP') throw new ApiError(502, 'A resposta da IA ficou incompleta.');
-  let raw;
-  try {
-    raw = JSON.parse(
-      payload.candidates[0].content.parts
-        .filter((p) => typeof p.text === 'string')
-        .map((p) => p.text)
-        .join(''),
-    );
-  } catch {
-    throw new ApiError(502, 'A resposta da IA não pôde ser validada.');
-  }
+  const { raw, generation } = readKnowledgeResponse(payload);
   const clean = validateSynthesis(raw, sources);
   for (const source of sources) if (source.incompletePages?.length) clean.unconfirmed.push(`Páginas com leitura insuficiente em ${source.name}: ${source.incompletePages.join(', ')}.`);
-  const profile = validateProfile(raw.metadata, sources, manualPassages);
-  const metadataObject = raw.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata);
+  const inspected = inspectProfile(raw.metadata, sources, manualPassages);
+  const profile = inspected.fields;
+  const identityHints = (Array.isArray(raw.identityHints) ? raw.identityHints : []).slice(0, 6).flatMap((hint) => {
+    if (!['pt-BR', 'en', 'fr'].includes(hint.language)) return [];
+    const fact = inspectProfile({ title: hint }, sources, manualPassages).fields.title;
+    return fact ? [{ ...fact, language: hint.language }] : [];
+  });
   return {
     ...clean,
+    generation,
     profile,
-    profileAnalysis: { version: 1, complete: !!metadataObject && (!Object.keys(raw.metadata).length || Object.keys(profile).length > 0) },
+    identityHints,
+    profileAnalysis: { ...inspected.analysis, complete: inspected.analysis.complete && (!inspected.analysis.returned || inspected.analysis.valid > 0) },
     gameId: game.id,
     title: game.title,
     edition: game.edition || '',
@@ -462,7 +534,7 @@ export async function knowledgeEndpoint(request, env, identity, gameId, input, c
     );
   const visible = (record) => {
     if (!record) return null;
-    const { lease, expires, requestId, ...safe } = record;
+    const { lease, expires, requestId, profileBudgetReserved, ...safe } = record;
     if (safe.status === 'pending_configuration' && env.GEMINI_API_KEY) {
       safe.status = 'not_started';
       safe.message = 'O conhecimento ainda não foi gerado.';
@@ -503,15 +575,27 @@ export async function knowledgeEndpoint(request, env, identity, gameId, input, c
   if (!claimed.ok) return outward(claimed);
   const { claimed: started, record } = await claimed.json();
   if (!started) return json(visible(record));
+  let preparedProfile;
+  if (input.includePublic === true && manual) {
+    const preparationDeadline = AbortSignal.timeout(20000);
+    const preparingFetch = (url, options = {}) => fetch(url, { ...options, signal: options.signal ? AbortSignal.any([preparationDeadline, options.signal]) : preparationDeadline });
+    try {
+      preparedProfile = await collectProfileKnowledge({ ...game, research: input.research }, manual, env, identity, preparingFetch, { reserve: async () => (await store('/profile-budget', { lease: record.lease })).json() });
+    } catch (error) {
+      return outward(await store('/finish', { lease: record.lease, status: 'attention', message: error instanceof ApiError ? error.message : 'Não foi possível concluir a identificação nas fontes. Os dados já encontrados foram preservados.' }));
+    }
+  }
   const task = (async () => {
     const deadline = AbortSignal.timeout(26000);
     let diagnostics = [];
     const limitedFetch = (url, options = {}) => fetch(url, { ...options, signal: options.signal ? AbortSignal.any([deadline, options.signal]) : deadline });
     try {
-      const collected = manual || (await collectPublicKnowledge(game, env, identity, limitedFetch)),
+      const collected = preparedProfile || manual || (await collectPublicKnowledge(game, env, identity, limitedFetch)),
         sources = collected.sources;
       diagnostics = collected.diagnostics;
       const knowledge = await synthesizePublicKnowledge(game, sources, env, limitedFetch);
+      if (input.includePublic === true && manual) knowledge.profileAnalysis.publicEvidenceProtocol = 1;
+      if (collected.discovery) knowledge.profileAnalysis.discovery = collected.discovery;
       // Revalida conta e versão antes de aceitar o resultado, inclusive após bloqueio.
       await requirePermission(env, identity, access.edit ? 'edit' : 'add', limitedFetch);
       const latest = await getDocument(env, `games/${gameId}`, identity.token, limitedFetch);
@@ -521,7 +605,9 @@ export async function knowledgeEndpoint(request, env, identity, gameId, input, c
       await store('/finish', {
         lease: record.lease,
         status: error.status === 429 ? 'quota' : 'attention',
-        reason: error.status === 429 ? error.reason || 'upstream-rate-limit' : '',
+        reason: error.reason || (error.status === 429 ? 'upstream-rate-limit' : ''),
+        generation: error.generation || null,
+        provider: error.provider || null,
         message: error instanceof ApiError ? error.message : 'Não foi possível concluir a geração.',
         diagnostics,
       });
@@ -529,5 +615,5 @@ export async function knowledgeEndpoint(request, env, identity, gameId, input, c
   })();
   if (ctx?.waitUntil) ctx.waitUntil(task);
   else await task;
-  return json(visible(record), 202);
+  return json({ ...visible(record), ...(preparedProfile?.discovery ? { profileDiscovery: preparedProfile.discovery } : {}) }, 202);
 }

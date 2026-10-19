@@ -81,13 +81,13 @@ export function validateQuery(source, raw) {
       ? raw.alternateTitles
           .filter((n) => n && typeof n.value === 'string' && n.value.length >= 2 && n.value.length <= 160)
           .slice(0, 6)
-          .map((n) => ({ value: n.value, language: ['pt-BR', 'en', 'fr'].includes(n.language) ? n.language : 'other' }))
+          .map((n) => ({ value: n.value, language: ['pt-BR', 'en', 'fr'].includes(n.language) ? n.language : 'other', ...(n.origin === 'gemini-hint' ? { origin: 'gemini-hint' } : {}) }))
       : [],
     // Formulário interativo; tarefas internas adotam maxlag e prazo próprios.
     interactive: true,
   };
 }
-export async function queryCatalog(source, raw, env, identity, requestSignal, fetcher = fetch, { background = false } = {}) {
+export async function queryCatalog(source, raw, env, identity, requestSignal, fetcher = fetch, { background = false, alreadyAuthorized = false } = {}) {
   const input = validateQuery(source, raw),
     timeout = AbortSignal.timeout(input.expanded ? 8000 : 3500),
     signal = requestSignal ? AbortSignal.any([timeout, requestSignal]) : timeout;
@@ -95,12 +95,21 @@ export async function queryCatalog(source, raw, env, identity, requestSignal, fe
   input.interactive = !background;
   try {
     if (!identity) throw new ApiError(401, 'Entre com uma conta autorizada para pesquisar.');
-    const profile = await getDocument(env, `users/${encodeURIComponent(identity.uid)}`, identity.token, limitedFetch);
+    // Só chamadas internas da mesma requisição podem aproveitar o perfil já
+    // conferido pelo roteador. A opção não é lida do JSON recebido do cliente.
+    const profile = alreadyAuthorized && identity.profile ? identity.profile : await getDocument(env, `users/${encodeURIComponent(identity.uid)}`, identity.token, limitedFetch);
     const access = permissions(profile, identity.uid, env.OWNER_UID);
     if (!access.add && !access.edit) throw new ApiError(403, 'Sua conta não pode adicionar ou editar jogos.');
     if (!sourceStatus(env).find((s) => s.id === source).enabled) throw new ApiError(503, 'Esta fonte ainda precisa ser autorizada pelo proprietário.');
     const token = source === 'ludopedia' ? env.LUDOPEDIA_TOKEN : source === 'bgg' ? env.BGG_TOKEN : '';
-    const io = catalogIO(source, { signal, token, ttl: ['wikidata', 'wikipedia'].includes(source) ? 21600000 : source === 'bgg' ? 3600000 : 300000, interval: ['wikidata', 'wikipedia'].includes(source) ? 0 : 1000, fetcher: limitedFetch });
+    const io = catalogIO(source, {
+      signal,
+      token,
+      ttl: ['wikidata', 'wikipedia'].includes(source) ? 21600000 : source === 'bgg' ? 3600000 : 300000,
+      interval: ['wikidata', 'wikipedia'].includes(source) ? 0 : 1000,
+      waitForInterval: input.action === 'detail',
+      fetcher: limitedFetch,
+    });
     const candidates = await connectors[source](input, io);
     return {
       source,

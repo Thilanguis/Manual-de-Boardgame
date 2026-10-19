@@ -5,8 +5,37 @@ import { ludopediaCandidate, ludopedia } from '../src/catalog/ludopedia.js';
 import { bgg } from '../src/catalog/bgg.js';
 import { catalogIO, resetCatalogCache } from '../src/catalog/io.js';
 import { queryCatalog, validateQuery, sourceStatus } from '../src/catalog/index.js';
+import { portugueseCandidate } from '../../js/catalog-language.js';
 
 const claim = (value, qualifiers = {}) => ({ rank: 'normal', mainsnak: { snaktype: 'value', datavalue: { value } }, qualifiers });
+test('detalhe espera intervalo local após busca; Retry-After real continua bloqueando sem nova consulta', async () => {
+  resetCatalogCache();
+  const times = [];
+  const io = catalogIO('fixture-paced', {
+    interval: 40,
+    waitForInterval: true,
+    fetcher: async () => {
+      times.push(Date.now());
+      return Response.json({ ok: true });
+    },
+  });
+  await io('https://fixture.test/search');
+  await Promise.all([io('https://fixture.test/detail'), io('https://fixture.test/detail')]);
+  assert.equal(times.length, 2, 'pedidos idênticos compartilham o transporte');
+  assert(times[1] - times[0] >= 30, 'intervalo preservado');
+  const rateLimited = catalogIO('fixture-rate', {
+    interval: 0,
+    waitForInterval: true,
+    fetcher: async () => {
+      times.push(Date.now());
+      return Response.json({}, { status: 429, headers: { 'Retry-After': '60' } });
+    },
+  });
+  await assert.rejects(rateLimited('https://fixture.test/search'));
+  await assert.rejects(rateLimited('https://fixture.test/detail'));
+  assert.equal(times.length, 3, 'nenhum retry durante a pausa do provedor');
+  resetCatalogCache();
+});
 const entity = {
   id: 'Q17271',
   labels: { 'pt-br': { value: 'Colonizadores de Catan', language: 'pt-br' }, en: { value: 'The Settlers of Catan', language: 'en' } },
@@ -22,6 +51,26 @@ const entity = {
     P18: [claim('Catan.jpg')],
   },
 };
+test('BGG consulta alias inglês e fornece categorias/mecânicas; Ludopedia usa nome português no mesmo modelo', async () => {
+  let bggQuery;
+  const candidates = await bgg({ action: 'detail', id: '1', query: 'Nome corrigido', alternateTitles: [{ value: 'Official title', language: 'en', origin: 'gemini-hint' }] }, async (url) => {
+    bggQuery = url;
+    return '<items><item type="boardgame" id="1"><name type="primary" value="Nome corrigido"/><minplayers value="2"/><maxplayers value="8"/><playingtime value="30"/><minage value="8"/><link type="boardgamecategory" value="Card Game"/><link type="boardgamemechanic" value="Card Drafting"/><link type="boardgamemechanic" value="Set Collection"/></item></items>';
+  });
+  assert.match(bggQuery, /thing\?id=1/);
+  const normalized = portugueseCandidate(candidates[0]);
+  assert.deepEqual(normalized.fields.mechanics, ['Seleção de cartas', 'Coleção de conjuntos']);
+  assert.deepEqual(normalized.fields.tags, ['Jogo de cartas']);
+  assert.equal(normalized.fields.durationMinutes, 30);
+  await bgg({ action: 'search', query: 'Nome corrigido', alternateTitles: [{ value: 'Official title', language: 'en', origin: 'gemini-hint' }] }, async (url) => {
+    assert.equal(new URL(url).searchParams.get('query'), 'Official title');
+    return '<items/>';
+  });
+  await ludopedia({ action: 'search', query: 'Official title', kind: 'unknown', alternateTitles: [{ value: 'Nome corrigido', language: 'pt-BR', origin: 'gemini-hint' }] }, async (url) => {
+    assert.equal(new URL(url).searchParams.get('search'), 'Nome corrigido');
+    return { jogos: [] };
+  });
+});
 test('Wikidata fornece nomes PT-BR, aliases verificáveis e apenas fatos sem licença de imagem presumida', () => {
   const result = wikidataCandidate(entity);
   assert.equal(result.fields.title, 'Colonizadores de Catan');

@@ -1,7 +1,9 @@
 import { ApiError } from './auth.js';
 import { getDocument, requireProjectFile, driveToken } from './services.js';
 import { gameDocuments } from '../../js/documents.js';
-import { extractMetadata } from '../../js/recognition.js';
+import { extractPageMetadata } from '../../js/recognition.js';
+import { textQuality } from '../../js/text-quality.js';
+import { checkManualText, checkKnowledgeSources } from './knowledge-limits.js';
 
 async function readLimited(stream, limit) {
   const reader = stream.getReader(),
@@ -60,14 +62,14 @@ export async function collectManualKnowledge(game, env, identity, fetcher = fetc
       index.pages.some((p, i) => p.page !== i + 1 || typeof p.text !== 'string')
     )
       throw new ApiError(409, 'O índice não corresponde à versão atual do manual.');
-    if (index.analysisComplete === false || index.pages.some((p) => p.text.trim().length < 40 && !p.ocrStatus)) {
+    if (index.analysisComplete === false || index.pages.some((p) => !textQuality(p.text).readable && !p.ocrStatus)) {
       missing.push(document.id);
       continue;
     }
     const pages = index.pages.map((p) => ({ page: p.page, text: p.text.trim() }));
     characters += pages.reduce((n, p) => n + p.text.length, 0);
-    if (characters > 200000) throw new ApiError(413, 'Os manuais excedem o limite de texto da geração. Nenhuma página foi omitida silenciosamente.');
-    const metadata = extractMetadata(pages.map((page) => page.text).join('\n'));
+    checkManualText(characters);
+    const metadata = extractPageMetadata(pages);
     const facts = Object.fromEntries(
       ['minPlayers', 'maxPlayers', 'minDurationMinutes', 'maxDurationMinutes', 'durationMinutes', 'recommendedAge', 'tags', 'mechanics', 'gameType']
         .filter((key) => metadata[key] != null && metadata[key] !== '' && (!Array.isArray(metadata[key]) || metadata[key].length))
@@ -88,10 +90,11 @@ export async function collectManualKnowledge(game, env, identity, fetcher = fetc
       sourceHash: document.manual.sha256,
       pageCount: index.pageCount,
       pages,
-      incompletePages: pages.filter((p) => p.text.length < 40).map((p) => p.page),
+      incompletePages: pages.filter((p) => !textQuality(p.text).readable).map((p) => p.page),
       facts,
     });
   }
+  checkKnowledgeSources(sources);
   return { sources, missing, diagnostics: [{ source: 'manual', state: missing.length ? 'waiting' : 'ok', count: sources.length }] };
 }
 
@@ -107,10 +110,14 @@ export function manualPassages(page, sourceId) {
     passages.push({ id: `${sourceId}-p${page.page}-${passages.length + 1}`, text: page.text.slice(start, end) });
     start = end;
   }
-  return passages;
+  return passages.filter((p) => !textQuality(p.text).corrupt);
 }
 
 export function synthesisSources(sources) {
   // IDs internos e hashes ficam no Acervo; o provedor recebe só evidência e páginas.
-  return sources.map((source) => (source.pages ? { id: source.id, name: source.name, language: source.language, scope: source.scope, pages: source.pages.map((page) => ({ page: page.page, passages: manualPassages(page, source.id) })) } : source));
+  return sources.map((source) =>
+    source.pages
+      ? { id: source.id, name: source.name, language: source.language, scope: source.scope, pages: source.pages.map((page) => ({ page: page.page, passages: manualPassages(page, source.id) })) }
+      : Object.fromEntries(Object.entries(source).filter(([key]) => !['contextManualHashes', 'documentId', 'sourceHash'].includes(key))),
+  );
 }

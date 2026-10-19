@@ -1,7 +1,8 @@
 import { observeKnowledge } from './knowledge-observer.js';
 import { gameDocuments, documentGame, primaryDocumentId } from './documents.js';
 import { informationIdentity, knowledgeMatchesIdentity } from './information-identity.js';
-import { hasStructuredProfile } from './knowledge-model.js';
+import { hasCompleteProfile } from './knowledge-model.js';
+import { combinedProfileComplete } from './profile-facts.js';
 import { cachedIndex, indexCacheKey } from './index-cache.js';
 import { pdfIndexCandidate } from './pdf-profile.js';
 import { indexMatches } from './pdf-index.js';
@@ -17,6 +18,8 @@ export function createInformationFlow({ getRepository, getCurrent, canUse, draft
     flight,
     loading,
     requested = false,
+    requestedPublic = false,
+    requestedResearch,
     commandEpoch = 0,
     epoch = 0;
   const signature = (game) => informationIdentity(game, getRepository().session.user?.uid, getDocuments(game));
@@ -57,6 +60,8 @@ export function createInformationFlow({ getRepository, getCurrent, canUse, draft
     record = flight = loading = null;
     pdfFlight = null;
     requested = false;
+    requestedPublic = false;
+    requestedResearch = undefined;
     draftProfile.cancel();
   }
   async function load() {
@@ -87,7 +92,11 @@ export function createInformationFlow({ getRepository, getCurrent, canUse, draft
           value?.status === 'running'
             ? 'Analisando os manuais… Esta análise utiliza a cota de IA.'
             : value?.message ||
-                (value?.knowledge ? (hasStructuredProfile(value.knowledge, getCurrent()) ? 'Análise salva disponível.' : 'As regras estão salvas, mas a ficha precisa de uma nova análise. Completar informações usará a cota de IA.') : ''),
+                (value?.knowledge
+                  ? hasCompleteProfile(value.knowledge, getCurrent())
+                    ? 'Análise salva disponível.'
+                    : 'A análise salva ainda não examinou todos os campos da ficha. Completar informações usará a cota de IA; suas correções serão preservadas.'
+                  : ''),
         );
       },
       onError(error) {
@@ -97,35 +106,38 @@ export function createInformationFlow({ getRepository, getCurrent, canUse, draft
     loading = Promise.all([observation.refresh(), loadPdfFacts(structuredClone(game), true)]);
     return loading;
   }
-  async function complete() {
+  async function complete({ includePublic = false, research } = {}) {
     if (flight) return flight;
     const command = commandEpoch;
     const task = (async () => {
       await load();
       if (!canUse() || command !== commandEpoch) return;
       let game = getCurrent();
-      if (!game.id) return draftProfile.prepare({ retry: true });
+      if (!game.id) return draftProfile.prepare({ retry: true, ...(includePublic ? { includePublic: true, ...(research ? { research } : {}) } : {}) });
       await loadPdfFacts(structuredClone(game));
       if (!canUse() || command !== commandEpoch) return;
       game = structuredClone(getCurrent());
       const token = epoch;
       const identity = signature(game);
-      if (record?.status === 'running' || hasStructuredProfile(record?.knowledge, game)) return record;
+      if (record?.status === 'running' || (hasCompleteProfile(record?.knowledge, game) && (!includePublic || combinedProfileComplete(record.knowledge)))) return record;
       if (record?.status === 'identity_changed') return record;
       if (record?.status === 'quota' && record.retryAt > Date.now()) {
         onStatus(record.message || 'A cota da IA foi atingida. Somente fatos encontrados no PDF e nas fontes poderão ser preenchidos.');
         return record;
       }
       const health = getRepository().session.storageStatus;
-      const unavailable = profileUnavailable(health);
+      const unavailable = profileUnavailable(health, { combined: includePublic });
       if (unavailable) {
         onStatus(unavailable.message);
         return;
       }
       onStatus(record?.knowledge ? 'Atualizando a ficha ausente com IA. Esta análise utiliza a cota; suas correções serão preservadas.' : 'Analisando os manuais… Esta análise utiliza a cota de IA.');
       requested = true;
+      requestedPublic = includePublic;
+      requestedResearch = research;
       try {
         const result = await getRepository().generateKnowledge(game, {
+          ...(includePublic ? { includePublic: true, ...(research ? { research } : {}) } : {}),
           force: !!record?.knowledge || ['attention', 'quota'].includes(record?.status),
           expectedIdentity: { title: game.title, edition: game.edition || '', manualHash: game.manual.sha256, documents: getDocuments(game).map((d) => [d.id, d.manual?.sha256 || '']) },
         });
@@ -134,6 +146,7 @@ export function createInformationFlow({ getRepository, getCurrent, canUse, draft
       } catch (error) {
         if (token === epoch && canUse() && signature(getCurrent()) === identity) {
           if (error.record) observation?.update(error.record);
+          else observation?.update({ ...record, status: 'attention', reason: error.reason || '', generation: null, message: error.message });
           onStatus(error.message);
         }
       }
@@ -151,7 +164,7 @@ export function createInformationFlow({ getRepository, getCurrent, canUse, draft
       if (key && signature(getCurrent()) !== key) stop();
     },
     prepared() {
-      if (requested && record?.status === 'waiting_index' && !flight && canUse()) return complete();
+      if (requested && record?.status === 'waiting_index' && !flight && canUse()) return complete({ includePublic: requestedPublic, research: requestedResearch });
     },
     isBusy: () => !!flight || record?.status === 'running',
   };

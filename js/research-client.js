@@ -2,7 +2,7 @@ import { normalizeText, durationRange, synopsisText } from './model.js';
 import { RESEARCH_PROTOCOL } from './research-contract.js';
 import { durationSuggestion } from './research-duration.js';
 
-export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', wikipedia: 'Wikipédia', pdf: 'PDF · texto do manual', gemini: 'Gemini · manual', bgg: 'BoardGameGeek' };
+export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', wikipedia: 'Wikipédia', pdf: 'PDF · texto do manual', gemini: 'Gemini · manual', 'gemini-public': 'Gemini · fontes públicas', bgg: 'BoardGameGeek' };
 export function researchSummary(sources, statuses) {
   const active = sources.filter((s) => s.enabled),
     disabled = sources.filter((s) => !s.enabled),
@@ -89,7 +89,47 @@ export function sameWork(a, b) {
   if (a.kind !== 'unknown' && b.kind !== 'unknown' && a.kind !== b.kind) return false;
   if (a.edition && b.edition && normalizeText(a.edition) !== normalizeText(b.edition)) return false;
   const shared = Object.entries(a.identifiers || {}).filter(([key, id]) => id && b.identifiers?.[key]);
-  return shared.length > 0 && shared.every(([key, id]) => b.identifiers[key] === id);
+  if (shared.length) return shared.every(([key, id]) => b.identifiers[key] === id);
+  // APIs BGG/Ludopedia não oferecem um ID cruzado em todos os registros.
+  // Só os detalhes completos podem confirmar a mesma obra por nome exato,
+  // ano original e conjunto de designers; a pista Gemini não serve de prova.
+  if (
+    new Set([a.source, b.source]).size !== 2 ||
+    ![a, b].every((c) => ['bgg', 'ludopedia'].includes(c.source) && c.needsDetail === false && ['base', 'expansion'].includes(c.kind) && Number.isInteger(c.publicationYear) && c.publicationYear >= 1800 && c.creators?.length)
+  )
+    return false;
+  const names = a.names?.map((n) => normalizeText(n.value)).filter(Boolean) || [];
+  const designers = (c) =>
+    [
+      ...new Set(
+        c.creators
+          .map((value) =>
+            String(value)
+              .normalize('NFKD')
+              .replace(/\p{M}+/gu, '')
+              .toLowerCase()
+              .replace(/[^\p{L}\p{N}]+/gu, ' ')
+              .trim(),
+          )
+          .filter(Boolean),
+      ),
+    ].sort();
+  const first = designers(a),
+    second = designers(b);
+  return first.length > 0 && second.length > 0 && a.publicationYear === b.publicationYear && JSON.stringify(first) === JSON.stringify(second) && b.names?.some((n) => names.includes(normalizeText(n.value)));
+}
+export function linkCatalogIdentities(candidates) {
+  return candidates.map((candidate) => {
+    if (candidate.source !== 'ludopedia' || candidate.identifiers?.bgg) return candidate;
+    const matches = candidates.filter((other) => other.source === 'bgg' && /^[1-9]\d{0,8}$/.test(other.identifiers?.bgg || '') && sameWork(candidate, other));
+    if (matches.length !== 1) return candidate;
+    const bgg = matches[0];
+    return {
+      ...candidate,
+      identifiers: { ...candidate.identifiers, bgg: bgg.identifiers.bgg },
+      identityEvidence: { method: 'catalog-details', sources: [candidate.url, bgg.url], publicationYear: candidate.publicationYear, creators: candidate.creators },
+    };
+  });
 }
 export function matchWarnings(candidate, { title, edition = '', kind = 'unknown' }, others = []) {
   const names = candidate.names?.map((n) => normalizeText(n.value)) || [];

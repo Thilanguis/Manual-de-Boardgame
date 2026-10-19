@@ -1155,10 +1155,21 @@ label,
   display: none;
 }
 
-.metadata-review:empty { display: none; }
-.metadata-review { margin: 0 0 1.25rem; }
-.metadata-review > p { color: var(--muted, #aaa); font-size: .875rem; }
-.metadata-review .metadata-conflict { border-left: 2px solid var(--accent, #e51d48); padding-left: .75rem; margin-top: .75rem; }
+.metadata-review:empty {
+  display: none;
+}
+.metadata-review {
+  margin: 0 0 1.25rem;
+}
+.metadata-review > p {
+  color: var(--muted, #aaa);
+  font-size: 0.875rem;
+}
+.metadata-review .metadata-conflict {
+  border-left: 2px solid var(--accent, #e51d48);
+  padding-left: 0.75rem;
+  margin-top: 0.75rem;
+}
 
 @media (max-width: 600px) {
   #upload-dialog[data-step='2'] .review-aside,
@@ -1300,7 +1311,8 @@ body:not(.access-approved) > #reader {
   border-radius: 10px;
   padding: 16px;
 }
-.registration-pdfs > p, .registration-pdf-row > small {
+.registration-pdfs > p,
+.registration-pdf-row > small {
   overflow-wrap: anywhere;
 }
 .registration-pdf-row {
@@ -1316,7 +1328,11 @@ body:not(.access-approved) > #reader {
   gap: 12px;
   align-items: end;
 }
-.registration-pdf-row label { display: grid; gap: 6px; min-width: 0; }
+.registration-pdf-row label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
 .document-link-pending {
   padding: 14px;
   margin: 12px 0;
@@ -1325,26 +1341,128 @@ body:not(.access-approved) > #reader {
   overflow-wrap: anywhere;
 }
 @media (max-width: 600px) {
-  .registration-pdf-row .form-row { grid-template-columns: minmax(0, 1fr); }
+  .registration-pdf-row .form-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .metadata-origin {
   color: var(--muted, #b7b2bf);
-  font-size: .78rem;
-  margin: -.3rem 0 .8rem;
+  font-size: 0.78rem;
+  margin: 0.45rem 0 0;
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.metadata-origin summary { cursor: pointer; }
-.metadata-origin > div { padding: .65rem; border-left: 2px solid #454149; margin-top: .5rem; }
-.metadata-origin p { white-space: pre-wrap; margin: 0 0 .35rem; }
-.metadata-origin small, .metadata-origin a { display: block; }
-.metadata-conflict summary { color: #f4bc8a; }
-.fields-row > .metadata-origin { grid-column: 1 / -1; }
-.consolidated-information { margin-block: 1rem; }
-.consolidated-information small { color: var(--muted, #b7b2bf); }
-.rule-result .rule-preview p { margin-block: .65rem; line-height: 1.6; }
-.rule-result ul, .rule-result ol { padding-left: 1.4rem; }
-.rule-result li { margin-block: .35rem; line-height: 1.6; }
-.rules-more { margin-block: 1rem; }
-.rules-more > summary { cursor: pointer; color: var(--muted); padding-block: .5rem; }
-.rules-related-notice { color: var(--muted); }
+.metadata-origin summary {
+  cursor: pointer;
+  line-height: 1.5;
+}
+.metadata-origin > div {
+  padding: 0.65rem;
+  border-left: 2px solid #454149;
+  margin-top: 0.5rem;
+}
+.metadata-origin p {
+  white-space: pre-wrap;
+  margin: 0 0 0.35rem;
+}
+.metadata-origin small,
+.metadata-origin a {
+  display: block;
+}
+.field-with-origin {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-self: start;
+  gap: 0;
+  padding-bottom: 0.25rem;
+}
+.field-with-origin > label {
+  margin: 0;
+}
+.field-with-origin > label > input,
+.field-with-origin > label > textarea,
+.field-with-origin > label > select {
+  margin-bottom: 0;
+}
+.game-step .field-with-origin + .field-with-origin {
+  min-width: 0;
+}
+.research-panel [data-research-diagnostics] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+.research-panel [data-research-diagnostics] p {
+  margin-block: 0.65rem;
+}
+.research-panel [data-profile-diagnostic] {
+  margin-block: 0.9rem;
+  padding-block: 0.25rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+.research-panel [data-research-diagnostics] details {
+  margin-block: 0.6rem 1rem;
+}
+.research-panel [data-research-diagnostics] details > p {
+  color: var(--muted);
+}
+.research-panel [data-research-status] {
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.translation-preview {
+  margin-block: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.translation-preview p {
+  white-space: pre-line;
+  line-height: 1.5;
+}
+.research-options {
+  margin-block: 0.8rem;
+}
+.metadata-conflict summary {
+  color: #f4bc8a;
+}
+.fields-row > .metadata-origin {
+  grid-column: 1 / -1;
+}
+.consolidated-information {
+  margin-block: 1rem;
+}
+.consolidated-information small {
+  color: var(--muted, #b7b2bf);
+}
+.game-step .metadata-review {
+  margin: 0;
+}
+.game-step .metadata-review:empty {
+  display: none;
+}
+.game-step .metadata-review > p {
+  margin: 0;
+}
+.rule-result .rule-preview p {
+  margin-block: 0.65rem;
+  line-height: 1.6;
+}
+.rule-result ul,
+.rule-result ol {
+  padding-left: 1.4rem;
+}
+.rule-result li {
+  margin-block: 0.35rem;
+  line-height: 1.6;
+}
+.rules-more {
+  margin-block: 1rem;
+}
+.rules-more > summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding-block: 0.5rem;
+}
+.rules-related-notice {
+  color: var(--muted);
+}

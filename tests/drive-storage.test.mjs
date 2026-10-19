@@ -5,7 +5,7 @@ import { MAX_PDF_BYTES } from '../js/pdf-limits.js';
 
 test('429 de conhecimento preserva mensagem, prazo e estado em vez de erro genérico de Drive', async () => {
   const original = globalThis.fetch;
-  const record = { status: 'quota', reason: 'app-rate-limit', message: 'O limite diário do Acervo foi atingido (5 gerações).', retryAt: Date.now() + 60000 };
+  const record = { status: 'quota', reason: 'provider-rate-limit', message: 'A cota do Gemini foi atingida.', retryAt: Date.now() + 60000 };
   let requests = 0;
   globalThis.fetch = async (url) => {
     if (url.endsWith('/health')) return Response.json({ knowledgeProtocol: 1 });

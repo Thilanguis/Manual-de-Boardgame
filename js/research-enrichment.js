@@ -8,9 +8,10 @@ export function savedKnowledgeCandidate(record, game) {
   const hash = game.manual?.sha256;
   if (!knowledge || !hash || !Array.isArray(knowledge.sources)) return null;
   const fields = {},
+    fieldOrigins = {},
     evidence = {};
   for (const [key, fact] of Object.entries(verifiedKnowledgeFields(knowledge, game))) {
-    const source = knowledge.sources.find((source) => source.id === fact.sourceId && Array.isArray(source.pages));
+    const source = knowledge.sources.find((source) => source.id === fact.sourceId && (Array.isArray(source.pages) || source.profileOnly));
     if (!source || !selectedFields({ fields: { [key]: fact.value } }, {}).length) continue;
     if (key === 'description') {
       const section = knowledge.sections?.find(
@@ -20,7 +21,24 @@ export function savedKnowledgeCandidate(record, game) {
       evidence[key] = { page: fact.page || section?.page, excerpt: fact.quote || section?.quote };
     }
     fields[key] = fact.value;
-    evidence[key] = { ...evidence[key], ...(fact.page ? { page: fact.page, excerpt: fact.excerpt || fact.quote, evidenceId: fact.evidenceId } : {}), documentId: source.documentId || 'main', sourceHash: source.sourceHash, sourceId: source.id };
+    fieldOrigins[key] = fact.generated || knowledge.profile?.[key] || key === 'description' ? (source.pages ? 'gemini' : 'gemini-public') : source.pages ? 'pdf' : source.catalogSource;
+    evidence[key] = {
+      ...evidence[key],
+      excerpt: fact.excerpt || fact.quote,
+      ...(fact.page ? { page: fact.page, evidenceId: fact.evidenceId } : {}),
+      ...(source.pages
+        ? { documentId: source.documentId || 'main', sourceHash: source.sourceHash }
+        : {
+            url: source.fieldEvidence?.[key]?.url || source.url,
+            license: source.license,
+            licenseUrl: source.licenseUrl,
+            authorsUrl: source.authorsUrl,
+            derivedFrom: source.independenceKey || 'wikimedia',
+            editionUnconfirmed: source.editionConfirmed !== true,
+            ...(source.fieldEvidence?.[key] ? { claim: source.fieldEvidence[key] } : {}),
+          }),
+      sourceId: source.id,
+    };
   }
   if (!Object.keys(fields).length) return null;
   return {
@@ -29,7 +47,11 @@ export function savedKnowledgeCandidate(record, game) {
     manualHash: hash,
     identifiers: { manual: hash },
     fields,
+    fieldOrigins,
     names: [{ value: game.title, language: game.language }],
+    identityHints: (knowledge.identityHints || [])
+      .filter((h) => knowledge.sources.some((s) => s.id === h.sourceId && s.sourceHash === h.sourceHash && s.pages?.some((p) => p.page === h.page && p.text.includes(h.value))))
+      .map((h) => ({ value: h.value, language: h.language, origin: 'gemini-hint' })),
     language: 'pt-BR',
     descriptionLanguage: 'pt-BR',
     edition: game.edition || '',

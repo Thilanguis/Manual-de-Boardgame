@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createInformationFlow } from '../js/information-flow.js';
+import { profileDefinitions } from '../js/profile-facts.js';
 
 const hash = 'a'.repeat(64);
 const text = 'Jogo para 2 a 4 jogadores. Duração: 30 a 60 minutos. Idade: 14 anos.';
@@ -57,6 +58,7 @@ test('legado: abrir não gera; completar explicitamente atualiza a ficha com uma
 test('ficha com evidência válida é reutilizada, objeto profile vazio não basta', async () => {
   const value = legacy();
   value.knowledge.profile = profile;
+  value.knowledge.profileAnalysis = { version: 3, complete: true, coverageComplete: true, checkedFields: Object.keys(profileDefinitions) };
   const f = setup(value);
   await f.flow.complete();
   assert.equal(f.calls.length, 0);
@@ -67,6 +69,17 @@ test('ficha com evidência válida é reutilizada, objeto profile vazio não bas
   await g.flow.complete();
   assert.equal(g.calls.length, 1);
   g.flow.stop();
+});
+test('descrição isolada não bloqueia completar os demais campos; abrir não gera', async () => {
+  const value = legacy();
+  value.knowledge.profile = profile;
+  const f = setup(value);
+  await f.flow.load();
+  assert.equal(f.calls.length, 0);
+  await f.flow.complete();
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].force, true);
+  f.flow.stop();
 });
 for (const field of ['title', 'edition', 'manual'])
   test(`resposta pendente após mudar ${field} não aplica nem mantém acompanhamento`, async () => {
@@ -98,7 +111,7 @@ test('resposta de geração e erro tardios não passam para a identidade nova', 
 test('análise nova sem fatos comprováveis não entra em ciclo de regeneração', async () => {
   const value = legacy();
   value.knowledge.profile = {};
-  value.knowledge.profileAnalysis = { version: 1, complete: true };
+  value.knowledge.profileAnalysis = { version: 3, complete: true, coverageComplete: true, checkedFields: Object.keys(profileDefinitions) };
   const f = setup(value);
   await f.flow.load();
   await f.flow.complete();

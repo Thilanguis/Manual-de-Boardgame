@@ -16,7 +16,7 @@ const project = 'demo-acervo',
 if (!/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST || '') || !/^127\.0\.0\.1:\d+$/.test(process.env.FIREBASE_AUTH_EMULATOR_HOST || '')) throw new Error('Exige emuladores locais.');
 const port = Number(process.env.FIRESTORE_EMULATOR_HOST.split(':')[1]);
 const env = await initializeTestEnvironment({ projectId: project, firestore: { host: '127.0.0.1', port, rules: await readFile('firestore.rules', 'utf8') } });
-const backend = await workerFixture({ project, origin: base, initialFiles: [], enableKnowledge: true, manualKnowledge: true });
+const backend = await workerFixture({ project, origin: base, initialFiles: [], enableKnowledge: true, manualKnowledge: true, port: 8787, knowledgeOptions: { wikidataIds: ['Q91000', 'Q91001', 'Q137295527'], minPlayers: 2, maxPlayers: 5 } });
 backend.knowledge.faults.metadata = (prompt) => {
   const s = prompt.sources[0],
     reference = { sourceId: s.id, page: 1, evidenceId: s.pages[0].passages[0].id };
@@ -189,7 +189,7 @@ try {
   assert.equal(backend.knowledge.calls.length, 0, 'abrir a conferência não gera IA');
   await owner.locator('[data-research-search]').click();
   await owner.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
-  await owner.waitForFunction(() => document.querySelector('[data-research-status]').textContent.includes('Ficha analisada'));
+  await owner.waitForFunction(() => document.querySelector('[data-research-status]').textContent.includes('Gemini ·'));
   assert.equal(backend.knowledge.calls.length, 1, 'ficha e regras foram preparadas juntas antes de criar o jogo');
   const beforeCreate = await fetch(`http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/${project}/databases/(default)/documents/games`, { headers: { Authorization: 'Bearer owner' } }).then((r) => r.json());
   assert.equal(beforeCreate.documents?.length || 0, 0, 'o rascunho não cria um cadastro definitivo');
@@ -229,7 +229,7 @@ try {
     (response) => response.data?.status === 'ready',
   );
   assert.equal(backend.knowledge.calls.length, 1, 'cadastro e preparo fazem uma única geração');
-  assert.equal((await backend.knowledge.storage.get('quota')).count, 1, 'promover o rascunho não consome outra geração da cota');
+  assert.equal(backend.knowledge.calls.length, 1, 'promover o rascunho não inicia outra geração');
   assert.equal(
     ready.data.knowledge.sections.every((section) => section.review === 'unreviewed'),
     true,
@@ -247,7 +247,7 @@ try {
     ['errata', 'referencia'],
   );
   console.log('Cadastro salvo; análise automática única concluída.');
-  assert.match(saved.description, /Resumo público de teste/);
+  assert.match(saved.description, /Coopere com a Sociedade/, 'resumo validado do Gemini tem prioridade sobre a descrição curta do catálogo');
   assert.equal(ready.data.knowledge.fields.minPlayers.value, 1);
   const illustration = backend.files.get(saved.cover.driveFileId);
   backend.files.set('legacy-image', { ...illustration, id: 'legacy-image', appProperties: { acervoProject: project, gameId: id, kind: 'guideAsset' } });

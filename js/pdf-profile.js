@@ -1,5 +1,5 @@
 import { indexMatches } from './pdf-index.js';
-import { extractMetadata } from './recognition.js';
+import { extractPageMetadata } from './recognition.js';
 import { documentGame } from './documents.js';
 import { normalizeText } from './model.js';
 import { profileDefinitions } from './profile-facts.js';
@@ -7,7 +7,7 @@ import { profileDefinitions } from './profile-facts.js';
 // Fatos explícitos do índice existente. Não resume regras nem inventa sinopse.
 export function pdfIndexCandidate(index, game, document) {
   if (!indexMatches(index, documentGame(game, document))) return null;
-  const metadata = extractMetadata(index.pages.map((p) => p.text).join('\n'));
+  const metadata = extractPageMetadata(index.pages);
   const fields = {},
     evidence = {};
   for (const key of Object.keys(profileDefinitions)) {

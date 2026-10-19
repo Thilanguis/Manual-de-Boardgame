@@ -1,4 +1,5 @@
 import { privateCacheRequired, privateValue } from './private-cache.js';
+import { textQuality } from './text-quality.js';
 // Tradução de texto completo no dispositivo. Sem endpoint remoto ou fallback de rede.
 export const isPortuguese = (language) => /^pt(?:-|$)/i.test(language || '');
 export const baseLanguage = (language) =>
@@ -86,6 +87,7 @@ export function createTextTranslator({ provider = globalThis.Translator, cache =
   }
   async function translate(text, { sourceLanguage, signal, onProgress = () => {} } = {}) {
     text = String(text || '');
+    if (textQuality(text).corrupt) throw new Error('Este trecho está ilegível. Recupere o texto do PDF antes de traduzir.');
     signal?.throwIfAborted();
     if (!text.trim() || isPortuguese(sourceLanguage)) return { sourceText: text, text, sourceLanguage, targetLanguage: 'pt-BR', method: 'original', createdAt: Date.now() };
     const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))), (b) => b.toString(16).padStart(2, '0')).join('');

@@ -2,6 +2,7 @@ import { ApiError } from '../auth.js';
 
 const cache = new Map(),
   cooldown = new Map(),
+  pacing = new Map(),
   flights = new Map();
 let cacheBytes = 0;
 function evict(key) {
@@ -12,6 +13,7 @@ export function resetCatalogCache() {
   cache.clear();
   cacheBytes = 0;
   cooldown.clear();
+  pacing.clear();
   flights.clear();
 }
 async function withSignal(task, signal) {
@@ -30,7 +32,7 @@ async function withSignal(task, signal) {
     if (abort) signal.removeEventListener('abort', abort);
   }
 }
-export function catalogIO(source, { signal, token = '', ttl = 300000, interval = 500, fetcher = fetch } = {}) {
+export function catalogIO(source, { signal, token = '', ttl = 300000, interval = 500, waitForInterval = false, fetcher = fetch } = {}) {
   const scope = `${source}:${token}`; // Chave privada em memória; nunca enviada ou registrada.
   return async (url, { xml = false } = {}) => {
     signal?.throwIfAborted();
@@ -40,8 +42,27 @@ export function catalogIO(source, { signal, token = '', ttl = 300000, interval =
     if (hit?.until > Date.now()) return hit.value;
     if (flights.has(key)) return withSignal(flights.get(key), signal);
     if ((cooldown.get(scope) || 0) > Date.now()) throw new ApiError(429, 'Esta fonte está limitando consultas. Continue com as outras e tente depois.');
-    cooldown.set(scope, Date.now() + interval);
+    const delay = Math.max(0, (pacing.get(scope) || 0) - Date.now());
+    if (delay && (!waitForInterval || delay > 1200)) throw new ApiError(429, 'Esta fonte está limitando consultas. Continue com as outras e tente depois.');
+    pacing.set(scope, Date.now() + delay + interval);
     const task = (async () => {
+      // O detalhe solicitado imediatamente após a busca espera o intervalo
+      // local. Retry-After do provedor continua bloqueando, sem repetição.
+      if (delay)
+        await new Promise((resolve, reject) => {
+          const abort = () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          };
+          const timer = setTimeout(() => {
+            signal?.removeEventListener('abort', abort);
+            resolve();
+          }, delay);
+          if (signal?.aborted) abort();
+          else signal?.addEventListener('abort', abort, { once: true });
+        });
+      signal?.throwIfAborted();
+      if ((cooldown.get(scope) || 0) > Date.now()) throw new ApiError(429, 'A fonte pediu uma pausa. As demais consultas continuam disponíveis.');
       const response = await fetcher(url, {
         headers: { Accept: xml ? 'application/xml' : 'application/json', 'User-Agent': 'ManualDeBoardgames/1.4 (https://github.com/Thilanguis/Manual-de-Boardgame)', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         signal,

@@ -1,5 +1,6 @@
 import { knowledgeSummary, verifiedKnowledgeFields } from './knowledge-model.js';
 import { observeKnowledge } from './knowledge-observer.js';
+import { currentKnowledgeStatus } from './knowledge-status.js';
 const el = (tag, text = '') => {
   const node = document.createElement(tag);
   node.textContent = text;
@@ -51,6 +52,7 @@ export function createKnowledgePanel({ root, repository, onNotice, openManual })
     await observation.refresh();
   }
   function render() {
+    record = currentKnowledgeStatus(record);
     root.replaceChildren();
     if (!game || !repository.session.canEdit || !repository.session.canRead) return;
     const summary = knowledgeSummary(record, game);
@@ -73,7 +75,7 @@ export function createKnowledgePanel({ root, repository, onNotice, openManual })
         edits.clear();
         dirty = false;
         try {
-          const next = await repository.generateKnowledge(target, { force: true });
+          const next = await repository.generateKnowledge(target, { force: true, ...(repository.session.storageStatus?.profileMetadataProtocol >= 2 ? { includePublic: true } : {}) });
           if (token !== sequence) return;
           record = next;
         } catch (error) {

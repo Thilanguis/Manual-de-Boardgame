@@ -16,7 +16,14 @@ export async function replayResearch(source, raw) {
     catalogIO(source, {
       interval: 0,
       fetcher: async (url) => {
-        const entry = archive.responses.find((r) => r.url === url);
+        // A captura anterior não contém revisões/infobox. Reutiliza somente a
+        // resposta antiga, sem fabricar os novos campos técnicos.
+        const legacy = new URL(url);
+        if (legacy.hostname.endsWith('.wikipedia.org') && legacy.searchParams.has('rvprop')) {
+          for (const key of ['rvprop', 'rvslots', 'rvsection']) legacy.searchParams.delete(key);
+          legacy.searchParams.set('prop', 'pageprops|extracts|info');
+        }
+        const entry = archive.responses.find((r) => r.url === url || r.url === legacy.href);
         if (!entry) {
           replayStats.missing.push(url);
           throw new Error('Resposta pública não registrada: ' + url);

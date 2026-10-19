@@ -22,9 +22,11 @@ test('valores explícitos em minutos, horas e intervalos são convertidos para o
   assert.deepEqual(duration({ durationMinutes: '1h30min' }), { minDurationMinutes: 90, maxDurationMinutes: 90 });
   assert.deepEqual(duration({ durationMinutes: '1,5 horas' }), { minDurationMinutes: 90, maxDurationMinutes: 90 });
 });
-test('limite isolado não vira duração fixa e intervalo explícito prevalece sobre legado', () => {
-  assert.deepEqual(duration({ minDurationMinutes: 45, maxDurationMinutes: null }), { minDurationMinutes: 45 });
+test('valor único preenche ambos; limites declarados e conflitos não são inventados', () => {
+  assert.deepEqual(duration({ minDurationMinutes: 45, maxDurationMinutes: null }), { minDurationMinutes: 45, maxDurationMinutes: 45 });
+  assert.deepEqual(duration({ minDurationMinutes: 45, maxDurationMinutes: null, durationBound: 'min' }), { minDurationMinutes: 45 });
+  assert.deepEqual(duration({ durationMinutes: '45–30 min' }), { minDurationMinutes: 30, maxDurationMinutes: 45 });
   assert.deepEqual(duration({ durationMinutes: 90, minDurationMinutes: 45, maxDurationMinutes: null }), { minDurationMinutes: 45 });
   assert.deepEqual(duration({ minDurationMinutes: 45, maxDurationMinutes: 60, durationMinutes: 90 }), { minDurationMinutes: 45, maxDurationMinutes: 60 });
-  for (const value of [0, -1, 1441, '2 h 90 min', 'rápido', '45–30 min', '30 segundos']) assert.deepEqual(duration({ durationMinutes: value }), {});
+  for (const value of [0, -1, 1441, '2 h 90 min', 'rápido', '30 segundos']) assert.deepEqual(duration({ durationMinutes: value }), {});
 });

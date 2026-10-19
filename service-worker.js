@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.11.0-research-real-2';
+const VERSION = 'acervo-v1.11.0-information-ui-12';
 const LOCAL_DEVELOPMENT = ['localhost', '127.0.0.1', '[::1]'].includes(self.location.hostname);
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
@@ -48,14 +48,19 @@ const ESSENTIAL = [
   './js/catalog-language.js',
   './js/research-presentation.js',
   './js/research-contract.js',
+  './js/text-quality.js',
+  './js/profile-diagnostics.js',
+  './js/draft-reuse.js',
   './js/game-identities.js',
   './js/pdf-ocr.js',
+  './js/ocr-metadata.js',
   './js/guide-model.js',
   './js/guide-repository.js',
   './js/guide-panel.js',
   './js/knowledge-panel.js',
   './js/knowledge-observer.js',
   './js/knowledge-model.js',
+  './js/knowledge-status.js',
   './js/rule-relevance.js',
   './js/rule-passages.js',
   './js/rule-layout.js',

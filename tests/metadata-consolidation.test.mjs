@@ -2,10 +2,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { consolidateMetadata, metadataUpdates } from '../js/metadata-consolidation.js';
 import { pdfMetadataCandidate } from '../js/catalog-language.js';
+import { sameWork, linkCatalogIdentities } from '../js/research-client.js';
 
 const hash = 'a'.repeat(64);
 const game = { title: 'Catan', edition: '3', manual: { sha256: hash }, sources: {} };
 const candidate = (source, fields, extra = {}) => ({ source, id: source, manualHash: hash, identifiers: { wikidata: 'Q1' }, fields, names: [{ value: 'Catan', language: 'pt-BR' }], language: 'pt-BR', kind: 'base', edition: '3', ...extra });
+test('BGG e Ludopedia se unem por detalhes independentes, não pelo nome isolado nem por pista Gemini', () => {
+  const bgg = candidate('bgg', { minDurationMinutes: 30, maxDurationMinutes: 30 }, { identifiers: { bgg: '13' }, publicationYear: 1995, creators: ['Klaus Teuber'], needsDetail: false });
+  const ludo = candidate('ludopedia', { recommendedAge: 10 }, { identifiers: { ludopedia: '397' }, publicationYear: 1995, creators: ['Klaus Teuber'], needsDetail: false });
+  const wiki = candidate('wikidata', { minPlayers: 3, maxPlayers: 4 }, { identifiers: { wikidata: 'Q17271', bgg: '13' } });
+  const model = consolidateMetadata(game, [wiki, bgg, ludo]);
+  assert.equal(model.members.length, 3);
+  assert.equal(model.fields.recommendedAge, 10);
+  assert.equal(model.fields.maxDurationMinutes, 30);
+  assert.equal(model.fieldSources.recommendedAge.identityEvidence.method, 'catalog-details');
+  assert.equal(ludo.identifiers.bgg, undefined, 'não altera resposta original');
+  for (const changed of [{ publicationYear: 1996 }, { creators: ['Outro autor'] }, { creators: [] }, { needsDetail: true }, { kind: 'expansion' }, { edition: '2' }, { identifiers: { bgg: '99' } }])
+    assert.equal(sameWork(bgg, { ...ludo, ...changed }), false);
+  assert.equal(linkCatalogIdentities([bgg, { ...bgg, id: 'other', identifiers: { bgg: '99' } }, ludo]).at(-1).identifiers.bgg, undefined, 'mais de uma obra compatível continua ambígua');
+  assert.equal(sameWork({ ...bgg, creators: ['山田太郎'] }, { ...ludo, creators: ['鈴木一郎'] }), false, 'outros alfabetos mantêm identidade');
+  assert.equal(sameWork({ ...bgg, creators: ['山田太郎'] }, { ...ludo, creators: ['山田太郎'] }), true);
+});
 
 test('PDF, internet e IA completam uma ficha; PDF vence, listas se unem e IA não confirma o próprio PDF', () => {
   const pdf = candidate('pdf', { minPlayers: 3, maxPlayers: 4, recommendedAge: 10 });

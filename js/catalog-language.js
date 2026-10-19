@@ -1,5 +1,6 @@
 import { isPortuguese } from './translation.js';
 import { vocabularyFields, knownVocabulary } from './game-vocabulary.js';
+import { textQuality } from './text-quality.js';
 
 const keys = ['description', 'tags', 'mechanics', 'gameType'];
 export function pdfMetadataCandidate(game) {
@@ -48,10 +49,16 @@ export function pdfMetadataCandidate(game) {
 export function portugueseCandidate(candidate) {
   const fields = vocabularyFields(candidate.fields),
     fieldLanguages = { ...candidate.fieldLanguages },
-    pendingTranslations = [];
+    pendingTranslations = [],
+    rejectedTexts = [];
   for (const key of keys) {
     const value = candidate.fields[key];
     if (!value || (Array.isArray(value) && !value.length)) continue;
+    if ((Array.isArray(value) ? value : [value]).some((v) => textQuality(v).corrupt)) {
+      delete fields[key];
+      rejectedTexts.push({ key, reason: 'corrupt-text', source: candidate.source });
+      continue;
+    }
     const language = candidate.fieldLanguages?.[key] || (key === 'description' ? candidate.descriptionLanguage : '') || candidate.language || 'unknown';
     const translation = candidate.fieldTranslations?.[key];
     if (translation?.targetLanguage === 'pt-BR' && JSON.stringify(translation.sourceValue) === JSON.stringify(value)) {
@@ -63,7 +70,7 @@ export function portugueseCandidate(candidate) {
       pendingTranslations.push({ key, value, language, source: candidate.source, id: candidate.id });
     }
   }
-  return { ...candidate, fields, fieldLanguages, pendingTranslations, descriptionLanguage: fieldLanguages.description || candidate.descriptionLanguage };
+  return { ...candidate, fields, fieldLanguages, pendingTranslations, rejectedTexts, descriptionLanguage: fieldLanguages.description || candidate.descriptionLanguage };
 }
 export async function translateCatalogCandidate(candidate, translator, options = {}) {
   const next = { ...candidate, fieldTranslations: { ...candidate.fieldTranslations } };

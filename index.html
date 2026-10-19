@@ -396,38 +396,39 @@
                   <p data-research-ocr-status role="status" aria-live="polite"></p>
                   <div data-research-results class="research-results"></div>
                   <div data-research-review class="research-review" hidden></div>
+                  <details class="research-options">
+                    <summary>Opções da pesquisa</summary>
+                    <div class="form-row">
+                      <label>
+                        Idioma preferido dos resultados
+                        <select data-research-language>
+                          <option value="pt-BR">Português brasileiro</option>
+                          <option value="fr">Francês</option>
+                          <option value="en">Inglês</option>
+                        </select>
+                      </label>
+                      <label>
+                        Tipo do manual
+                        <select data-research-kind>
+                          <option value="unknown">Ainda não confirmado</option>
+                          <option value="base">Jogo base</option>
+                          <option value="expansion">Expansão</option>
+                        </select>
+                      </label>
+                    </div>
+                    <p class="step-intro">A pesquisa usa português, inglês e francês. Esta preferência não limita os idiomas consultados.</p>
+                    <label>
+                      Nomes alternativos
+                      <textarea data-research-aliases rows="2" maxlength="1000" placeholder="Um por linha. Opcional: en: título ou fr: título"></textarea>
+                    </label>
+                    <label class="research-choice">
+                      <input type="checkbox" data-research-refresh />
+                      Consultar novamente as fontes
+                    </label>
+                  </details>
                   <details>
                     <summary>Detalhes da pesquisa</summary>
-                    <details class="research-options">
-                      <summary>Opções da pesquisa</summary>
-                      <div class="form-row">
-                        <label>
-                          Prioridade da pesquisa
-                          <select data-research-language>
-                            <option value="pt-BR">Português brasileiro</option>
-                            <option value="fr">Francês</option>
-                            <option value="en">Inglês</option>
-                          </select>
-                        </label>
-                        <label>
-                          Tipo do manual
-                          <select data-research-kind>
-                            <option value="unknown">Ainda não confirmado</option>
-                            <option value="base">Jogo base</option>
-                            <option value="expansion">Expansão</option>
-                          </select>
-                        </label>
-                      </div>
-                      <label>
-                        Nomes alternativos
-                        <textarea data-research-aliases rows="2" maxlength="1000" placeholder="Um por linha. Opcional: en: título ou fr: título"></textarea>
-                      </label>
-                      <label class="research-choice">
-                        <input type="checkbox" data-research-refresh />
-                        Consultar novamente as fontes
-                      </label>
-                    </details>
-                    <p data-research-diagnostics></p>
+                    <div data-research-diagnostics></div>
                     <div data-research-availability class="research-availability"></div>
                     <p data-research-version></p>
                     <div data-research-sources></div>
@@ -480,7 +481,7 @@
                       <input name="maxDurationMinutes" type="number" min="1" max="1440" placeholder="Ex.: 120" />
                     </label>
                   </div>
-                  <p class="label-hint">Para uma duração fixa, repita o valor. Sem informação confirmada, deixe os dois campos vazios.</p>
+                  <p class="label-hint">Uma duração fixa é preenchida nos dois campos automaticamente.</p>
                 </fieldset>
                 <div class="form-row">
                   <label>

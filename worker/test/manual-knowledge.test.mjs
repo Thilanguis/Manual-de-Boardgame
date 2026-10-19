@@ -112,9 +112,17 @@ test('identificadores de evidência preservam todo o texto sem cortes ou citaç�
   assert.ok(passages.every((p) => p.text.length <= 900));
 });
 test('manuais grandes não são cortados silenciosamente e edições confirmadas também respeitam hash', async () => {
-  const tooLarge = { ...baseIndex, pages: [{ page: 1, text: 'a'.repeat(200001) }, baseIndex.pages[1]] };
+  const tooLarge = { ...baseIndex, pages: [{ page: 1, text: 'a'.repeat(400001) }, baseIndex.pages[1]] };
   await assert.rejects(collectManualKnowledge(game, env, { token: 'fixture-jwt' }, await fixture({ index: tooLarge })), (error) => error.status === 413);
   assert.notEqual(await knowledgeKey(game, true), await knowledgeKey({ ...game, manual: { ...game.manual, sha256: 'b'.repeat(64) } }, true));
+});
+
+test('limite de texto é igual para cadastro e índice salvo: 250 mil caracteres continuam completos', async () => {
+  const pages = Array.from({ length: 25 }, (_, i) => ({ page: i + 1, text: text.repeat(100).slice(0, 10000) }));
+  const index = { ...baseIndex, pages, pageCount: pages.length };
+  const result = await collectManualKnowledge({ ...game, manual: { ...game.manual, pages: pages.length } }, env, { token: 'fixture-jwt' }, await fixture({ index }));
+  assert.equal(result.sources[0].pages.length, 25);
+  assert.deepEqual(result.sources[0].pages, pages);
 });
 test('aguardar índice não consome quota nem impede a geração após ficar pronto', async () => {
   const { env: fixtureEnv, storage } = knowledgeFixture();
@@ -124,7 +132,7 @@ test('aguardar índice não consome quota nem impede a geração após ficar pro
   assert.equal(pending.status, 'waiting_index');
   assert.equal(await storage.get('quota'), undefined);
   assert.equal((await call('/claim', { requestId: crypto.randomUUID() })).claimed, true);
-  assert.equal((await storage.get('quota')).count, 1);
+  assert.equal(await storage.get('quota'), undefined);
 });
 
 test('preparação automática só reutiliza conhecimento e nunca inicia Gemini ou cota', async () => {
@@ -184,11 +192,11 @@ test('atualização explícita da ficha legada preserva correção de regra e ga
     assert(saved.knowledge.sections.some((s) => s.review === 'manual' && s.text === corrected.text));
     await knowledgeEndpoint(...args);
     assert.equal(model.calls.length, 1);
-    assert.equal((await model.storage.get('quota')).count, 1);
+    assert.equal(await model.storage.get('quota'), undefined);
     args[4] = { ...args[4], requestId: crypto.randomUUID(), expectedIdentity: { ...args[4].expectedIdentity, title: 'Outro jogo' } };
     await assert.rejects(knowledgeEndpoint(...args), (e) => e.status === 409);
     assert.equal(model.calls.length, 1);
-    assert.equal((await model.storage.get('quota')).count, 1);
+    assert.equal(await model.storage.get('quota'), undefined);
   } finally {
     globalThis.fetch = original;
   }

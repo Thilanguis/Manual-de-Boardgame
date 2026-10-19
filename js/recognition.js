@@ -1,5 +1,6 @@
 import { normalizeText, isTechnicalTitle } from './model.js';
 import { reviewedIdentity } from './game-identities.js';
+import { textQuality } from './text-quality.js';
 
 const genericTitle =
   /^(livro de(?: regras)?$|manual|regras?|rule\s*book|rules?|instructions?|instru[cç][oõ]es|sum[aá]rio|contents|introdu[cç][aã]o|objetivo|game rules|untitled|document|microsoft|adobe|componente|prepara[cç][aã]o|setup|dura[cç][aã]o|jogadores|players|joueurs|playing time|conte[uú]do|vis[aã]o geral|overview|game overview|règles|livret|sommaire|composants|préparation|mise en place|but du jeu|âge|idade|s[ií]mbolos|assista|nota da editora|amarelo|azul|verde|vermelho|cinza|roxo|édition|edi[cç][aã]o|edition\b|mécaniques|catégories)/i;
@@ -39,6 +40,28 @@ export function titleCandidates({ metadataTitle = '', filename = '', lines = [] 
   ];
   const seen = new Set();
   return ranked.filter((item) => valid(item.text) && !seen.has(normalizeText(item.text)) && seen.add(normalizeText(item.text))).slice(0, 5);
+}
+
+export function extractPageMetadata(pages) {
+  const combined = extractMetadata(pages.map((p) => p.text).join('\n'));
+  const cover = pages.find((p) => p.page === 1);
+  if (!cover) return combined;
+  // A ficha na capa descreve o jogo. Faixas citadas no corpo podem apenas
+  // distinguir regras para subgrupos e não devem invalidar esse cabeçalho.
+  const labels = cover.text
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter((line) => /^(?:(?:jogadores|players|joueurs)\s*:\s*\d{1,2}(?:\s*[-–aà]\s*\d{1,2})?|\d{1,2}\s*[-–aà]\s*\d{1,2}\s*(?:jogadores|players|joueurs)|(?:idades?|ages?|âge)\s*:?\s*\d{1,2}\s*(?:\+|anos|years|ans)?)\s*$/i.test(line));
+  const header = extractMetadata(labels.join('\n'));
+  for (const [keys, origin] of [
+    [['minPlayers', 'maxPlayers'], 'players'],
+    [['recommendedAge'], 'recommendedAge'],
+  ]) {
+    if (!keys.every((k) => header[k] != null)) continue;
+    for (const key of keys) combined[key] = header[key];
+    combined.sources[origin] = { ...header.sources[origin], page: 1 };
+  }
+  return combined;
 }
 
 export function extractMetadata(text) {
@@ -123,6 +146,7 @@ export function extractMetadata(text) {
       description = pieces.join(' ').slice(0, 1100);
     }
   }
+  if (textQuality(description).corrupt) description = '';
   const sources = {};
   const publisher = normalized.match(/^(?:editora|publisher|[ée]diteur)\s*[:：]\s*(.{2,100})$/im);
   const year = normalized.match(/^(?:ano(?: de publica[cç][aã]o)?|publication year|year|ann[ée]e)\s*[:：]\s*((?:19|20)\d{2})\b/im);
@@ -150,7 +174,7 @@ export function extractMetadata(text) {
     };
   if (description) sources.description = { source: 'PDF · objetivo do jogo', excerpt: description };
   const age =
-    normalized.match(/(?<![a-zà-ÿ])(?:idade(?: recomendada)?|ages?|age recommendation|âge|age conseillé)\s*[:：]?\s*(\d{1,2})\s*(?:\+|anos|years|ans)?/i) ||
+    normalized.match(/(?<![a-zà-ÿ])(?:idades?(?: recomendada)?|ages?|age recommendation|âge|age conseillé)\s*[:：]?\s*(\d{1,2})\s*(?:\+|anos|years|ans)?/i) ||
     normalized.match(/(?:a partir (?:de|dos)|maiores de|idades? de)\s+(\d{1,2})\s*anos|\b(\d{1,2})\s*(?:anos?\s*(?:ou mais|em diante)|years (?:and up|and older)|ans et plus)/i);
   const ageEvidence = age || normalized.match(/(?:à partir de|dès)\s+(\d{1,2})\s*ans/i);
   const recommendedAge = ageEvidence && Number(ageEvidence[1] || ageEvidence[2]) >= 1 ? Number(ageEvidence[1] || ageEvidence[2]) : null;

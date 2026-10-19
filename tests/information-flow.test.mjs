@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createInformationFlow } from '../js/information-flow.js';
+import { profileDefinitions } from '../js/profile-facts.js';
 
 function fixture(initial = null, saved = true) {
   let value = initial,
@@ -44,7 +45,15 @@ function fixture(initial = null, saved = true) {
   return { flow, game, repo, applied, status, prepares, emit: (record) => listener.onRecord(record), revoke: () => (usable = false), counts: () => ({ reads, generations, writes, closed }) };
 }
 test('abrir/voltar apenas recupera conhecimento salvo, sem gerar ou salvar ficha', async () => {
-  const f = fixture({ status: 'ready', knowledge: { profile: {}, profileAnalysis: { version: 1, complete: true }, sources: [{ id: 'manual', sourceHash: 'a'.repeat(64), pages: [{ page: 1, text: 'Sem dados de ficha.' }] }], sections: [] } });
+  const f = fixture({
+    status: 'ready',
+    knowledge: {
+      profile: {},
+      profileAnalysis: { version: 3, complete: true, coverageComplete: true, checkedFields: Object.keys(profileDefinitions) },
+      sources: [{ id: 'manual', sourceHash: 'a'.repeat(64), pages: [{ page: 1, text: 'Sem dados de ficha.' }] }],
+      sections: [],
+    },
+  });
   await f.flow.load();
   await f.flow.load();
   await Promise.all([f.flow.complete(), f.flow.complete()]);
@@ -107,6 +116,14 @@ test('novo cadastro só gera pela ação explícita, abertura usa cachedOnly', a
   await f.flow.complete();
   assert.deepEqual(f.prepares.at(-1), { retry: true });
   assert.equal(f.counts().writes, 0);
+  f.flow.stop();
+});
+test('complementação da ficha exige protocolo atual, sem consumir IA no Worker antigo', async () => {
+  const f = fixture();
+  f.repo.session.storageStatus.profileMetadataProtocol = 1;
+  await f.flow.complete({ includePublic: true });
+  assert.equal(f.counts().generations, 0);
+  assert.match(f.status.at(-1), /Worker conectado ainda não oferece/);
   f.flow.stop();
 });
 test('troca de edição e perda de permissão ignoram respostas da sessão anterior', async () => {

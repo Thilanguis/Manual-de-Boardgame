@@ -4,6 +4,7 @@ import { linesFromItems } from './recognition.js';
 import { normalizeText } from './model.js';
 import { ruleCategory } from './guide-model.js';
 import { isPortuguese, translatedValue } from './translation.js';
+import { readablePage } from './text-quality.js';
 const yieldUI = () => new Promise((resolve) => setTimeout(resolve, 0));
 export function detectHeadings(lines, page, outline = []) {
   const heights = lines
@@ -97,7 +98,7 @@ export async function analyzePdf(blob, game, { signal, onProgress = () => {}, pr
     const seen = new Set(),
       structured = [...outline, ...headings].sort((a, b) => a.page - b.page).filter((h) => !seen.has(`${h.page}:${normalizeText(h.title)}`) && seen.add(`${h.page}:${normalizeText(h.title)}`));
     onProgress({ message: 'Análise concluída.', current: pdf.numPages, total: pdf.numPages });
-    Object.assign(index, { pages, headings: structured, analysisComplete: true, scanned: pages.some((p) => p.text.trim().length < 40) });
+    Object.assign(index, { pages, headings: structured, analysisComplete: true, scanned: pages.some((p) => !readablePage(p)) });
     await checkpoint(index);
     return index;
   } finally {

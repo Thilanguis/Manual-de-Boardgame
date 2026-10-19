@@ -133,7 +133,7 @@ test('lease e deduplicação persistem entre instâncias, abas, concorrência e 
   for (let i = 0; i < 5; i++) assert.equal((await (await operation(store, '/claim', { requestId: `refresh-${i}` })).json()).claimed, false);
   const value = await (await operation(store, '/?key=game1')).json();
   assert.equal(value.status, 'ready');
-  assert.equal((await store.get('quota')).count, 1);
+  assert.equal(await store.get('quota'), undefined);
 });
 test('sem chave, falha de geração e término incerto não causam tentativas automáticas', async () => {
   const store = memoryStorage();
@@ -143,7 +143,7 @@ test('sem chave, falha de geração e término incerto não causam tentativas au
   const claim = await (await operation(store, '/claim', { requestId: 'a' })).json();
   await operation(store, '/finish', { lease: claim.record.lease, status: 'attention', message: 'Rede indisponível' });
   assert.equal((await (await operation(store, '/claim', { requestId: 'b' })).json()).claimed, false);
-  assert.equal((await store.get('quota')).count, 1);
+  assert.equal(await store.get('quota'), undefined);
 });
 test('revisão usa versão, preserva correções e rejeições na atualização solicitada', async () => {
   const store = memoryStorage();
@@ -161,32 +161,37 @@ test('revisão usa versão, preserva correções e rejeições na atualização 
   assert.equal((await (await operation(store, '/claim', { requestId: 'b', force: true })).json()).claimed, false, 'Retry da mesma atualização é idempotente.');
   assert.equal((await (await operation(store, '/claim', { requestId: 'a', force: true })).json()).claimed, false, 'Uma resposta perdida anterior não gera de novo após outra atualização.');
 });
-test('cota persistente global limita novas gerações, inclusive em outros jogos', async () => {
+test('mais de cinco análises e mais de duas por minuto não têm bloqueio interno', async () => {
   const store = memoryStorage();
-  for (const key of ['a', 'b']) assert.equal((await (await operation(store, '/claim', { key, requestId: key })).json()).claimed, true);
-  const denied = await operation(store, '/claim', { key: 'c', requestId: 'c' });
-  assert.equal(denied.status, 429);
-  const record = await denied.json();
-  assert.equal(record.reason, 'app-rate-limit');
-  assert.equal(record.quotaScope, 'minute');
-  assert(record.retryAt > Date.now() && record.retryAt <= Date.now() + 60000);
-  assert.equal((await store.get('quota')).count, 2);
+  const quota = { day: new Date().toISOString().slice(0, 10), count: 999, recent: Array(8).fill(Date.now()) };
+  await store.put('quota', quota);
+  for (let i = 0; i < 12; i++) {
+    const response = await operation(store, '/claim', { key: 'game-' + i, requestId: crypto.randomUUID() });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).claimed, true);
+  }
+  assert.deepEqual(await store.get('quota'), quota, 'contador legado fica inerte, sem redefinir dados existentes');
 });
-
-test('limite diário informa a próxima virada UTC e preserva conhecimento existente', async () => {
+test('bloqueio interno legado é liberado sem perder conhecimento ou repetir automaticamente', async () => {
   const store = memoryStorage();
-  const day = new Date().toISOString().slice(0, 10);
-  const knowledge = { sections: [{ text: 'Texto já revisado' }] };
-  await store.put('quota', { day, count: 5, recent: [] });
-  await store.put('job:game1', { status: 'ready', knowledge, revision: 3 });
-  const response = await operation(store, '/claim', { requestId: 'limited', force: true });
-  const record = await response.json();
-  assert.equal(response.status, 429);
-  assert.equal(record.quotaScope, 'day');
-  assert.equal(record.retryAt, Date.parse(`${day}T00:00:00Z`) + 86400000);
+  const knowledge = { sections: [{ text: 'Texto já revisado', review: 'manual' }] };
+  await store.put('job:game1', { status: 'quota', reason: 'app-rate-limit', retryAt: Date.now() + 86400000, knowledge, revision: 3 });
+  const record = await (await operation(store, '/?key=game1')).json();
+  assert.equal(record.status, 'attention');
+  assert.equal(record.retryAt, 0);
   assert.deepEqual(record.knowledge, knowledge);
-  assert.match(record.message, /5 gerações/);
-  assert.equal((await store.get('quota')).count, 5);
+  assert.equal(record.revision, 3);
+  assert.equal((await (await operation(store, '/claim', { requestId: 'opening' })).json()).claimed, false);
+  const renewed = await (await operation(store, '/claim', { requestId: 'explicit', force: true })).json();
+  assert.equal(renewed.claimed, true);
+  assert.deepEqual(renewed.record.knowledge, knowledge);
+});
+test('cota do provedor permanece intacta após retirar o limite interno', async () => {
+  const store = memoryStorage();
+  const record = { status: 'quota', reason: 'provider-rate-limit', retryAt: Date.now() + 60000, message: 'Cota do Gemini', revision: 2 };
+  await store.put('job:game1', record);
+  assert.deepEqual(await (await operation(store, '/?key=game1')).json(), record);
+  assert.equal((await (await operation(store, '/claim', { requestId: 'opening' })).json()).claimed, false);
 });
 
 test('conectores reais consultam três títulos em português com fontes simuladas e preservam a origem', async () => {

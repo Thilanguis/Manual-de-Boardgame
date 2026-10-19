@@ -1,5 +1,36 @@
 import { loadPdf } from './pdf.js';
 import { extractMetadata } from './recognition.js';
+import { readablePage } from './text-quality.js';
+import { metadataOcrLines } from './ocr-metadata.js';
+
+export const COVER_OCR_VERSION = 1;
+export async function recoverCoverMetadata(worker, canvas, signal) {
+  const lines = [];
+  for (let i = 0; i < 8; i++) {
+    signal?.throwIfAborted();
+    const strip = document.createElement('canvas');
+    strip.width = canvas.width;
+    strip.height = Math.min(Math.ceil(canvas.height * 0.16), canvas.height - Math.floor(i * canvas.height * 0.12));
+    try {
+      const ctx = strip.getContext('2d');
+      ctx.drawImage(canvas, 0, Math.floor(i * canvas.height * 0.12), canvas.width, strip.height, 0, 0, strip.width, strip.height);
+      const pixels = ctx.getImageData(0, 0, strip.width, strip.height);
+      for (let n = 0; n < pixels.data.length; n += 4) {
+        const value = 255 - (0.299 * pixels.data[n] + 0.587 * pixels.data[n + 1] + 0.114 * pixels.data[n + 2]);
+        pixels.data[n] = pixels.data[n + 1] = pixels.data[n + 2] = value;
+      }
+      ctx.putImageData(pixels, 0, 0);
+      await worker.setParameters({ tessedit_pageseg_mode: '11' });
+      const { data } = await worker.recognize(strip, {}, { tsv: true });
+      lines.push(...metadataOcrLines(data.tsv));
+    } finally {
+      strip.width = strip.height = 0;
+    }
+  }
+  await worker.setParameters({ tessedit_pageseg_mode: '3' });
+  const found = [...new Map(lines.map((line) => [line.text, line])).values()];
+  return found.length ? { text: found.map((line) => line.text).join('\n'), confidence: Math.min(...found.map((line) => line.confidence)) } : null;
+}
 
 // PDF e imagens ficam no dispositivo. Somente código/modelos públicos são baixados.
 export async function recognizePdfImages(blob, { language = 'pt-BR', signal, onProgress = () => {}, pages = [1, 2, 3], timeoutMs = 18000, onPage = async () => {}, continueOnError = false } = {}) {
@@ -37,11 +68,13 @@ export async function recognizePdfImages(blob, { language = 'pt-BR', signal, onP
         try {
           renderTask = page.render({ canvasContext: canvas.getContext('2d'), viewport, background: '#fff' });
           await renderTask.promise;
-          const { data } = await worker.recognize(canvas);
+          let { data } = await worker.recognize(canvas);
+          const needsCover = number === 1 && !(data.confidence >= 50 && readablePage({ text: data.text }));
+          if (needsCover) data = (await recoverCoverMetadata(worker, canvas, combined)) || data;
           combined.throwIfAborted();
-          const usable = data.confidence >= 50 && data.text.trim().length >= 40;
+          const usable = data.confidence >= 50 && readablePage({ text: data.text });
           if (usable) evidence.push({ page: number, text: data.text.slice(0, 30000), confidence: Math.round(data.confidence) });
-          await onPage({ page: number, text: usable ? data.text.slice(0, 30000) : '', confidence: Math.round(data.confidence), status: usable ? 'done' : 'low-confidence' });
+          await onPage({ page: number, text: usable ? data.text.slice(0, 30000) : '', confidence: Math.round(data.confidence), status: usable ? 'done' : 'low-confidence', ...(number === 1 ? { coverOcrVersion: COVER_OCR_VERSION } : {}) });
           onProgress(`Página ${number} lida; ${evidence.length} página(s) com texto utilizável.`);
         } catch (error) {
           combined.throwIfAborted();
@@ -83,7 +116,10 @@ export async function recognizePdfImages(blob, { language = 'pt-BR', signal, onP
       }),
     ]);
   } catch (error) {
-    if (timeout.aborted) throw new Error(continueOnError ? 'A leitura atingiu o prazo. As páginas concluídas foram guardadas; continue para ler as restantes.' : 'A leitura local atingiu o prazo. Nenhum dado foi aplicado; você pode tentar novamente ou preencher pelo PDF.');
+    if (timeout.aborted)
+      throw new Error(
+        continueOnError ? 'A leitura atingiu o prazo. As páginas concluídas foram guardadas; continue para ler as restantes.' : 'A leitura local atingiu o prazo. Nenhum dado foi aplicado; você pode tentar novamente ou preencher pelo PDF.',
+      );
     throw error;
   } finally {
     if (abort) combined.removeEventListener('abort', abort);

@@ -6,6 +6,21 @@ import { base64url, openTicket } from '../src/auth.js';
 import { DRIVE_FOLDER_ID } from '../../js/permissions.js';
 
 const id = '12345678-1234-1234-1234-123456789abc';
+test('health anuncia ausência de limites internos sem consultar serviços externos', async () => {
+  const previous = globalThis.fetch;
+  globalThis.fetch = () => assert.fail('health não deve acessar nenhum serviço');
+  try {
+    const response = await handleRequest(new Request('https://worker.test/health'), { ALLOWED_ORIGINS: '' });
+    const data = await response.json();
+    assert.equal(data.knowledgeInternalQuota, false);
+    assert.deepEqual(data.profileDiscoveryLimits, { perAnalysis: 1, perMinute: null, perDay: null });
+    assert.equal(data.profileMetadataProtocol, 2);
+    assert.equal(data.knowledgeReuseProtocol, 1);
+    assert.equal(data.informationIdentityProtocol, 1);
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
 const env = {
   FIREBASE_PROJECT_ID: 'isolated-api-test',
   OWNER_UID: 'owner',
@@ -223,6 +238,43 @@ test('chave configurada não autoriza envio de manuais sem consentimento do prop
       delete env.KNOWLEDGE_FROM_MANUAL;
       delete env.GEMINI_API_KEY;
       delete env.GAME_KNOWLEDGE;
+    }
+  });
+});
+
+test('correção de conhecimento maior que 16 KB chega ao coordenador; excesso tem erro 413 específico', async () => {
+  await isolated({}, async ({ calls }) => {
+    const previous = { GEMINI_API_KEY: env.GEMINI_API_KEY, GAME_KNOWLEDGE: env.GAME_KNOWLEDGE };
+    let reviews = 0;
+    env.GEMINI_API_KEY = 'fixture';
+    env.GAME_KNOWLEDGE = {
+      idFromName: () => 'fixture',
+      get: () => ({
+        fetch: async (req) => {
+          assert.equal(new URL(req.url).pathname, '/review');
+          reviews++;
+          assert.equal((await req.json()).sections.length, 4);
+          return Response.json({ status: 'ready' });
+        },
+      }),
+    };
+    try {
+      const data = { revision: 1, sections: Array.from({ length: 4 }, (_, i) => ({ id: String(i), review: 'manual', text: 'Correção detalhada. '.repeat(260) })) };
+      assert.ok(JSON.stringify(data).length > 16384);
+      const response = await handleRequest(request(`/v1/games/${id}/knowledge`, { method: 'POST', json: data }), env);
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.equal(reviews, 1);
+      const oversized = await handleRequest(request(`/v1/games/${id}/knowledge`, { method: 'POST', json: { ...data, extra: 'x'.repeat(1200000) } }), env);
+      assert.equal(oversized.status, 413);
+      const error = await oversized.json();
+      assert.equal(error.reason, 'request-size-limit');
+      assert.match(error.error, /análise ou correção/);
+      assert.equal(reviews, 1);
+      assert.equal(calls.filter((c) => /generativelanguage|drive\/v3/.test(c.url)).length, 0);
+    } finally {
+      for (const [key, v] of Object.entries(previous))
+        if (v === undefined) delete env[key];
+        else env[key] = v;
     }
   });
 });

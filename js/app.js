@@ -987,7 +987,7 @@ const researchPanel = createResearchPanel({
   root: $('research-panel'),
   getRepository: () => repository,
   getDocuments: () => [...gameDocuments(draft), ...additionalFiles],
-  onPrepareDraft: () => informationFlow.complete(),
+  onPrepareDraft: (options) => informationFlow.complete(options),
   onCancel: () => informationFlow.stop(),
   onInvalidate: () => informationFlow?.invalidate(),
   getPdf: () => manualBlob || repository.getManual(draft),
@@ -1038,7 +1038,7 @@ function applyMetadataValues(values, model, { automatic = false, retract = false
     const origin = model.fieldSources?.[key] || model;
     draft.sources[sourceField(key)] = {
       ...(origin.evidence || {}),
-      source: automatic ? (origin.source === 'gemini' ? 'Gemini · sugestão do manual' : 'Sugestão · ' + origin.source) : 'Conferido e ajustado por você',
+      source: automatic ? (origin.source === 'gemini' ? 'Gemini · sugestão do manual' : origin.source === 'gemini-public' ? 'Gemini · fontes públicas' : 'Sugestão · ' + origin.source) : 'Conferido e ajustado por você',
       excerpt: origin.evidence?.excerpt || String(value),
       url: origin.url || '',
       license: origin.license || '',
@@ -1283,9 +1283,10 @@ $('game-form').onsubmit = async (event) => {
         result.warning ||= 'Jogo salvo. Não foi possível guardar o histórico desta pesquisa.';
       }
     }
-    await draftProfile.seedIndexes(savedGame);
+    const prepared = await draftProfile.seedIndexes(savedGame);
+    result.warning ||= prepared?.warning;
     registrationSavingId = null;
-    void preparationQueue.update([...state.games.filter((game) => game.id !== savedGame.id), savedGame]);
+    void preparationQueue.update([...state.games.filter((game) => game.id !== savedGame.id), savedGame], { knowledgeReady: prepared?.knowledgeReady ? [savedGame] : [] });
     state.busy = false;
     closeDialog('upload-dialog');
     const documentCount = gameDocuments(savedGame).length;

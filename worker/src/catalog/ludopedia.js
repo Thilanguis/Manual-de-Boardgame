@@ -39,6 +39,11 @@ export function ludopediaCandidate(game, summary = false) {
       names: [{ value: text(game.nm_jogo), language: 'pt-BR' }, ...(text(game.nm_original) ? [{ value: text(game.nm_original), language: 'unknown' }] : [])],
       kind: game.tp_jogo === 'e' ? 'expansion' : game.tp_jogo === 'b' ? 'base' : 'unknown',
       identifiers: { ludopedia: String(id) },
+      publicationYear: positive(game.ano_publicacao, 2100),
+      creators: (Array.isArray(game.designers) ? game.designers : [])
+        .map((person) => text(person.nm_profissional, 100))
+        .filter(Boolean)
+        .slice(0, 12),
       language: 'pt-BR',
       license: 'Ludopedia · API não comercial com atribuição',
       needsDetail: summary,
@@ -50,7 +55,9 @@ export function ludopediaCandidate(game, summary = false) {
 export async function ludopedia(input, io) {
   if (input.action === 'detail') return [ludopediaCandidate(await io(`https://ludopedia.com.br/api/v1/jogos/${input.id}`))].filter(Boolean);
   const url = new URL('https://ludopedia.com.br/api/v1/jogos');
-  url.search = new URLSearchParams({ search: input.query, rows: input.expanded ? '15' : '8', page: '1', ...(input.kind !== 'unknown' ? { tp_jogo: input.kind === 'base' ? 'b' : 'e' } : {}) });
+  const query = input.alternateTitles?.find((n) => /^pt/.test(n.language))?.value || input.query;
+  input.diagnostics = { complete: true, queries: [{ query, language: 'pt-BR', reason: query === input.query ? 'título informado' : 'nome alternativo para descoberta; identidade ainda exige confirmação' }], failures: [] };
+  url.search = new URLSearchParams({ search: query, rows: input.expanded ? '15' : '8', page: '1', ...(input.kind !== 'unknown' ? { tp_jogo: input.kind === 'base' ? 'b' : 'e' } : {}) });
   const data = await io(url.href);
   return (data.jogos || []).map((game) => ludopediaCandidate(game, true)).filter(Boolean);
 }

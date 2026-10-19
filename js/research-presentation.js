@@ -27,9 +27,20 @@ export function candidateFacts(candidate) {
   ].filter(([, value]) => value);
 }
 
-export function resultSummary(candidates, sources, statuses) {
+// O snapshot não guarda estados de transporte. Um resultado salvo não é uma
+// consulta em andamento, e a ausência nele não comprova uma consulta nova.
+export function researchSourceState(source, statuses, candidates, snapshot) {
+  const runtime = statuses.get(source);
+  if (runtime) return runtime;
+  const found = candidates.filter((c) => c.source === source);
+  if (found.length) return { status: 'done', cached: true, candidates: found };
+  if (snapshot?.query && snapshot.fetchedAt) return { status: 'cached', cached: true, candidates: [] };
+}
+
+export function resultSummary(candidates, sources, statuses, { pending = false } = {}) {
+  if (pending) return 'Completando informações…';
   const members = candidates.flatMap((c) => c.members || [c]);
-  const external = members.filter((c) => !['pdf', 'gemini'].includes(c.source));
+  const external = members.filter((c) => !['pdf', 'gemini', 'gemini-public'].includes(c.source));
   const works = [];
   for (const candidate of external) if (!works.some((work) => (work.source === candidate.source && work.id === candidate.id) || sameWork(work, candidate))) works.push(candidate);
   const loading = [...statuses.values()].some((result) => result.status === 'loading');

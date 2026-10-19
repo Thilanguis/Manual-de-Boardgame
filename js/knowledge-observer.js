@@ -1,4 +1,5 @@
 import { gameDocuments } from './documents.js';
+import { currentKnowledgeStatus } from './knowledge-status.js';
 
 // Apenas acompanhamento de uma requisição já autorizada; não guarda autorização.
 const repositories = new WeakMap();
@@ -17,6 +18,7 @@ export function observeKnowledge(repository, game, { onRecord, onError = () => {
   const active = () => entry.clients.size && !entry.controller.signal.aborted && repository.session.canRead && (repository.session.user?.uid || '') === uid;
   function accept(record) {
     if (!active()) return;
+    record = currentKnowledgeStatus(record);
     clearTimeout(entry.timer);
     for (const c of entry.clients) c.onRecord?.(record);
     if (record?.status === 'running') entry.timer = setTimeout(() => void refresh(), interval);

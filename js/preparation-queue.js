@@ -29,6 +29,7 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
     catalogReady = false;
   let observedGameId = null;
   const key = (game, doc) => `${game.id}:${doc.id}:${doc.manual.sha256}`;
+  const knowledgeContext = (game) => JSON.stringify([normalizeText(game.title), game.edition || '', gameDocuments(game).map((document) => [document.id, document.manual.sha256])]);
   const queueKey = () => `preparation:${scope}:${repository.session.user?.uid || 'device'}`;
   const permitted = (game) => repository.session.canRead && repository.canPrepare(game) && navigator.onLine;
   const persist = async () => {
@@ -41,7 +42,7 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
     const token = sequence,
       user = account;
     const ready = gameDocuments(game).map((document) => jobs.get(key(game, document)));
-    const context = JSON.stringify([normalizeText(game.title), game.edition || '', gameDocuments(game).map((document) => [document.id, document.manual.sha256])]);
+    const context = knowledgeContext(game);
     if (ready.some((job) => !job || !['ready', 'partial'].includes(job.state)) || ready.every((job) => job.knowledgeContext === context)) return;
     // Marca antes da requisição para deduplicar notificações concorrentes e recargas.
     ready.forEach((job) => {
@@ -205,7 +206,7 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
       activeKey = null;
     }
   }
-  async function update(nextGames, { loading = false } = {}) {
+  async function update(nextGames, { loading = false, knowledgeReady = [] } = {}) {
     const uid = repository.session.user?.uid || 'device';
     if (!repository.session.canRead) {
       stop();
@@ -273,6 +274,14 @@ export function createPreparationQueue(repository, { scope = 'local', onChange =
         const id = key(game, doc);
         if (!jobs.has(id)) jobs.set(id, { key: id, gameId: game.id, documentId: doc.id, sourceHash: doc.manual.sha256, state: 'waiting', attempts: 0, current: 0, total: doc.manual.pages });
       }
+    for (const prepared of knowledgeReady) {
+      const game = games.find((g) => g.id === prepared.id);
+      if (!game || knowledgeContext(game) !== knowledgeContext(prepared)) continue;
+      for (const document of gameDocuments(game)) {
+        const job = jobs.get(key(game, document));
+        if (job) Object.assign(job, { knowledgeRequested: true, knowledgeStatus: 'ready', knowledgeContext: knowledgeContext(game) });
+      }
+    }
     for (const [id, job] of jobs) if (!games.some((game) => game.id === job.gameId && findDocument(game, job.documentId)?.manual.sha256 === job.sourceHash)) jobs.delete(id);
     if (activeKey && (!jobs.has(activeKey) || !games.some((game) => game.id === jobs.get(activeKey)?.gameId && permitted(game)))) controller?.abort();
     notify();

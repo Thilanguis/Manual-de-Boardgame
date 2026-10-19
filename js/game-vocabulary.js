@@ -2,7 +2,7 @@ import { normalizeText } from './model.js';
 
 // Vocabulário editorial: traduz termos conhecidos, sem inferir características do jogo.
 const terms = [
-  ['Cooperativo', 'cooperative', 'cooperatif', 'cooperativa', 'cooperativo'],
+  ['Cooperativo', 'cooperative', 'cooperative game', 'cooperatif', 'cooperativa', 'cooperativo'],
   ['Competitivo', 'competitive', 'competitif', 'competitivo'],
   ['Solo', 'solitaire', 'single player', 'solo'],
   ['Por equipes', 'team based', 'team based game', 'en equipes', 'por equipes'],
@@ -18,6 +18,9 @@ const terms = [
   ['Cooperação', 'cooperative play', 'cooperation'],
   ['Controle de área', 'area control', 'area majority', 'controle de zone'],
   ['Seleção de ações', 'action selection', 'selection d actions'],
+  ['Seleção de cartas', 'card drafting', 'draft de cartes'],
+  ['Seleção aberta', 'open drafting'],
+  ['Seleção fechada', 'closed drafting'],
   ['Pontos de ação', 'action points', 'points d action'],
   ['Coleção de conjuntos', 'set collection', 'collection d ensembles'],
   ['Colocação de peças', 'tile placement', 'placement de tuiles'],
