@@ -2,7 +2,17 @@ import { normalizeText, durationRange, synopsisText } from './model.js';
 import { RESEARCH_PROTOCOL } from './research-contract.js';
 import { durationSuggestion } from './research-duration.js';
 
-export const sourceNames = { ludopedia: 'Ludopedia', wikidata: 'Wikidata', wikipedia: 'Wikipédia', pdf: 'PDF · texto do manual', gemini: 'Gemini · manual', 'gemini-public': 'Gemini · fontes públicas', bgg: 'BoardGameGeek' };
+export const sourceNames = {
+  ludopedia: 'Ludopedia',
+  wikidata: 'Wikidata',
+  wikipedia: 'Wikipédia',
+  pdf: 'PDF · texto do manual',
+  gemini: 'Gemini · manual',
+  'gemini-public': 'Gemini · fontes públicas',
+  'gemini-model': 'Gemini · conhecimento do modelo',
+  bgg: 'BoardGameGeek',
+  publisher: 'Editora · ficha pública',
+};
 export function researchSummary(sources, statuses) {
   const active = sources.filter((s) => s.enabled),
     disabled = sources.filter((s) => !s.enabled),

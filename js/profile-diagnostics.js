@@ -11,13 +11,15 @@ export const profileRejectionLabels = {
   identity: 'nome ou edição não encontrado no trecho',
   range: 'faixa incompleta ou inconsistente',
   application: 'não aplicável à identificação atual ou sem conteúdo útil para o campo',
+  'model-value': 'complemento do modelo com valor inválido',
+  'model-range': 'complemento do modelo com faixa incompleta ou inconsistente',
 };
 export function profileDiagnostic(record, candidate) {
   const knowledge = record?.knowledge;
   const checked = inspectProfile(knowledge?.profile, knowledge?.sources || []);
   const analysis = knowledge?.profileAnalysis || checked.analysis;
   const legacy = !!knowledge && !profileCoverageComplete(knowledge);
-  const valid = Object.keys(candidate?.fields || {}).filter((k) => ['gemini', 'gemini-public'].includes(candidate.fieldOrigins?.[k])).length;
+  const valid = Object.keys(candidate?.fields || {}).filter((k) => ['gemini', 'gemini-public', 'gemini-model'].includes(candidate.fieldOrigins?.[k])).length;
   const origin = record?.analysisOrigin || (record?.reusedDraft ? 'server-cache' : 'stored');
   const originLabel = { 'local-cache': 'cache deste dispositivo', 'server-cache': 'cache do servidor', generation: 'nova análise', stored: 'análise salva', cache: 'cache' }[origin] || origin;
   const failed = ['attention', 'quota'].includes(record?.status);
@@ -64,6 +66,7 @@ export function profileDiagnostic(record, candidate) {
     ],
     message: record?.message || '',
     generation: record && Object.hasOwn(record, 'generation') ? record.generation : knowledge?.generation || null,
+    modelCompletion: analysis.modelCompletion || null,
     summary:
       record?.status === 'ready'
         ? legacy

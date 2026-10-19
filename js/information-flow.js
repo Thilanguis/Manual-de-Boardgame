@@ -119,7 +119,7 @@ export function createInformationFlow({ getRepository, getCurrent, canUse, draft
       game = structuredClone(getCurrent());
       const token = epoch;
       const identity = signature(game);
-      if (record?.status === 'running' || (hasCompleteProfile(record?.knowledge, game) && (!includePublic || combinedProfileComplete(record.knowledge)))) return record;
+      if (record?.status === 'running' || (hasCompleteProfile(record?.knowledge, game) && (!includePublic || combinedProfileComplete(record.knowledge, getRepository().session.storageStatus?.profileEvidenceProtocol || 1)))) return record;
       if (record?.status === 'identity_changed') return record;
       if (record?.status === 'quota' && record.retryAt > Date.now()) {
         onStatus(record.message || 'A cota da IA foi atingida. Somente fatos encontrados no PDF e nas fontes poderão ser preenchidos.');

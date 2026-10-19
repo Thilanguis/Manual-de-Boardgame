@@ -67,6 +67,16 @@ export function consolidateMetadata(game, input, chosen = null) {
       }
     }
   }
+  // O conhecimento do modelo é um complemento, nunca um voto adicional contra
+  // PDF/catálogos nem uma razão para pedir ao usuário que resolva falso conflito.
+  for (const [key, facts] of Object.entries(alternatives)) {
+    const backed = facts.filter((fact) => fact.source !== 'gemini-model');
+    if (backed.length) {
+      alternatives[key] = backed;
+      fields[key] = backed[0].value;
+      fieldSources[key] = backed[0];
+    }
+  }
   for (const [key, facts] of Object.entries(alternatives)) {
     const distinct = new Set(facts.map((f) => signature(f.value)));
     const independent = new Set(facts.map((f) => f.evidenceGroup || `${f.source}:${f.id}`));
@@ -111,13 +121,15 @@ export function consolidateMetadata(game, input, chosen = null) {
 export function metadataUpdates(model, game, dirty = new Set(), automatic = {}) {
   const values = {};
   for (const [key, value] of Object.entries(model.fields)) {
+    if (model.fieldSources[key]?.source === 'gemini-model' && !emptyValue(game[key])) continue;
     const origin = game.sources?.[sourceField(key)];
     if (model.consistency?.[key] === 'conflict' || dirty.has(key) || origin?.confirmedAt || /conferido|corrigido|ajustado por voc/i.test(origin?.source || '')) continue;
     // Classificações extraídas automaticamente do PDF podem ser completadas,
     // sem remover nenhum termo existente nem tocar em listas editadas/conferidas.
     const extendsPdfList = ['tags', 'mechanics'].includes(key) && /^PDF/i.test(origin?.source || '') && Array.isArray(game[key]) && Array.isArray(value) && game[key].every((item) => value.some((v) => researchName(item) === researchName(v)));
     const improvesPdfSummary = key === 'description' && /^PDF/i.test(origin?.source || '') && model.fieldSources[key]?.generated;
-    if (!equal(game[key], value) && (emptyValue(game[key]) || extendsPdfList || improvesPdfSummary || (key in automatic && equal(game[key], automatic[key])))) values[key] = value;
+    const replacesModelSuggestion = origin?.basis === 'model' && origin.verified === false && model.fieldSources[key]?.source !== 'gemini-model';
+    if (!equal(game[key], value) && (emptyValue(game[key]) || extendsPdfList || improvesPdfSummary || replacesModelSuggestion || (key in automatic && equal(game[key], automatic[key])))) values[key] = value;
   }
   // Não completar metade de uma faixa com outro valor sem conferência.
   for (const pair of [

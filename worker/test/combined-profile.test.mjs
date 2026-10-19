@@ -78,7 +78,7 @@ test('uma geração reúne ficha completa e regras; cache e adoção não repete
     const data = input(),
       record = await run(data);
     assert.equal(record.status, 'ready');
-    assert.equal(record.knowledge.profileAnalysis.publicEvidenceProtocol, 1);
+    assert.equal(record.knowledge.profileAnalysis.publicEvidenceProtocol, 3);
     assert.equal(record.knowledge.profileAnalysis.valid, 11);
     assert.equal(fixture.calls.length, 1);
     assert.equal(fixture.discoveryCalls.length, 1);

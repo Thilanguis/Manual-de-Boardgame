@@ -21,10 +21,10 @@ export function savedKnowledgeCandidate(record, game) {
       evidence[key] = { page: fact.page || section?.page, excerpt: fact.quote || section?.quote };
     }
     fields[key] = fact.value;
-    fieldOrigins[key] = fact.generated || knowledge.profile?.[key] || key === 'description' ? (source.pages ? 'gemini' : 'gemini-public') : source.pages ? 'pdf' : source.catalogSource;
+    fieldOrigins[key] = source.modelOnly ? 'gemini-model' : fact.generated || knowledge.profile?.[key] || key === 'description' ? (source.pages ? 'gemini' : 'gemini-public') : source.pages ? 'pdf' : source.catalogSource;
     evidence[key] = {
       ...evidence[key],
-      excerpt: fact.excerpt || fact.quote,
+      excerpt: fact.excerpt || fact.quote || source.fieldEvidence?.[key]?.excerpt,
       ...(fact.page ? { page: fact.page, evidenceId: fact.evidenceId } : {}),
       ...(source.pages
         ? { documentId: source.documentId || 'main', sourceHash: source.sourceHash }
@@ -38,6 +38,7 @@ export function savedKnowledgeCandidate(record, game) {
             ...(source.fieldEvidence?.[key] ? { claim: source.fieldEvidence[key] } : {}),
           }),
       sourceId: source.id,
+      ...(source.modelOnly ? { basis: 'model', verified: false, model: source.model } : {}),
     };
   }
   if (!Object.keys(fields).length) return null;

@@ -111,7 +111,12 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
             .filter((f, i, all) => all.findIndex((other) => other.source === f.source && other.id === f.id && other.evidence?.page === f.evidence?.page && other.url === f.url) === i);
         row.append(text('p', display(fact.value)));
         for (const source of origins) {
-          row.append(text('small', `${sourceNames[source.source] || source.source}${source.evidence?.page ? ` · página ${source.evidence.page}` : ''}${source.editionUnconfirmed ? ' · edição não confirmada pela fonte' : ''}`));
+          row.append(
+            text(
+              'small',
+              `${sourceNames[source.source] || source.source}${source.evidence?.page ? ` · página ${source.evidence.page}` : ''}${source.source === 'gemini-model' ? ' · sem fonte externa verificada' : source.editionUnconfirmed ? ' · edição não confirmada pela fonte' : ''}`,
+            ),
+          );
           for (const [label, url] of [
             ['Consultar fonte', source.url],
             ['Licença', source.licenseUrl],

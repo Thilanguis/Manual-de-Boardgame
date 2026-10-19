@@ -1038,7 +1038,15 @@ function applyMetadataValues(values, model, { automatic = false, retract = false
     const origin = model.fieldSources?.[key] || model;
     draft.sources[sourceField(key)] = {
       ...(origin.evidence || {}),
-      source: automatic ? (origin.source === 'gemini' ? 'Gemini · sugestão do manual' : origin.source === 'gemini-public' ? 'Gemini · fontes públicas' : 'Sugestão · ' + origin.source) : 'Conferido e ajustado por você',
+      source: automatic
+        ? origin.source === 'gemini'
+          ? 'Gemini · sugestão do manual'
+          : origin.source === 'gemini-public'
+            ? 'Gemini · fontes públicas'
+            : origin.source === 'gemini-model'
+              ? 'Gemini · conhecimento do modelo'
+              : 'Sugestão · ' + origin.source
+        : 'Conferido e ajustado por você',
       excerpt: origin.evidence?.excerpt || String(value),
       url: origin.url || '',
       license: origin.license || '',

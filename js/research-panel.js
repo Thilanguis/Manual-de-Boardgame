@@ -284,6 +284,8 @@ export function createResearchPanel({
             node('p', (d.legacy ? 'Ainda sem análise Gemini completa: ' : 'Não fornecidos pelo Gemini com evidência válida: ') + d.missing.map((k) => fieldLabels[k]).join(', ') + '. Os campos podem ser complementados pelo PDF e pelos catálogos.'),
           );
         if (d.discoveryMessage) block.append(node('p', d.discoveryMessage));
+        if (d.modelCompletion?.filled?.length)
+          block.append(node('p', 'Complemento pelo conhecimento do Gemini: ' + d.modelCompletion.filled.map((key) => fieldLabels[key] || key).join(', ') + '. Identificado na ficha como conhecimento do modelo, sem fonte externa verificada.'));
         for (const rejection of d.rejected) block.append(node('p', rejectionText(rejection)));
         for (const limitation of d.limitations) block.append(node('p', limitation));
         diagnostics.prepend(block);
@@ -470,9 +472,9 @@ export function createResearchPanel({
         await loadSources(budget);
         const record = await knowledgeTask;
         if (signal.aborted || n !== sequence) return;
-        if ((record?.status === 'running' || combinedProfileComplete(record?.knowledge)) && !expanded && !root.querySelector('[data-research-refresh]')?.checked) {
+        if ((record?.status === 'running' || combinedProfileComplete(record?.knowledge, health?.profileEvidenceProtocol || 1)) && !expanded && !root.querySelector('[data-research-refresh]')?.checked) {
           for (const diagnostic of record?.knowledge?.diagnostics || [])
-            if (['wikidata', 'wikipedia'].includes(diagnostic.source))
+            if (['wikidata', 'wikipedia', 'bgg', 'ludopedia', 'publisher'].includes(diagnostic.source))
               statuses.set(diagnostic.source, {
                 status: diagnostic.state === 'failed' ? 'error' : 'done',
                 error: diagnostic.state === 'failed' ? 'Esta fonte não respondeu; os demais resultados foram preservados.' : '',
@@ -480,7 +482,8 @@ export function createResearchPanel({
               });
           const latest = getCurrent();
           queryInput = { query: normalizedQuery(latest.title), edition: latest.edition || '', manualHash: latest.manual?.sha256 || '', preferredLanguage: language.value, kind: kind.value, fetchedAt: Date.now() };
-          const complementary = sources.filter((source) => source.enabled && !['wikidata', 'wikipedia'].includes(source.id));
+          const completed = new Set((record?.knowledge?.diagnostics || []).map((d) => d.source));
+          const complementary = sources.filter((source) => source.enabled && !completed.has(source.id));
           if (complementary.length) {
             const discoveryHints = record.profileDiscovery?.hints || record.knowledge?.profileAnalysis?.discovery?.hints || [];
             queryInput.alternateTitles = [...research.alternateTitles, ...discoveryHints].slice(0, 6);
@@ -768,12 +771,16 @@ export function createResearchPanel({
       candidates = candidates.filter((c) => c.source !== 'gemini' && !c.fromKnowledge);
       if (matches)
         for (const source of record?.knowledge?.sources || []) {
-          if (!source.profileOnly || !profileSourceMatches(source, getDocuments(current)) || !['wikidata', 'wikipedia'].includes(source.catalogSource)) continue;
+          if (!source.profileOnly || !profileSourceMatches(source, getDocuments(current)) || !['wikidata', 'wikipedia', 'bgg', 'ludopedia'].includes(source.catalogSource)) continue;
           const item = {
             source: source.catalogSource,
             fromKnowledge: true,
             id: source.catalogId,
             identifiers: source.identifiers,
+            identityEvidence: source.identityEvidence,
+            publicationYear: source.publicationYear,
+            creators: source.creators || [],
+            needsDetail: false,
             names: source.originalTitles || [],
             fields: Object.fromEntries(Object.entries(source.facts || {}).filter(([key]) => key in profileDefinitions && !(source.profileSpecificEligible === false && (profileDefinitions[key].type === 'integer' || key === 'edition')))),
             language: source.language,
@@ -783,6 +790,7 @@ export function createResearchPanel({
             licenseUrl: source.licenseUrl,
             authorsUrl: source.authorsUrl,
             fieldEvidence: source.fieldEvidence || {},
+            ...(source.attributionLogo ? { attributionLogo: source.attributionLogo } : {}),
             kind: source.kind || 'unknown',
             edition: source.edition || '',
             manualHash: current.manual.sha256,

@@ -423,6 +423,8 @@ export async function handleRequest(request, env, ctx) {
         knowledgeProtocol: 1,
         manualKnowledgeProtocol: env.KNOWLEDGE_FROM_MANUAL === 'true' ? 1 : 0,
         profileMetadataProtocol: 2,
+        profileEvidenceProtocol: 3,
+        profileModelCompletionProtocol: 1,
         profileDiscoveryProtocol: 1,
         profileDiscoveryModel: 'gemini-2.5-flash-lite',
         profileDiscoveryLimits: { perAnalysis: 1, perMinute: null, perDay: null },

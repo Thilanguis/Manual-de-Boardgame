@@ -15,6 +15,8 @@ test('health anuncia ausência de limites internos sem consultar serviços exter
     assert.equal(data.knowledgeInternalQuota, false);
     assert.deepEqual(data.profileDiscoveryLimits, { perAnalysis: 1, perMinute: null, perDay: null });
     assert.equal(data.profileMetadataProtocol, 2);
+    assert.equal(data.profileEvidenceProtocol, 3);
+    assert.equal(data.profileModelCompletionProtocol, 1);
     assert.equal(data.knowledgeReuseProtocol, 1);
     assert.equal(data.informationIdentityProtocol, 1);
   } finally {

@@ -16,6 +16,8 @@ const { chromium } = require('playwright'),
 const project = 'demo-acervo',
   base = process.env.ACERVO_TEST_URL || 'http://127.0.0.1:4186',
   title = 'Sushi Go Party!';
+const fromPublisher = process.env.ACERVO_TEST_PUBLISHER === '1';
+const fromModel = process.env.ACERVO_TEST_MODEL_PROFILE === '1';
 const env = await initializeTestEnvironment({ projectId: project, firestore: { host: '127.0.0.1', port: Number(process.env.FIRESTORE_EMULATOR_HOST.split(':')[1]), rules: await readFile('firestore.rules', 'utf8') } });
 const backend = await workerFixture({
   project,
@@ -26,6 +28,8 @@ const backend = await workerFixture({
   port: 8787,
   knowledgeOptions: {
     catalogGame: { title },
+    ...(fromPublisher || fromModel ? { emptyPublicSources: true } : {}),
+    ...(fromPublisher ? { publisherHtml: await readFile('tests/fixtures/gamewright-profile.html', 'utf8') } : {}),
     names: [title],
     minPlayers: 2,
     maxPlayers: 8,
@@ -36,17 +40,20 @@ const backend = await workerFixture({
     actionText: 'Escolha uma carta e passe as demais cartas ao próximo jogador.',
   },
 });
-backend.configuration.BGG_TOKEN = 'fixture-bgg';
-backend.configuration.BGG_LOGO_URL = 'https://thilanguis.github.io/Manual-de-Boardgame/assets/powered-by-bgg.svg';
-backend.configuration.LUDOPEDIA_TOKEN = 'fixture-ludopedia';
+if (!fromPublisher && !fromModel) {
+  backend.configuration.BGG_TOKEN = 'fixture-bgg';
+  backend.configuration.BGG_LOGO_URL = 'https://thilanguis.github.io/Manual-de-Boardgame/assets/powered-by-bgg.svg';
+  backend.configuration.LUDOPEDIA_TOKEN = 'fixture-ludopedia';
+}
+const catalogRequests = fromPublisher || fromModel ? 0 : 4;
 const expected = {
   title,
-  edition: '2025',
+  edition: fromPublisher || fromModel ? '' : '2025',
   description: 'Escolha cartas e passe a mão restante, formando combinações para marcar pontos.',
   minPlayers: 2,
   maxPlayers: 8,
-  minDurationMinutes: 20,
-  maxDurationMinutes: 20,
+  minDurationMinutes: fromPublisher ? 30 : 20,
+  maxDurationMinutes: fromPublisher ? 30 : 20,
   recommendedAge: 8,
   tags: ['Jogo de cartas'],
   mechanics: ['Seleção de cartas', 'Coleção de conjuntos'],
@@ -54,16 +61,22 @@ const expected = {
 };
 backend.knowledge.faults.metadata = (prompt) => {
   assert.equal(prompt.game.title, title, 'título corrigido no prompt');
+  if (fromModel) return Object.fromEntries(Object.keys(expected).map((key) => [key, null]));
   const manual = prompt.sources.find((s) => s.pages),
-    pub = prompt.sources.find((s) => s.profileOnly && s.name === 'Wikidata');
+    pub = prompt.sources.find((s) => s.profileOnly && (fromPublisher ? s.catalogSource === 'publisher' : s.name === 'Wikidata'));
   assert(pub, 'catálogo disponível na mesma chamada Gemini');
   return Object.fromEntries(
     Object.entries(expected).map(([key, value]) => [
       key,
-      ['minDurationMinutes', 'maxDurationMinutes', 'recommendedAge'].includes(key) ? { value, sourceId: pub.id, quote: JSON.stringify(pub.facts) } : { value, sourceId: manual.id, page: 1, evidenceId: manual.pages[0].passages[0].id },
+      !value || (fromPublisher && ['minDurationMinutes', 'maxDurationMinutes', 'recommendedAge'].includes(key))
+        ? null
+        : ['minDurationMinutes', 'maxDurationMinutes', 'recommendedAge'].includes(key)
+          ? { value, sourceId: pub.id, quote: JSON.stringify(pub.facts) }
+          : { value, sourceId: manual.id, page: 1, evidenceId: manual.pages[0].passages[0].id },
     ]),
   );
 };
+if (fromModel) backend.knowledge.faults.modelProfile = { requestedTitle: title, requestedEdition: '', recognized: true, fields: Object.fromEntries(Object.entries(expected).filter(([key]) => !['title', 'edition'].includes(key))) };
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const errors = [],
   external = [];
@@ -86,6 +99,7 @@ async function stored(path) {
   return value;
 }
 try {
+  await env.clearFirestore();
   await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/projects/${project}/accounts`, {
     method: 'POST',
     headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
@@ -133,9 +147,12 @@ try {
     font = await pdf.embedFont(StandardFonts.Helvetica);
   pdf.setTitle('sushi_go_party_manual_63713');
   const sheet = pdf.addPage();
-  [title, 'Edição de 2025. Para 2 a 8 jogadores.', 'Escolha uma carta e passe as demais cartas para o próximo jogador.', 'Forme conjuntos de cartas e compare os pontos. Quem tem mais pontos vence.'].forEach((s, i) =>
-    sheet.drawText(s, { x: 30, y: 760 - i * 30, size: 12, font }),
-  );
+  [
+    title,
+    fromPublisher ? 'www.gamewright.com. Para 2 a 8 jogadores. Idades: 8+.' : fromModel ? 'Para 2 a 8 jogadores. Idades: 8+.' : 'Edição de 2025. Para 2 a 8 jogadores.',
+    'Escolha uma carta e passe as demais cartas para o próximo jogador.',
+    'Forme conjuntos de cartas e compare os pontos. Quem tem mais pontos vence.',
+  ].forEach((s, i) => sheet.drawText(s, { x: 30, y: 760 - i * 30, size: 12, font }));
   const bytes = Buffer.from(await pdf.save());
   const hash = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex');
   const legacySources = [{ id: 'manual-1', documentId: 'main', sourceHash: hash, pages: [{ page: 1, text: 'Análise anterior com o título técnico do arquivo.' }] }];
@@ -157,15 +174,23 @@ try {
   assert.equal(backend.knowledge.calls.length, 1, await page.locator('[data-research-status]').textContent());
   assert.equal(backend.knowledge.discoveryCalls.length, 1, 'descoberta adicional limitada e contada separadamente');
   for (const [key, value] of Object.entries(expected)) assert.equal(await page.locator(key === 'title' ? '[data-metadata-title]' : `#game-form [name=${key}]`).inputValue(), Array.isArray(value) ? value.join(', ') : String(value), key);
-  for (const source of ['bgg', 'ludopedia'])
+  for (const source of fromPublisher || fromModel ? [] : ['bgg', 'ludopedia'])
     assert(
-      backend.calls.some((c) => c.path === '/v1/research/' + source && c.status === 200),
+      backend.knowledge.catalogCalls.some((url) => url.includes(source === 'bgg' ? 'boardgamegeek.com' : 'ludopedia.com.br')),
       source + ' participa da consolidação',
     );
-  assert.equal(backend.knowledge.catalogCalls.length, 4, JSON.stringify({ calls: backend.calls.filter((c) => c.path.includes('research')), details: await page.locator('[data-research-diagnostics]').textContent() }));
+  assert.equal(backend.knowledge.catalogCalls.length, catalogRequests, JSON.stringify({ calls: backend.calls.filter((c) => c.path.includes('research')), details: await page.locator('[data-research-diagnostics]').textContent() }));
   await page.locator('[data-research-diagnostics]').evaluate((el) => (el.parentElement.open = true));
-  assert.match(await page.locator('[data-research-diagnostics]').textContent(), /Ludopedia: 1 candidato\(s\), 1 correspondência/);
-  assert.match(await page.locator('[data-research-diagnostics]').textContent(), /BoardGameGeek: 1 candidato\(s\), 1 correspondência/);
+  if (!fromPublisher && !fromModel) {
+    assert.match(await page.locator('[data-research-diagnostics]').textContent(), /Ludopedia: 1 candidato\(s\), 1 correspondência/);
+    assert.match(await page.locator('[data-research-diagnostics]').textContent(), /BoardGameGeek: 1 candidato\(s\), 1 correspondência/);
+  } else if (fromPublisher) {
+    assert.match(await page.locator('#game-form').textContent(), /Editora · ficha pública/);
+    assert.equal(backend.knowledge.publicCalls.filter((url) => url.includes('gamewright.com/product/')).length, 1);
+  } else {
+    assert.match(await page.locator('#game-form').textContent(), /Gemini · conhecimento do modelo/);
+    assert.equal(backend.knowledge.publicCalls.filter((url) => url.includes('gamewright.com')).length, 0);
+  }
   assert.equal(backend.calls.filter((c) => /\/v1\/research\/(wikidata|wikipedia)$/.test(c.path)).length, 0, 'não duplica pesquisas do servidor no frontend');
   const publicCalls = backend.knowledge.publicCalls.length;
   await page.locator('[data-research-search]').click();
@@ -173,7 +198,12 @@ try {
   assert.equal(backend.knowledge.calls.length, 1);
   assert.equal(backend.knowledge.discoveryCalls.length, 1);
   assert.equal(backend.knowledge.publicCalls.length, publicCalls);
-  assert.equal(backend.knowledge.catalogCalls.length, 4, 'cache também preserva transportes dos catálogos autorizados');
+  assert.equal(backend.knowledge.catalogCalls.length, catalogRequests, 'cache também preserva transportes dos catálogos autorizados');
+  if (fromPublisher || fromModel) {
+    await mkdir('test-output/profile-research', { recursive: true });
+    await page.locator('[name=minDurationMinutes]').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: fromModel ? 'test-output/profile-research/model-stage2.png' : 'test-output/profile-research/publisher-stage2.png' });
+  }
   await page.locator('[name=recommendedAge]').fill('9');
   await page.locator('#game-next').click();
   await page.locator('[name=confirmed]').check();
@@ -188,8 +218,14 @@ try {
   const game = all[0],
     path = `/v1/games/${game.id}/knowledge`;
   assert.equal(game.recommendedAge, 9, 'correção manual salva');
-  assert.equal(game.minDurationMinutes, 20);
-  assert.equal(game.maxDurationMinutes, 20);
+  assert.equal(game.minDurationMinutes, expected.minDurationMinutes);
+  assert.equal(game.maxDurationMinutes, expected.maxDurationMinutes);
+  if (fromModel) {
+    assert.equal(game.sources.duration.source, 'Gemini · conhecimento do modelo');
+    assert.equal(game.sources.duration.verified, false);
+    assert.equal(game.sources.duration.page, undefined);
+    assert.equal(game.sources.duration.url, '');
+  }
   const record = await api(page, path);
   assert.equal(record.data.status, 'ready', 'conhecimento vinculado ao concluir cadastro');
   assert(record.data.knowledge.sources.some((s) => s.profileOnly));
@@ -212,13 +248,13 @@ try {
   assert.equal(backend.knowledge.calls.length, 1);
   assert.equal(backend.knowledge.discoveryCalls.length, 1, 'regras e reload não consultam os modelos');
   assert.equal(backend.knowledge.publicCalls.length, publicCalls, 'consulta/reload não refaz internet ou IA');
-  assert.equal(backend.knowledge.catalogCalls.length, 4, 'consultar regras não reabre catálogos');
+  assert.equal(backend.knowledge.catalogCalls.length, catalogRequests, 'consultar regras não reabre catálogos');
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   assert.deepEqual(backend.metrics.blockedOutbound, []);
   await mkdir('test-output/combined-profile', { recursive: true });
   await writeFile(
-    'test-output/combined-profile/browser.json',
+    fromModel ? 'test-output/combined-profile/model-browser.json' : fromPublisher ? 'test-output/combined-profile/publisher-browser.json' : 'test-output/combined-profile/browser.json',
     JSON.stringify(
       {
         game,
@@ -237,7 +273,7 @@ try {
     ),
   );
   console.log(
-    'Cadastro completo com nome corrigido: PDF + fontes públicas + uma geração; 11 inputs, duração 20/20, edição manual, índice e conhecimento vinculados antes de fechar; Consultar regras e reload sem outra IA/pesquisa. Somente emuladores e serviços simulados.',
+    `Cadastro completo com nome corrigido: PDF + ${fromModel ? 'conhecimento do próprio Gemini, sem catálogos/editora; duração 20/20 e origem persistida sem fonte externa verificada' : fromPublisher ? 'ficha da editora, sem Wikimedia/BGG/Ludopedia; duração 30/30 e origem Editora; nenhuma edição inventada' : 'catálogos autorizados no servidor, duração 20/20 e edição manual'} + resumo e classificações Gemini; índice e conhecimento vinculados antes de fechar; Consultar regras e reload sem outra IA/pesquisa. Somente emuladores e serviços simulados.`,
   );
 } finally {
   await browser.close();

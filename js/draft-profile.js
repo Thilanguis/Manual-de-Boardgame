@@ -73,7 +73,7 @@ export function createDraftProfile({ getRepository, getCurrent, getDocuments, on
       };
       const target = { ...current, documents: Object.fromEntries(documents.map((d) => [d.id, d])) };
       const cachedRecord = recontextualizeDraft(saved, target, documents);
-      const readyCache = saved?.status === 'ready' && hasCompleteProfile(cachedRecord?.knowledge, target) && (!includePublic || combinedProfileComplete(cachedRecord.knowledge));
+      const readyCache = saved?.status === 'ready' && hasCompleteProfile(cachedRecord?.knowledge, target) && (!includePublic || combinedProfileComplete(cachedRecord.knowledge, health?.profileEvidenceProtocol || 1));
       let repairCover = false;
       if (retry && readyCache)
         for (const document of documents) {

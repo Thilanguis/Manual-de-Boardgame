@@ -52,6 +52,14 @@ export function knowledgeFixture(fixtureOptions = {}) {
     env: { GEMINI_API_KEY: 'fixture-gemini-secret', GAME_KNOWLEDGE: { idFromName: (name) => name, get: () => store } },
     async fetch(value, options) {
       const url = new URL(String(value));
+      if (fixtureOptions.publisherHtml && url.hostname === 'gamewright.com' && url.pathname.startsWith('/product/')) {
+        publicCalls.push(url.href);
+        return new Response(fixtureOptions.publisherHtml, { headers: { 'Content-Type': 'text/html' } });
+      }
+      if (fixtureOptions.emptyPublicSources && ['www.wikidata.org', 'pt.wikipedia.org', 'en.wikipedia.org', 'fr.wikipedia.org'].includes(url.hostname)) {
+        publicCalls.push(url.href);
+        return Response.json(url.hostname === 'www.wikidata.org' ? { search: [] } : { query: { pages: [] } });
+      }
       if (fixtureOptions.catalogGame && ['boardgamegeek.com', 'ludopedia.com.br'].includes(url.hostname)) {
         catalogCalls.push(url.href);
         const game = fixtureOptions.catalogGame;
@@ -106,7 +114,8 @@ export function knowledgeFixture(fixtureOptions = {}) {
                         language: 'pt-BR',
                         unconfirmed: [],
                         metadata: typeof faults.metadata === 'function' ? faults.metadata(prompt) : faults.metadata || {},
-                        sections: [
+                        ...(faults.modelProfile ? { modelProfile: typeof faults.modelProfile === 'function' ? faults.modelProfile(prompt) : faults.modelProfile } : {}),
+                        sections: faults.sections || [
                           {
                             topic: 'visao-geral',
                             title: 'Visão geral',

@@ -85,7 +85,7 @@ export async function draftKnowledgeEndpoint(request, env, identity, input, ctx)
   if (env.ALLOW_MANUAL_AI !== 'true') return json({ status: 'pending_authorization', knowledge: null, message: 'A análise dos manuais aguarda autorização.' });
   const sources = draftSources(input);
   checkKnowledgeSources(sources);
-  if (!sources.some((s) => s.pages.some((p) => manualPassages(p, s.id).length)))
+  if (!sources.some((s) => s.pages.some((p) => manualPassages(p, s.id).length)) && !(input.includePublic === true && input.title.trim().length >= 2))
     return json({ status: 'attention', knowledge: null, message: 'Não há texto legível suficiente para a IA. Recupere as páginas por OCR local; nenhuma geração foi iniciada.' });
   const key = await draftContextKey(identity.uid, sources),
     fingerprint = await evidenceFingerprint(sources),
@@ -100,7 +100,7 @@ export async function draftKnowledgeEndpoint(request, env, identity, input, ctx)
     );
   const profileValid =
     !!cachedContext?.knowledge &&
-    (input.includePublic === true ? combinedProfileComplete(existing?.knowledge) : profileCoverageComplete(existing?.knowledge)) &&
+    (input.includePublic === true ? combinedProfileComplete(existing?.knowledge, 3) : profileCoverageComplete(existing?.knowledge)) &&
     existing?.knowledge &&
     (Object.keys(validateProfile(existing.knowledge.profile, existing.knowledge.sources || [])).length > 0 ||
       (existing.knowledge.profileAnalysis?.version >= 2 && existing.knowledge.profileAnalysis?.complete === true && !!existing.knowledge.profile && !Object.keys(existing.knowledge.profile).length));
@@ -132,8 +132,8 @@ export async function draftKnowledgeEndpoint(request, env, identity, input, ctx)
     const deadline = AbortSignal.timeout(26000);
     const limitedFetch = (url, options = {}) => fetch(url, { ...options, signal: options.signal ? AbortSignal.any([deadline, options.signal]) : deadline });
     try {
-      const knowledge = await synthesizePublicKnowledge(game, collected.sources, env, limitedFetch);
-      if (input.includePublic === true) knowledge.profileAnalysis.publicEvidenceProtocol = 1;
+      const knowledge = await synthesizePublicKnowledge(game, collected.sources, env, limitedFetch, { completeProfile: input.includePublic === true });
+      if (input.includePublic === true) knowledge.profileAnalysis.publicEvidenceProtocol = 3;
       if (collected.discovery) knowledge.profileAnalysis.discovery = collected.discovery;
       knowledge.diagnostics = collected.diagnostics;
       await requirePermission(env, identity, rights.edit ? 'edit' : 'add', limitedFetch);
@@ -178,11 +178,12 @@ export async function reusableDraftKnowledge(game, sources, env) {
     return current && passage ? { ...item, sourceId: current.id, documentId: current.documentId, sourceHash: current.sourceHash, evidenceId: passage.id } : item;
   };
   // Revalidação das citações contra os índices lidos do Drive, nunca contra o cliente.
-  const clean = validateSynthesis({ language: saved.language, sections: saved.sections.map(rebind), unconfirmed: saved.unconfirmed }, sources);
+  const profile = validateProfile(Object.fromEntries(Object.entries(saved.profile || {}).map(([k, v]) => [k, rebind(v)])), sources, manualPassages);
+  const clean = validateSynthesis({ language: saved.language, sections: saved.sections.map(rebind), unconfirmed: saved.unconfirmed }, sources, { allowEmpty: saved.profileAnalysis?.publicEvidenceProtocol >= 3 && Object.keys(profile).length > 0 });
   return {
     ...saved,
     ...clean,
-    profile: validateProfile(Object.fromEntries(Object.entries(saved.profile || {}).map(([k, v]) => [k, rebind(v)])), sources, manualPassages),
+    profile,
     sources,
     gameId: game.id,
     title: game.title,

@@ -17,6 +17,34 @@ export const profileDefinitions = {
   mechanics: { type: 'array', max: 8 },
   gameType: { type: 'string', max: 80 },
 };
+export const modelProfileFields = Object.keys(profileDefinitions).filter((key) => !['title', 'edition'].includes(key));
+// Esta validação é de formato, não confirmação externa de uma afirmação da IA.
+export function validModelProfileValue(key, value) {
+  if (!modelProfileFields.includes(key)) return false;
+  const definition = profileDefinitions[key];
+  if (definition.type === 'integer') return Number.isInteger(value) && value > 0 && value <= definition.max;
+  if (definition.type === 'array') return Array.isArray(value) && value.length > 0 && value.length <= definition.max && value.every((v) => typeof v === 'string' && v.trim() && v.length <= 40 && !textQuality(v).corrupt);
+  return typeof value === 'string' && !!value.trim() && value.length <= definition.max && !textQuality(value).corrupt;
+}
+export function modelProfileSchema() {
+  return {
+    type: 'object',
+    required: ['requestedTitle', 'requestedEdition', 'recognized', 'fields'],
+    properties: {
+      requestedTitle: { type: 'string' },
+      requestedEdition: { type: 'string' },
+      recognized: { type: 'boolean' },
+      fields: {
+        type: 'object',
+        required: modelProfileFields,
+        properties: {
+          ...Object.fromEntries(modelProfileFields.map((key) => [key, { type: profileDefinitions[key].type, nullable: true, ...(profileDefinitions[key].type === 'array' ? { items: { type: 'string' } } : {}) }])),
+          durationMinutes: { type: 'integer', nullable: true },
+        },
+      },
+    },
+  };
+}
 export const PROFILE_INSTRUCTION =
   'Além das seções, examine obrigatoriamente TODOS os campos de metadata, não apenas a descrição: title, edition, description, minPlayers, maxPlayers, minDurationMinutes, maxDurationMinutes, recommendedAge, tags, mechanics e gameType. Preencha título oficial (não invente tradução), edição, resumo em PT-BR, jogadores, duração, idade, categorias/temas, mecânicas e tipo quando sustentados pelas fontes. Categorias, mecânicas e tipo podem sintetizar o que as passagens descrevem, em PT-BR, com evidência da classificação. Não deixe de examinar um campo porque já existe um resumo. Cada campo encontrado contém value, sourceId e referência verificável; campo examinado sem informação é null. Use o passage que sustenta cada valor. Se a duração for fixa, REPITA o mesmo número em minDurationMinutes e maxDurationMinutes (90 minutos = 90 e 90). Se houver intervalo, use o menor no mínimo e o maior no máximo, convertidos em minutos. Nunca use duração de uma ação/rodada como duração da partida. Faixas devem vir da mesma fonte. Não use contagens de componentes como jogadores ou idade. Não confunda idioma do manual com edição. Não invente valores, edições, categorias ou mecânicas. Esta ficha é adicional e não altera as instruções das seções de regras.';
 
@@ -77,12 +105,27 @@ export function inspectProfile(raw, sources, passagesFor) {
       reject(key, 'source');
       continue;
     }
+    if (source.origin === 'model-knowledge') {
+      if (!source.profileOnly || !source.modelOnly || source.profileEligible === false || item.basis !== 'model' || !validModelProfileValue(key, item.value) || JSON.stringify(source.claims?.[key]) !== JSON.stringify(item.value)) {
+        reject(key, 'model-value');
+        continue;
+      }
+      fields[key] = { value: item.value, sourceId: source.id, basis: 'model', verified: false, generated: true, language: 'pt-BR', model: source.model, license: source.license, url: '' };
+      continue;
+    }
     if (source.profileEligible === false || source.scope === 'general-work-only' || source.scope === 'edition-unconfirmed' || (source.profileOnly && source.profileSpecificEligible === false && (definition.type === 'integer' || key === 'edition'))) {
       reject(key, 'edition');
       continue;
     }
     const page = source.pages?.find((p) => p.page === item.page);
-    const passage = page && passagesFor?.(page, source.id).find((p) => p.id === item.evidenceId);
+    const passages = page && passagesFor?.(page, source.id);
+    let passage = passages?.find((p) => p.id === item.evidenceId);
+    // Corrige somente uma referência mecânica: mesmo documento/página e trecho
+    // literal sustentado por um único passage. Nunca procura outra página.
+    if (!passage && passages && typeof item.excerpt === 'string' && item.excerpt.trim().length >= 8) {
+      const matches = passages.filter((p) => p.text.includes(item.excerpt.trim()));
+      if (matches.length === 1) passage = matches[0];
+    }
     const quote = passagesFor && source.pages ? passage?.text : item.quote;
     const evidence = source.pages ? page?.text : JSON.stringify(source.facts || {});
     if (!quote || quote.length < 8 || quote.length > 1500 || !normalizeText(evidence).includes(normalizeText(quote))) {
@@ -145,7 +188,7 @@ export function inspectProfile(raw, sources, passagesFor) {
       language: 'pt-BR',
       originalLanguage: source.language,
       generated: true,
-      ...(page ? { page: page.page, evidenceId: item.evidenceId, documentId: source.documentId || 'main', sourceHash: source.sourceHash } : {}),
+      ...(page ? { page: page.page, evidenceId: passage?.id || item.evidenceId, documentId: source.documentId || 'main', sourceHash: source.sourceHash } : {}),
       license: source.license || '',
       url: source.url || '',
     };
@@ -186,7 +229,7 @@ export function profileCoverageComplete(knowledge) {
   const valid = validateProfile(knowledge.profile, knowledge.sources || []);
   return Object.keys(profileDefinitions).every((k) => valid[k]);
 }
-export function combinedProfileComplete(knowledge) {
+export function combinedProfileComplete(knowledge, evidenceProtocol = 1) {
   if (!profileCoverageComplete(knowledge)) return false;
   const fields = validateProfile(knowledge?.profile, knowledge?.sources || []);
   const practical = Object.keys(profileDefinitions).filter((k) => !['title', 'edition'].includes(k));
@@ -195,7 +238,7 @@ export function combinedProfileComplete(knowledge) {
   // Uma tentativa concluída (inclusive sem evidência ou modelo indisponível)
   // não dispara chamadas em loop. Só um clique após retryAt pode tentar de novo.
   if (missing && (!discovery?.version || (discovery.retryAt && discovery.retryAt <= Date.now()))) return false;
-  if (knowledge?.profileAnalysis?.publicEvidenceProtocol >= 1) return true;
+  if (knowledge?.profileAnalysis?.publicEvidenceProtocol >= evidenceProtocol) return true;
   return Object.keys(profileDefinitions).every((key) => fields[key]);
 }
 export function profileSourceMatches(source, documents) {
