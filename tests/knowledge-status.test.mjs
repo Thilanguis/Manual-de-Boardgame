@@ -24,6 +24,31 @@ test('cotas reais do provedor ou de origem desconhecida não são liberadas', ()
   }
   assert.equal(currentKnowledgeStatus(null), null);
 });
+
+test('aviso histórico sem reason também perde o bloqueio interno, preservando conhecimento e revisão', () => {
+  const record = {
+    status: 'quota',
+    message: 'O limite de geração foi atingido. Tente novamente mais tarde.',
+    retryAt: Date.now() + 86400000,
+    revision: 6,
+    knowledge: { sections: [{ text: 'Minha correção', review: 'manual', page: 2, sourceHash: 'a'.repeat(64) }] },
+  };
+  const current = currentKnowledgeStatus(record);
+  assert.equal(current.status, 'attention');
+  assert.equal(current.retryAt, 0);
+  assert.equal(current.reason, 'internal-limit-removed');
+  assert.equal(current.knowledge, record.knowledge);
+  assert.equal(current.revision, 6);
+  assert.equal(record.status, 'quota');
+  assert.equal(recontextualizeDraft({ ...record, knowledge: null }, {}, []).retryAt, 0);
+});
+
+test('mensagem antiga não libera cota com proveniência explícita do provedor', () => {
+  for (const provenance of [{ reason: 'provider-rate-limit' }, { reason: 'upstream-rate-limit' }, { provider: { httpStatus: 429 } }]) {
+    const record = { status: 'quota', message: 'O limite de geração foi atingido. Tente novamente mais tarde.', retryAt: Date.now() + 60000, ...provenance };
+    assert.equal(currentKnowledgeStatus(record), record);
+  }
+});
 test('abrir acompanhamento de bloqueio legado não inicia geração nem acompanhamento contínuo', async () => {
   let reads = 0,
     generations = 0,

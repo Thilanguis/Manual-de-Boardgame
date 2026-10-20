@@ -53,7 +53,7 @@ export function completeProfileFromModel(raw, game, sources, occupied = {}, mode
   for (const key of modelProfileFields) {
     if (blocked.has(key) || input[key] == null) continue;
     if (!validModelProfileValue(key, input[key])) {
-      analysis.rejected.push({ key, reason: 'model-value' });
+      analysis.rejected.push({ key, reason: key === 'gameType' ? 'generic-game-type' : 'model-value' });
       continue;
     }
     claims[key] = Array.isArray(input[key]) ? [...new Set(input[key].map((v) => v.trim()))] : typeof input[key] === 'string' ? input[key].trim() : input[key];

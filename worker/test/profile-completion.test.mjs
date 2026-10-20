@@ -24,6 +24,25 @@ const values = {
   gameType: 'Competitivo',
 };
 const raw = (fields = values) => ({ requestedTitle: game.title, requestedEdition: '', recognized: true, fields });
+
+test('tipo genérico de catálogo não ocupa o complemento específico do Gemini', async () => {
+  const catalog = { id: 'catalog', profileOnly: true, profileEligible: true, facts: { gameType: 'Jogo de tabuleiro' } };
+  const specific = 'Cartas · competitivo';
+  assert.equal(knowledgeFields({ sources: [catalog], sections: [], profile: {} }).gameType, undefined);
+  const completion = completeProfileFromModel(raw({ gameType: specific }), game, [source, catalog]);
+  assert.equal(completion.fields.gameType.value, specific);
+  assert.equal(completeProfileFromModel(raw({ gameType: 'Jogo de tabuleiro' }), game, [source]).fields.gameType, undefined);
+  const fixture = knowledgeFixture();
+  fixture.faults.metadata = Object.fromEntries(Object.keys(profileDefinitions).map((k) => [k, null]));
+  fixture.faults.sections = [];
+  fixture.faults.modelProfile = raw({ gameType: specific });
+  const knowledge = await synthesizePublicKnowledge(game, [source, catalog], fixture.env, (url, options) => fixture.fetch(url, options), { completeProfile: true });
+  assert.equal(fixture.calls.length, 1, 'mesma geração da ficha, sem nova chamada');
+  assert.equal(knowledge.profile.gameType.value, specific);
+  assert.equal(knowledge.profileAnalysis.gameTypeProtocol, 1);
+  assert.match(JSON.stringify(fixture.calls[0]), /Gestão de recursos/);
+  assert.match(JSON.stringify(fixture.calls[0]), /não responda apenas/);
+});
 const recordFrom = (completion, sources = [source]) => {
   const knowledge = { title: game.title, edition: '', profile: completion.fields, sources: [...sources, ...(completion.source ? [completion.source] : [])], sections: [] };
   return { status: 'ready', knowledge: { ...knowledge, fields: knowledgeFields(knowledge) } };

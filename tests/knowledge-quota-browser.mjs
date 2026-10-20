@@ -6,7 +6,7 @@ const require = createRequire(resolve(process.env.ACERVO_TEST_MODULES, 'package.
 const { chromium } = require('playwright');
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
-  for (const reason of ['minute', 'day', 'provider']) {
+  for (const reason of ['minute', 'day', 'untagged', 'provider']) {
     const context = await browser.newContext({ serviceWorkers: 'block' });
     const knowledge = {
       fields: {},
@@ -15,8 +15,14 @@ try {
       unconfirmed: [],
     };
     const message =
-      reason === 'provider' ? 'A cota gratuita da IA foi atingida. Tente novamente mais tarde.' : reason === 'day' ? 'O limite diário do Acervo foi atingido (5 gerações).' : 'Há várias gerações recentes. Aguarde um minuto antes de tentar novamente.';
-    const quota = { status: 'quota', reason: reason === 'provider' ? 'provider-rate-limit' : 'app-rate-limit', retryAt: reason === 'provider' ? 0 : Date.now() + 60000, message, knowledge };
+      reason === 'provider'
+        ? 'A cota gratuita da IA foi atingida. Tente novamente mais tarde.'
+        : reason === 'untagged'
+          ? 'O limite de geração foi atingido. Tente novamente mais tarde.'
+          : reason === 'day'
+            ? 'O limite diário do Acervo foi atingido (5 gerações).'
+            : 'Há várias gerações recentes. Aguarde um minuto antes de tentar novamente.';
+    const quota = { status: 'quota', ...(reason === 'untagged' ? {} : { reason: reason === 'provider' ? 'provider-rate-limit' : 'app-rate-limit' }), retryAt: reason === 'provider' ? 0 : Date.now() + 60000, message, knowledge };
     let generations = 0;
     await context.route('**/__quota-fixture', (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="knowledge"></div>' }));
     await context.route('**/health', (route) => route.fulfill({ json: { knowledgeProtocol: 1 } }));
@@ -25,7 +31,7 @@ try {
         generations++;
         return route.fulfill({ status: 429, json: quota });
       }
-      return route.fulfill({ json: { status: 'ready', knowledge } });
+      return route.fulfill({ json: reason === 'untagged' ? quota : { status: 'ready', knowledge } });
     });
     const page = await context.newPage();
     page.on('dialog', (dialog) => dialog.accept());
@@ -47,6 +53,11 @@ try {
       });
       panel.open({ id: 'fixture' });
     });
+    if (reason === 'untagged') {
+      await page.waitForFunction(() => document.querySelector('.knowledge-status')?.textContent.includes('O limite interno do Acervo foi removido'));
+      assert.equal(generations, 0, 'abrir o registro legado não inicia geração');
+      assert.equal(await page.getByRole('button', { name: 'Atualizar conhecimento com IA' }).isDisabled(), false);
+    }
     await page.getByRole('button', { name: 'Atualizar conhecimento com IA' }).click();
     await page.waitForFunction(
       (text) => document.querySelector('.knowledge-status').textContent === text,

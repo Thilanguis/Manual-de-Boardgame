@@ -173,18 +173,20 @@ test('mais de cinco análises e mais de duas por minuto não têm bloqueio inter
   assert.deepEqual(await store.get('quota'), quota, 'contador legado fica inerte, sem redefinir dados existentes');
 });
 test('bloqueio interno legado é liberado sem perder conhecimento ou repetir automaticamente', async () => {
-  const store = memoryStorage();
-  const knowledge = { sections: [{ text: 'Texto já revisado', review: 'manual' }] };
-  await store.put('job:game1', { status: 'quota', reason: 'app-rate-limit', retryAt: Date.now() + 86400000, knowledge, revision: 3 });
-  const record = await (await operation(store, '/?key=game1')).json();
-  assert.equal(record.status, 'attention');
-  assert.equal(record.retryAt, 0);
-  assert.deepEqual(record.knowledge, knowledge);
-  assert.equal(record.revision, 3);
-  assert.equal((await (await operation(store, '/claim', { requestId: 'opening' })).json()).claimed, false);
-  const renewed = await (await operation(store, '/claim', { requestId: 'explicit', force: true })).json();
-  assert.equal(renewed.claimed, true);
-  assert.deepEqual(renewed.record.knowledge, knowledge);
+  for (const legacy of [{ reason: 'app-rate-limit' }, { message: 'O limite de geração foi atingido. Tente novamente mais tarde.' }]) {
+    const store = memoryStorage();
+    const knowledge = { sections: [{ text: 'Texto já revisado', review: 'manual' }] };
+    await store.put('job:game1', { status: 'quota', ...legacy, retryAt: Date.now() + 86400000, knowledge, revision: 3 });
+    const record = await (await operation(store, '/?key=game1')).json();
+    assert.equal(record.status, 'attention');
+    assert.equal(record.retryAt, 0);
+    assert.deepEqual(record.knowledge, knowledge);
+    assert.equal(record.revision, 3);
+    assert.equal((await (await operation(store, '/claim', { requestId: 'opening' })).json()).claimed, false);
+    const renewed = await (await operation(store, '/claim', { requestId: 'explicit', force: true })).json();
+    assert.equal(renewed.claimed, true);
+    assert.deepEqual(renewed.record.knowledge, knowledge);
+  }
 });
 test('cota do provedor permanece intacta após retirar o limite interno', async () => {
   const store = memoryStorage();

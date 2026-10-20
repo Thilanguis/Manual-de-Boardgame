@@ -26,7 +26,8 @@ function attachOrigin(input, helper) {
 export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () => {} }) {
   let model = null,
     automatic = {},
-    dirty = new Set();
+    dirty = new Set(),
+    cancelConfirmation = null;
   const protectedField = (key) => {
     const current = getCurrent(),
       field = ['minPlayers', 'maxPlayers'].includes(key) ? 'players' : ['minDurationMinutes', 'maxDurationMinutes'].includes(key) ? 'duration' : key;
@@ -55,6 +56,7 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
     other.dispatchEvent(new Event('input', { bubbles: true }));
   });
   function render() {
+    cancelConfirmation?.();
     form.querySelectorAll('[data-metadata-field]').forEach((el) => el.remove());
     form.querySelector('[data-metadata-review]')?.remove();
     const current = getCurrent();
@@ -87,6 +89,8 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
       helper.classList.toggle('metadata-conflict', requiresDecision);
       const origin = model.fieldSources[key];
       const same = factSignature(current[key]) === factSignature(model.fields[key]);
+      const hasSuggestion = !requiresDecision && facts.some((fact) => factSignature(current[key]) !== factSignature(fact.value)) && (protectedField(key) || !same);
+      helper.classList.toggle('metadata-suggestion', hasSuggestion);
       const selectedOrigins = facts.filter((fact) => factSignature(fact.value) === factSignature(model.fields[key])).flatMap(originsFor);
       const originText = originLabel(selectedOrigins.length ? selectedOrigins : originsFor(origin));
       const reference = origin.evidence?.page ? `, página ${origin.evidence.page}` : '';
@@ -96,7 +100,7 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
           requiresDecision
             ? `${fieldLabels[key]} · escolha o valor`
             : protectedField(key)
-              ? 'Sua correção foi preservada · ver fontes'
+              ? hasSuggestion ? 'Sua correção foi preservada · sugestão diferente disponível' : 'Sua correção foi preservada · ver fontes'
               : !same
                 ? `Sugestão disponível · origem: ${originText}${reference}`
                 : `Origem: ${originText}${reference}${['consistent', 'consensus'].includes(model.consistency[key]) ? ' · fontes concordam' : model.consistency[key] === 'manual-preferred' ? ' · manual desta edição' : ''}`,
@@ -109,6 +113,12 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
             .filter((f) => factSignature(f.value) === factSignature(fact.value))
             .flatMap(originsFor)
             .filter((f, i, all) => all.findIndex((other) => other.source === f.source && other.id === f.id && other.evidence?.page === f.evidence?.page && other.url === f.url) === i);
+        if (hasSuggestion && factSignature(current[key]) !== factSignature(fact.value)) {
+          row.className = 'metadata-alternative';
+          const badge = text('strong', 'Sugestão diferente do valor atual');
+          badge.className = 'metadata-alternative-label';
+          row.append(badge);
+        }
         row.append(text('p', display(fact.value)));
         for (const source of origins) {
           row.append(
@@ -152,10 +162,55 @@ export function createMetadataForm({ form, getCurrent, apply, onManualEdit = () 
               }
             }
             const latest = getCurrent();
-            if (Object.keys(values).some((k) => protectedField(k) && display(latest[k]) !== display(values[k])) && !confirm('Substituir os valores que você já conferiu?')) return;
-            for (const k of Object.keys(values)) dirty.add(k);
-            apply(values, { ...model, fieldSources }, { automatic: false });
-            render();
+            const accept = () => {
+              for (const k of Object.keys(values)) dirty.add(k);
+              apply(values, { ...model, fieldSources }, { automatic: false });
+              render();
+              input.focus({ preventScroll: true });
+            };
+            if (!Object.keys(values).some((k) => protectedField(k) && display(latest[k]) !== display(values[k]))) {
+              accept();
+              return;
+            }
+            cancelConfirmation?.();
+            const confirmation = text('section', '');
+            confirmation.className = 'metadata-confirmation';
+            confirmation.dataset.metadataConfirmation = '';
+            confirmation.setAttribute('role', 'group');
+            confirmation.setAttribute('aria-label', 'Confirmar substituição da sua correção');
+            confirmation.append(text('strong', 'Substituir sua correção?'), text('p', 'Confira a troca antes de aplicar. Os demais campos serão mantidos.'));
+            const comparison = text('dl', '');
+            for (const k of Object.keys(values)) {
+              comparison.append(text('dt', fieldLabels[k]), text('dd', `Atual: ${display(latest[k]) || 'Não informado'}`), text('dd', `Novo: ${display(values[k])}`));
+            }
+            const actions = text('div', '');
+            actions.className = 'metadata-confirmation-actions';
+            const keep = text('button', 'Manter como está'),
+              replace = text('button', Object.keys(values).length > 1 ? 'Substituir valores' : 'Substituir valor');
+            keep.type = replace.type = 'button';
+            keep.className = 'button secondary small';
+            replace.className = 'button primary small';
+            cancelConfirmation = () => {
+              confirmation.remove();
+              button.hidden = false;
+              cancelConfirmation = null;
+            };
+            keep.onclick = () => {
+              cancelConfirmation();
+              button.focus({ preventScroll: true });
+            };
+            replace.onclick = accept;
+            confirmation.addEventListener('keydown', (event) => {
+              if (event.key !== 'Escape') return;
+              event.preventDefault();
+              event.stopPropagation();
+              keep.click();
+            });
+            actions.append(keep, replace);
+            confirmation.append(comparison, actions);
+            row.append(confirmation);
+            button.hidden = true;
+            keep.focus({ preventScroll: true });
           };
           row.append(button);
         }

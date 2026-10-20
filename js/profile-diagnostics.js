@@ -13,6 +13,7 @@ export const profileRejectionLabels = {
   range: 'faixa incompleta ou inconsistente',
   application: 'não aplicável à identificação atual ou sem conteúdo útil para o campo',
   'summary-label': 'o conteúdo é apenas um rótulo de catálogo, não um resumo do jogo',
+  'generic-game-type': 'classificação genérica; não descreve o formato ou a proposta do jogo',
   'model-value': 'complemento do modelo com valor inválido',
   'model-range': 'complemento do modelo com faixa incompleta ou inconsistente',
 };

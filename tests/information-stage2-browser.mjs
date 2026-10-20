@@ -280,6 +280,7 @@ try {
   }
   const automaticBefore = Number((await page.locator('[data-metadata-review] p').first().textContent()).match(/^\d+/)[0]);
   await page.locator('[name=recommendedAge]').fill('8');
+  assert.equal(await page.locator('[data-metadata-field=recommendedAge].metadata-suggestion').count(), 0, 'mesmo valor conferido não gera destaque');
   const automaticAfter = Number((await page.locator('[data-metadata-review] p').first().textContent()).match(/^\d+/)[0]);
   assert.equal(automaticAfter, automaticBefore - 1, 'valor conferido manualmente não é contado como automático');
   await page.locator('[name=recommendedAge]').fill('9');
@@ -304,6 +305,55 @@ try {
   assert.equal(await page.locator('[name=recommendedAge]').inputValue(), '9');
   assert.match(await page.locator('[data-metadata-field=recommendedAge] summary').textContent(), /Sua correção foi preservada/);
   assert.equal(await page.locator('.metadata-conflict').count(), 0, 'correção salva não exige decisão nova');
+  assert.match(await page.locator('[data-metadata-field=recommendedAge].metadata-suggestion summary').textContent(), /sugestão diferente disponível/);
+  assert.equal(await page.locator('[data-metadata-field=recommendedAge] .metadata-alternative').count(), 2, 'alternativas diferentes do valor salvo são identificadas');
+  // A troca de uma correção usa confirmação no próprio formulário, nunca confirm/alert.
+  const durationSource = page.locator('[data-metadata-field=minDurationMinutes]');
+  await durationSource.evaluate((el) => (el.open = true));
+  const useDuration = page.getByRole('button', { name: 'Usar Duração mínima (min): 30', exact: true });
+  const confirmation = page.getByRole('group', { name: 'Confirmar substituição da sua correção' });
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 820, height: 1100 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await durationSource.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `${out}/suggestions-${viewport.width}.png` });
+    await useDuration.click();
+    assert.equal(await confirmation.count(), 1);
+    assert.match(await confirmation.textContent(), /Atual: 45.*Novo: 30.*Atual: 45.*Novo: 30/s);
+    assert.equal(await page.getByRole('button', { name: 'Manter como está', exact: true }).evaluate((el) => el === document.activeElement), true);
+    assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '45', 'abrir confirmação preserva valor');
+    assert.equal(await confirmation.evaluate((el) => el.scrollWidth > el.clientWidth + 1), false);
+    if (viewport.width === 390) assert(await confirmation.evaluate((el) => el.getBoundingClientRect().width) > 240, 'confirmação ocupa a largura disponível no celular');
+    await confirmation.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `${out}/confirmation-${viewport.width}.png` });
+    await page.keyboard.press('Escape');
+    assert.equal(await confirmation.count(), 0);
+    assert.equal(await useDuration.evaluate((el) => el === document.activeElement), true);
+    assert.equal(await page.locator('#upload-dialog').evaluate((el) => el.open), true, 'Escape cancela só a troca, mantendo o cadastro aberto');
+  }
+  await useDuration.click();
+  await page.getByRole('button', { name: 'Manter como está', exact: true }).click();
+  assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '45');
+  assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '45');
+  await useDuration.click();
+  await page.getByRole('button', { name: 'Substituir valores', exact: true }).click();
+  assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '30');
+  assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '30', 'o par da mesma fonte é aplicado junto');
+  assert.equal(await page.locator('[name=recommendedAge]').inputValue(), '9', 'outros campos preservados');
+  assert.equal(await confirmation.count(), 0);
+  await durationSource.evaluate((el) => (el.open = true));
+  assert.equal(await durationSource.evaluate((el) => el.classList.contains('metadata-suggestion')), false, 'destaque desaparece quando o valor passa a concordar com as fontes');
+  await page.locator('[name=minDurationMinutes]').fill('45');
+  await page.locator('[name=maxDurationMinutes]').fill('45');
+  await page.locator('[data-metadata-field=recommendedAge]').evaluate((el) => (el.open = true));
+  await page.getByRole('button', { name: 'Usar Idade: 8', exact: true }).click();
+  await page.getByRole('button', { name: 'Substituir valor', exact: true }).click();
+  assert.equal(await page.locator('[name=recommendedAge]').inputValue(), '8');
+  await page.locator('[name=recommendedAge]').fill('9');
+  await page.locator('[data-metadata-field=recommendedAge]').evaluate((el) => (el.open = true));
+  await page.getByRole('button', { name: 'Usar Idade: 8', exact: true }).click();
+  await page.evaluate(() => stage2.metadata.refresh());
+  assert.equal(await confirmation.count(), 0, 'reconsolidação descarta a confirmação antiga');
+  assert.equal(await page.locator('[name=recommendedAge]').inputValue(), '9');
   // Outro campo não corrigido com divergência real deve pedir apenas uma decisão.
   await page.evaluate(() => {
     stage2.metadata.reset();

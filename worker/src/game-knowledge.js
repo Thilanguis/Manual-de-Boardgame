@@ -5,7 +5,7 @@ import { normalizeText, synopsisText } from '../../js/model.js';
 import { textQuality } from '../../js/text-quality.js';
 import { gameDocuments } from '../../js/documents.js';
 import { collectManualKnowledge, synthesisSources, manualPassages } from './manual-knowledge.js';
-import { PROFILE_INSTRUCTION, profileSchema, inspectProfile, profileDefinitions, modelProfileSchema } from '../../js/profile-facts.js';
+import { PROFILE_INSTRUCTION, GAME_TYPE_INSTRUCTION, usefulGameType, profileSchema, inspectProfile, profileDefinitions, modelProfileSchema } from '../../js/profile-facts.js';
 import { reusableDraftKnowledge } from './draft-knowledge.js';
 import { reserveProfileBudget } from './profile-budget.js';
 import { discoverProfileNames, missingProfileFacts } from './profile-discovery.js';
@@ -113,7 +113,7 @@ export function knowledgeFields(knowledge) {
         (numeric.includes(key)
           ? Number.isInteger(s.facts[key]) && s.facts[key] > 0 && s.facts[key] <= 1440
           : key === 'gameType'
-            ? typeof s.facts[key] === 'string' && s.facts[key].length <= 80
+            ? usefulGameType(s.facts[key]) && s.facts[key].length <= 80
             : Array.isArray(s.facts[key]) && s.facts[key].length > 0 && s.facts[key].length <= 12 && s.facts[key].every((v) => typeof v === 'string' && v.length <= 40)),
     );
     if (!facts.length || new Set(facts.map((s) => JSON.stringify(s.facts[key]))).size !== 1) continue;
@@ -492,6 +492,7 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
   body.systemInstruction.parts.push({
     text:
       PROFILE_INSTRUCTION +
+      ' ' + GAME_TYPE_INSTRUCTION +
       (mixed
         ? ' Somente para metadata, use também as fontes públicas profileOnly fornecidas para completar o que falta no manual. Para essas fontes cite sourceId, quote literal de até 240 caracteres e excerpt: copie somente o fato ou a passagem que sustenta o campo. Números devem corresponder exatamente aos fatos ou ao texto, sem estimativas. Classifique tipo, categorias e mecânicas a partir das ações descritas. Uma fonte geral sem edição pode sugerir dados da obra, sem confirmar uma edição. As fontes públicas complementares NÃO podem fornecer seções de regras: essas continuam exclusivamente vinculadas aos manuais com page e evidenceId.'
         : '') +
@@ -576,7 +577,7 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
     identityHints,
     profileAnalysis: {
       ...inspected.analysis,
-      ...(completeProfile ? { summaryProtocol: 1 } : {}),
+      ...(completeProfile ? { summaryProtocol: 1, gameTypeProtocol: 1 } : {}),
       valid: Object.keys(profile).length,
       validFields: Object.keys(profile),
       missing: inspected.analysis.missing.filter((key) => !profile[key]),

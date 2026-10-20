@@ -18,9 +18,14 @@ export const profileDefinitions = {
   gameType: { type: 'string', max: 80 },
 };
 export const modelProfileFields = Object.keys(profileDefinitions).filter((key) => !['title', 'edition'].includes(key));
+export const GAME_TYPE_INSTRUCTION = 'No campo gameType, descreva em PT-BR o formato ou a proposta central do jogo, não apenas o suporte genérico. Exemplos de formato (não são fatos sobre o jogo solicitado): "Cartas · competitivo", "Gestão de recursos · competitivo", "Aventura com miniaturas · cooperativo", "Dados · competitivo". Use somente características sustentadas pelas fontes em metadata, ou conhecidas com segurança em modelProfile. Acrescente o modo de interação quando conhecido; não responda apenas "jogo de tabuleiro", "board game" ou "jogo de mesa". Não trate uma lista de componentes como classificação: ter cartas não basta para ser um jogo de cartas. Não confunda formato com jogo base/expansão; preserve essa distinção quando estiver identificada. gameType é uma síntese curta, até 80 caracteres; tags continuam categorias/temas e mechanics continuam as mecânicas específicas. Se não for possível classificar, retorne null, sem inventar.';
+export function usefulGameType(value) {
+  return typeof value === 'string' && !!value.trim() && !/^(?:(?:um|uma|a|an) )?(?:jogo(?:s)?(?: de tabuleiro| de mesa)?|board ?games?|tabletop games?|jeu(?:x)? de (?:societe|plateau|table))$/.test(normalizeText(value).replace(/[.!?…]/g, '').trim());
+}
 // Esta validação é de formato, não confirmação externa de uma afirmação da IA.
 export function validModelProfileValue(key, value) {
   if (!modelProfileFields.includes(key)) return false;
+  if (key === 'gameType' && !usefulGameType(value)) return false;
   const definition = profileDefinitions[key];
   if (definition.type === 'integer') return Number.isInteger(value) && value > 0 && value <= definition.max;
   if (definition.type === 'array') return Array.isArray(value) && value.length > 0 && value.length <= definition.max && value.every((v) => typeof v === 'string' && v.trim() && v.length <= 40 && !textQuality(v).corrupt);
@@ -103,6 +108,10 @@ export function inspectProfile(raw, sources, passagesFor) {
     if (!item) continue;
     if (!source) {
       reject(key, 'source');
+      continue;
+    }
+    if (key === 'gameType' && !usefulGameType(item.value)) {
+      reject(key, 'generic-game-type');
       continue;
     }
     if (source.origin === 'model-knowledge') {
@@ -231,6 +240,10 @@ export function profileCoverageComplete(knowledge) {
 }
 export function combinedProfileComplete(knowledge, evidenceProtocol = 1) {
   if (!profileCoverageComplete(knowledge)) return false;
+  // Só a ação explícita pode atualizar um tipo genérico antigo; o marcador
+  // evita repetir gerações se o modelo continuar sem uma classificação útil.
+  const oldTypes = [knowledge.profile?.gameType?.value, knowledge.fields?.gameType?.value].filter((v) => typeof v === 'string' && v.trim());
+  if (!(knowledge.profileAnalysis?.gameTypeProtocol >= 1) && oldTypes.length && oldTypes.every((v) => !usefulGameType(v))) return false;
   const fields = validateProfile(knowledge?.profile, knowledge?.sources || []);
   const descriptions = [fields.description?.value, knowledge.fields?.description?.value].filter((value) => typeof value === 'string' && value.trim());
   // O contrato antigo podia tratar um rótulo como sinopse e bloquear o clique.
