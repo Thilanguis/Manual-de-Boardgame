@@ -178,3 +178,22 @@ test('análise antiga parcial só atualiza no clique explícito; regra corrigida
     await run({ ...data, requestId: crypto.randomUUID() });
     assert.equal(fixture.calls.length, 2);
   }));
+
+test('ficha salva com rótulo de resumo só renova no clique explícito e depois reutiliza a nova análise', () =>
+  setup(async ({ fixture, run }) => {
+    const data = input(),
+      first = await run(data),
+      key = await draftContextKey(who.uid, first.knowledge.sources);
+    const saved = await fixture.storage.get('job:' + key);
+    delete saved.knowledge.profileAnalysis.summaryProtocol;
+    saved.knowledge.profile.description = { value: 'jogo de cartas', sourceId: saved.knowledge.sources[0].id, page: 1, quote: text, excerpt: text };
+    saved.knowledge.fields = { description: saved.knowledge.profile.description };
+    await fixture.storage.put('job:' + key, saved);
+    await run({ ...data, retry: false, requestId: crypto.randomUUID() });
+    assert.equal(fixture.calls.length, 1, 'abrir não gera');
+    const updated = await run({ ...data, requestId: crypto.randomUUID() });
+    assert.equal(fixture.calls.length, 2, 'clique explícito atualiza análise antiga');
+    assert.equal(updated.knowledge.profileAnalysis.summaryProtocol, 1);
+    await run({ ...data, requestId: crypto.randomUUID() });
+    assert.equal(fixture.calls.length, 2, 'resultado novo fica em cache');
+  }));

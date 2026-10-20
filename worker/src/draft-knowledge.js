@@ -6,7 +6,7 @@ import { extractPageMetadata } from '../../js/recognition.js';
 import { validateProfile, profileCoverageComplete, combinedProfileComplete } from '../../js/profile-facts.js';
 import { recontextualizeDraft } from '../../js/draft-reuse.js';
 import { textQuality } from '../../js/text-quality.js';
-import { checkManualText, checkKnowledgeSources } from './knowledge-limits.js';
+import { checkManualText, checkKnowledgeSources, PROFILE_TASK_TIMEOUT_MS } from './knowledge-limits.js';
 
 const json = (v, status = 200) => Response.json(v, { status, headers: { 'Cache-Control': 'no-store' } });
 const digest = async (v) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(v)))), (b) => b.toString(16).padStart(2, '0')).join('');
@@ -129,7 +129,7 @@ export async function draftKnowledgeEndpoint(request, env, identity, input, ctx)
     }
   }
   const task = (async () => {
-    const deadline = AbortSignal.timeout(26000);
+    const deadline = AbortSignal.timeout(input.includePublic === true ? PROFILE_TASK_TIMEOUT_MS : 26000);
     const limitedFetch = (url, options = {}) => fetch(url, { ...options, signal: options.signal ? AbortSignal.any([deadline, options.signal]) : deadline });
     try {
       const knowledge = await synthesizePublicKnowledge(game, collected.sources, env, limitedFetch, { completeProfile: input.includePublic === true });

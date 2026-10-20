@@ -5,6 +5,10 @@ export const MANUAL_TEXT_LIMIT = 400000;
 export const DRAFT_REQUEST_BYTES = 3000000;
 export const KNOWLEDGE_REQUEST_BYTES = 1200000; // até 32 correções de 6.000 caracteres
 export const KNOWLEDGE_OUTPUT_TOKENS = 16384;
+// A ficha completa compartilha a geração com as regras. O prazo de 18 s do
+// processamento antigo não comportava respostas válidas mais demoradas.
+export const PROFILE_GENERATION_TIMEOUT_MS = 60000;
+export const PROFILE_TASK_TIMEOUT_MS = 85000;
 const SOURCE_BYTES = 1000000;
 export const fitsKnowledgeRecord = (record) => new TextEncoder().encode(JSON.stringify(record)).byteLength <= 1800000;
 

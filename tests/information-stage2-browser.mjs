@@ -101,7 +101,8 @@ try {
         edition: '2025',
         sources: [manual, wd, wiki],
         profile: inspected.fields,
-        fields: inspected.fields,
+        // Cache legado: perfil íntegro, mas projeção do resumo ausente.
+        fields: Object.fromEntries(Object.entries(inspected.fields).filter(([key]) => key !== 'description')),
         profileAnalysis: { ...inspected.analysis, publicEvidenceProtocol: 1, discovery: { version: 1, status: 'confirmed', hints: [{ value: english, language: 'en', origin: 'gemini-hint' }] } },
         sections: [],
       },
@@ -193,6 +194,9 @@ try {
   await page.evaluate(() => stage2.panel.loadExisting());
   assert.equal(await page.locator('[data-step-target="2"]').getAttribute('aria-current'), 'step');
   assert.equal(await page.evaluate(() => stage2.analyses), 0, 'abrir etapa não usa IA');
+  await page.evaluate(() => stage2.panel.acceptKnowledge(stage2.record, stage2.current));
+  assert.match(await page.locator('#game-form [name=description]').inputValue(), /Construa jardins em equipe/);
+  assert.equal(await page.evaluate(() => stage2.analyses), 0, 'resumo já salvo é recuperado sem solicitar análise');
   await page.locator('[data-research-search]').click();
   await page.waitForFunction(() => !document.querySelector('[data-research-search]').disabled);
   const first = await page.evaluate(() => ({

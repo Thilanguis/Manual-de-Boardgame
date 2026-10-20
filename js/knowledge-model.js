@@ -73,22 +73,26 @@ export function knowledgeSummary(record, game) {
 }
 
 export function verifiedKnowledgeFields(knowledge, game) {
+  if (!knowledgeMatchesIdentity(knowledge, game)) return {};
   const usable = usableKnowledge(knowledge, game);
   if (!usable) return {};
   const verifiedProfile = validateProfile(knowledge.profile, usable.sources);
-  return Object.fromEntries(
-    Object.entries(knowledge.fields || {}).filter(([key, fact]) => {
-      const source = usable.sources.find((source) => source.id === fact.sourceId);
-      if (!source) return false;
-      if (!profileSourceMatches(source, gameDocuments(game))) return false;
-      if (source.profileEligible === false || (source.profileOnly && source.profileSpecificEligible === false && /Players$|DurationMinutes$|^recommendedAge$|^edition$/.test(key))) return false;
-      if (source.pages && findDocument(game, source.documentId || 'main')?.manual.sha256 !== source.sourceHash) return false;
-      if (verifiedProfile[key] && JSON.stringify(verifiedProfile[key].value) === JSON.stringify(fact.value)) return true;
-      if (key === 'description') return usable.sections.some((section) => section.topic === 'visao-geral' && section.sourceId === fact.sourceId && section.text === fact.value);
-      const original = source.facts?.[key] ?? (['minDurationMinutes', 'maxDurationMinutes'].includes(key) ? source.facts?.durationMinutes : undefined);
-      return original !== undefined && JSON.stringify(original) === JSON.stringify(fact.value);
-    }),
-  );
+  const canUse = ([key, fact]) => {
+    const source = usable.sources.find((source) => source.id === fact.sourceId);
+    if (!source) return false;
+    if (!profileSourceMatches(source, gameDocuments(game))) return false;
+    if (source.profileEligible === false || (source.profileOnly && source.profileSpecificEligible === false && /Players$|DurationMinutes$|^recommendedAge$|^edition$/.test(key))) return false;
+    if (source.pages && findDocument(game, source.documentId || 'main')?.manual.sha256 !== source.sourceHash) return false;
+    if (verifiedProfile[key] && JSON.stringify(verifiedProfile[key].value) === JSON.stringify(fact.value)) return true;
+    if (key === 'description') return usable.sections.some((section) => section.topic === 'visao-geral' && section.sourceId === fact.sourceId && section.text === fact.value);
+    const original = source.facts?.[key] ?? (['minDurationMinutes', 'maxDurationMinutes'].includes(key) ? source.facts?.durationMinutes : undefined);
+    return original !== undefined && JSON.stringify(original) === JSON.stringify(fact.value);
+  };
+  const fields = Object.fromEntries(Object.entries(knowledge.fields || {}).filter(canUse));
+  // fields é uma projeção derivada que pode estar ausente/obsoleta no cache.
+  // O resumo estruturado já validado continua utilizável na identidade atual.
+  if (!fields.description && verifiedProfile.description && canUse(['description', verifiedProfile.description])) fields.description = verifiedProfile.description;
+  return fields;
 }
 
 export function emptyKnowledgeFields(game, fields) {

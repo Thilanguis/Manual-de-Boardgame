@@ -1,5 +1,6 @@
 import { inspectProfile, profileCoverageComplete } from './profile-facts.js';
 import { fieldLabels } from './research-client.js';
+import { synopsisText } from './model.js';
 export const profileRejectionLabels = {
   source: 'fonte não reconhecida',
   edition: 'edição não confirmada',
@@ -11,6 +12,7 @@ export const profileRejectionLabels = {
   identity: 'nome ou edição não encontrado no trecho',
   range: 'faixa incompleta ou inconsistente',
   application: 'não aplicável à identificação atual ou sem conteúdo útil para o campo',
+  'summary-label': 'o conteúdo é apenas um rótulo de catálogo, não um resumo do jogo',
   'model-value': 'complemento do modelo com valor inválido',
   'model-range': 'complemento do modelo com faixa incompleta ou inconsistente',
 };
@@ -35,7 +37,8 @@ export function profileDiagnostic(record, candidate) {
     unavailable: 'O modelo de descoberta adicional de nomes não está disponível para este projeto. Os demais conectores continuam utilizáveis.',
     failed: 'A descoberta adicional de nomes não concluiu. Não houve repetição automática.',
   };
-  for (const key of Object.keys(checked.fields)) if (!Object.hasOwn(candidate?.fields || {}, key) && !rejected.some((r) => r.key === key)) rejected.push({ key, reason: 'application' });
+  for (const key of Object.keys(checked.fields))
+    if (!Object.hasOwn(candidate?.fields || {}, key) && !rejected.some((r) => r.key === key)) rejected.push({ key, reason: key === 'description' && !synopsisText(checked.fields[key].value) ? 'summary-label' : 'application' });
   return {
     status: record?.status || 'not_started',
     statusLabel: failed

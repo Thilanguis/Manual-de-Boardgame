@@ -124,6 +124,50 @@ test('limite de texto é igual para cadastro e índice salvo: 250 mil caracteres
   assert.equal(result.sources[0].pages.length, 25);
   assert.deepEqual(result.sources[0].pages, pages);
 });
+test('ficha combinada mantém a requisição aberta até concluir, sem depender dos 30 segundos pós-resposta de waitUntil', async () => {
+  const model = knowledgeFixture({ names: [game.title] }),
+    transport = await fixture(),
+    original = globalThis.fetch;
+  let release, markStarted;
+  model.faults.wait = new Promise((resolve) => (release = resolve));
+  const started = new Promise((resolve) => (markStarted = resolve));
+  const tasks = [];
+  const encode = (v) => (typeof v === 'string' ? { stringValue: v } : typeof v === 'number' ? { integerValue: String(v) } : { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, value]) => [k, encode(value)])) } });
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith('/games/' + game.id)) return Response.json({ fields: Object.fromEntries(Object.entries(game).map(([k, v]) => [k, encode(v)])) });
+    if (String(url).endsWith('/users/owner')) return Response.json({ fields: { uid: { stringValue: 'owner' }, role: { stringValue: 'superadmin' }, status: { stringValue: 'approved' } } });
+    if (String(url).includes('gemini-3.5-flash-lite:generateContent')) markStarted();
+    return (await model.fetch(url, options)) || transport(url, options);
+  };
+  try {
+    let responded = false;
+    const pending = knowledgeEndpoint(
+      new Request('https://worker.test/knowledge', { method: 'POST' }),
+      { ...env, ...model.env, OWNER_UID: 'owner', KNOWLEDGE_FROM_MANUAL: 'true', ALLOW_MANUAL_AI: 'true' },
+      { uid: 'owner', token: 'fixture-jwt', profile: { uid: 'owner', role: 'superadmin', status: 'approved' } },
+      game.id,
+      { force: true, includePublic: true, requestId: crypto.randomUUID() },
+      { waitUntil: (task) => tasks.push(task) },
+    );
+    pending.then(() => {
+      responded = true;
+    });
+    await started;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(responded, false, 'não devolver 202 antes da ficha longa terminar');
+    release();
+    const response = await pending;
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, 'ready');
+    await Promise.all(tasks);
+    assert.equal(model.calls.length, 1);
+  } finally {
+    release();
+    await Promise.all(tasks);
+    globalThis.fetch = original;
+  }
+});
+
 test('aguardar índice não consome quota nem impede a geração após ficar pronto', async () => {
   const { env: fixtureEnv, storage } = knowledgeFixture();
   const store = fixtureEnv.GAME_KNOWLEDGE.get();

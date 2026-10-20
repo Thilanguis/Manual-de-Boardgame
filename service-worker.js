@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.11.0-profile-model-completion-14';
+const VERSION = 'acervo-v1.11.0-saved-profile-summary-15';
 const LOCAL_DEVELOPMENT = ['localhost', '127.0.0.1', '[::1]'].includes(self.location.hostname);
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';

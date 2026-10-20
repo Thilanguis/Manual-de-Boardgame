@@ -1,15 +1,16 @@
 import { ApiError, permissions } from './auth.js';
 import { getDocument, requirePermission } from './services.js';
 import { queryCatalog, sourceStatus } from './catalog/index.js';
-import { normalizeText } from '../../js/model.js';
+import { normalizeText, synopsisText } from '../../js/model.js';
+import { textQuality } from '../../js/text-quality.js';
 import { gameDocuments } from '../../js/documents.js';
 import { collectManualKnowledge, synthesisSources, manualPassages } from './manual-knowledge.js';
 import { PROFILE_INSTRUCTION, profileSchema, inspectProfile, profileDefinitions, modelProfileSchema } from '../../js/profile-facts.js';
 import { reusableDraftKnowledge } from './draft-knowledge.js';
 import { reserveProfileBudget } from './profile-budget.js';
 import { discoverProfileNames, missingProfileFacts } from './profile-discovery.js';
-import { KNOWLEDGE_OUTPUT_TOKENS, checkKnowledgeSources, fitsKnowledgeRecord } from './knowledge-limits.js';
-import { readKnowledgeResponse, providerRequestError } from './knowledge-response.js';
+import { KNOWLEDGE_OUTPUT_TOKENS, PROFILE_GENERATION_TIMEOUT_MS, PROFILE_TASK_TIMEOUT_MS, checkKnowledgeSources, fitsKnowledgeRecord } from './knowledge-limits.js';
+import { readKnowledgeResponse, providerRequestError, providerTransportError } from './knowledge-response.js';
 import { currentKnowledgeStatus } from '../../js/knowledge-status.js';
 import { collectPublisherFacts } from './profile-publishers.js';
 import { sameWork, linkCatalogIdentities } from '../../js/research-client.js';
@@ -97,6 +98,8 @@ export function validateSynthesis(raw, sources, { allowEmpty = false } = {}) {
   if (!sections.length && !allowEmpty) throw new ApiError(502, 'A IA não retornou informações sustentadas pelas fontes.');
   return { language: 'pt-BR', analyzedAt: Date.now(), validationVersion: 1, sections, unconfirmed: [...new Set([...raw.unconfirmed.filter((s) => typeof s === 'string').map((s) => s.slice(0, 500)), ...rejected])].slice(0, 32) };
 }
+const usableProfileSummary = (value) => typeof value === 'string' && value.length <= 2000 && !!synopsisText(value) && !textQuality(value).corrupt;
+const usableProfileOverview = (section) => section.topic === 'visao-geral' && section.review !== 'rejected' && usableProfileSummary(section.text);
 export function knowledgeFields(knowledge) {
   const fields = {},
     numeric = ['minPlayers', 'maxPlayers', 'recommendedAge', 'durationMinutes', 'minDurationMinutes', 'maxDurationMinutes'];
@@ -119,7 +122,7 @@ export function knowledgeFields(knowledge) {
   }
   if (fields.durationMinutes && !fields.minDurationMinutes && !fields.maxDurationMinutes) fields.minDurationMinutes = fields.maxDurationMinutes = fields.durationMinutes;
   delete fields.durationMinutes;
-  const overviews = knowledge.sections.filter((s) => s.topic === 'visao-geral' && s.review !== 'rejected' && s.text.length <= 2000);
+  const overviews = knowledge.sections.filter(usableProfileOverview);
   const overview = overviews.find((s) => s.review === 'manual') || overviews.find((s) => s.review === 'accepted') || overviews[0];
   if (overview) fields.description = { value: overview.text, sourceId: overview.sourceId, language: 'pt-BR', generated: true };
   for (const [key, fact] of Object.entries(knowledge.profile || {})) if (!(key === 'description' && overview?.review === 'manual') && !(fact.basis === 'model' && fields[key])) fields[key] = fact;
@@ -508,7 +511,7 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
     text: JSON.stringify({
       profileTask: {
         summary:
-          'Escreva description como resumo curto em português brasileiro: proposta, interação e objetivo do jogo, sustentados pelo manual ou pelas fontes públicas fornecidas. Esta é a apresentação da ficha; as seções de regras têm seu contrato independente.',
+          'Escreva description em 1 a 3 frases, até 2000 caracteres, em português brasileiro: proposta, interação e objetivo do jogo, sustentados pelo manual ou pelas fontes públicas fornecidas. Rótulos como "jogo de cartas" não são resumo. Uma seção de visão geral das regras não substitui o resumo curto da ficha. Quando as fontes não permitirem o resumo e modelProfile estiver no schema, forneça description ali pelo conhecimento do jogo, se o reconhecer. Esta é a apresentação da ficha; as seções de regras têm seu contrato independente.',
         data: 'Examine cada campo de metadata. Use primeiro os fatos estruturados abaixo para números; consulte as passagens para resumo, tipo, categorias e mecânicas. Não devolva apenas title/description. Informação sem evidência fica null em metadata; quando modelProfile estiver no schema, complete ali as lacunas pelo seu conhecimento. Nunca invente uma edição.',
         references:
           'Nos fatos públicos, copie sourceId e a quote literal do cartão do campo. Para o manual, copie page/evidenceId existentes e excerpt literal contido naquele passage. Não traduza excerpt nem identificadores; somente value pode ser sintetizado em PT-BR.',
@@ -523,15 +526,16 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
     }),
   });
   let response;
+  const generationTimeout = completeProfile ? PROFILE_GENERATION_TIMEOUT_MS : 18000;
   try {
     response = await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${KNOWLEDGE_MODEL}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(18000),
+      signal: AbortSignal.timeout(generationTimeout),
     });
-  } catch {
-    throw new ApiError(504, 'A geração não terminou. Atualize o conhecimento para tentar novamente.');
+  } catch (error) {
+    throw providerTransportError(error, generationTimeout);
   }
   if (!response.ok) {
     const payload = await boundedJSON(response).catch(() => null);
@@ -540,15 +544,20 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
   let payload;
   try {
     payload = await boundedJSON(response);
-  } catch {
+  } catch (error) {
+    if (['TimeoutError', 'AbortError'].includes(error?.name)) throw providerTransportError(error, generationTimeout);
     throw new ApiError(502, 'A resposta da IA não pôde ser validada.');
   }
   const { raw, generation } = readKnowledgeResponse(payload);
   const clean = validateSynthesis(raw, sources, { allowEmpty: completeProfile });
   for (const source of sources) if (source.incompletePages?.length) clean.unconfirmed.push(`Páginas com leitura insuficiente em ${source.name}: ${source.incompletePages.join(', ')}.`);
   const inspected = inspectProfile(raw.metadata, sources, manualPassages);
+  if (inspected.fields.description && !usableProfileSummary(inspected.fields.description.value)) {
+    delete inspected.fields.description;
+    inspected.analysis.rejected.push({ key: 'description', reason: 'value' });
+  }
   const occupied = { ...inspected.fields };
-  if (clean.sections.some((s) => s.topic === 'visao-geral')) occupied.description = true;
+  if (clean.sections.some(usableProfileOverview)) occupied.description = true;
   const completion = completeProfile ? completeProfileFromModel(raw.modelProfile, game, sources, occupied, KNOWLEDGE_MODEL) : { fields: {}, source: null, analysis: null };
   const profile = { ...inspected.fields, ...completion.fields };
   if (!clean.sections.length) {
@@ -567,6 +576,7 @@ export async function synthesizePublicKnowledge(game, sources, env, fetcher = fe
     identityHints,
     profileAnalysis: {
       ...inspected.analysis,
+      ...(completeProfile ? { summaryProtocol: 1 } : {}),
       valid: Object.keys(profile).length,
       validFields: Object.keys(profile),
       missing: inspected.analysis.missing.filter((key) => !profile[key]),
@@ -666,7 +676,7 @@ export async function knowledgeEndpoint(request, env, identity, gameId, input, c
     }
   }
   const task = (async () => {
-    const deadline = AbortSignal.timeout(26000);
+    const deadline = AbortSignal.timeout(input.includePublic === true ? PROFILE_TASK_TIMEOUT_MS : 26000);
     let diagnostics = [];
     const limitedFetch = (url, options = {}) => fetch(url, { ...options, signal: options.signal ? AbortSignal.any([deadline, options.signal]) : deadline });
     try {
@@ -694,6 +704,12 @@ export async function knowledgeEndpoint(request, env, identity, gameId, input, c
     }
   })();
   if (ctx?.waitUntil) ctx.waitUntil(task);
-  else await task;
+  // Não retornar 202 antes de uma ficha potencialmente longa: waitUntil só
+  // oferece 30 s após a resposta. A conexão explícita mantém o trabalho ativo.
+  if (input.includePublic === true) {
+    await task;
+    return json(visible(await (await store(`/?key=${key}`)).json()));
+  }
+  if (!ctx?.waitUntil) await task;
   return json({ ...visible(record), ...(preparedProfile?.discovery ? { profileDiscovery: preparedProfile.discovery } : {}) }, 202);
 }

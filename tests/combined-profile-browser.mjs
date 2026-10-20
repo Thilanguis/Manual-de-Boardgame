@@ -35,7 +35,7 @@ const backend = await workerFixture({
     maxPlayers: 8,
     durationMinutes: 20,
     recommendedAge: 8,
-    overviewText: 'Escolha cartas e passe a mão restante, formando combinações para marcar pontos.',
+    overviewText: 'Escolha cartas e passe a mão restante, formando combinações para marcar pontos.'.repeat(fromModel ? 30 : 1),
     actionTitle: 'Selecionar cartas',
     actionText: 'Escolha uma carta e passe as demais cartas ao próximo jogador.',
   },
@@ -221,6 +221,8 @@ try {
   assert.equal(game.minDurationMinutes, expected.minDurationMinutes);
   assert.equal(game.maxDurationMinutes, expected.maxDurationMinutes);
   if (fromModel) {
+    assert.equal(game.sources.description.source, 'Gemini · conhecimento do modelo', 'resumo separado da visão geral longa');
+    assert.equal(game.sources.description.verified, false);
     assert.equal(game.sources.duration.source, 'Gemini · conhecimento do modelo');
     assert.equal(game.sources.duration.verified, false);
     assert.equal(game.sources.duration.page, undefined);

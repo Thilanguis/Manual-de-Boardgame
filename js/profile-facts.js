@@ -1,4 +1,4 @@
-import { normalizeText } from './model.js';
+import { normalizeText, synopsisText } from './model.js';
 import { extractMetadata } from './recognition.js';
 import { textQuality } from './text-quality.js';
 import { durationSuggestion } from './research-duration.js';
@@ -232,6 +232,11 @@ export function profileCoverageComplete(knowledge) {
 export function combinedProfileComplete(knowledge, evidenceProtocol = 1) {
   if (!profileCoverageComplete(knowledge)) return false;
   const fields = validateProfile(knowledge?.profile, knowledge?.sources || []);
+  const descriptions = [fields.description?.value, knowledge.fields?.description?.value].filter((value) => typeof value === 'string' && value.trim());
+  // O contrato antigo podia tratar um rótulo como sinopse e bloquear o clique.
+  // A leitura continua só reutilizando; uma tentativa nova recebe o marcador,
+  // inclusive se não conseguir uma sinopse, e não entra em ciclo de geração.
+  if (!(knowledge.profileAnalysis?.summaryProtocol >= 1) && descriptions.length && descriptions.every((value) => !synopsisText(value))) return false;
   const practical = Object.keys(profileDefinitions).filter((k) => !['title', 'edition'].includes(k));
   const missing = practical.some((k) => fields[k] == null && knowledge.fields?.[k] == null);
   const discovery = knowledge?.profileAnalysis?.discovery;

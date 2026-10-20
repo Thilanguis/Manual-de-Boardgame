@@ -1,6 +1,23 @@
 import { ApiError } from './auth.js';
 import { KNOWLEDGE_OUTPUT_TOKENS } from './knowledge-limits.js';
 
+export function providerTransportError(error, timeoutMs) {
+  const timeout = ['TimeoutError', 'AbortError'].includes(error?.name);
+  const reason = timeout ? 'provider-timeout' : 'provider-network';
+  return Object.assign(
+    new ApiError(
+      timeout ? 504 : 502,
+      timeout
+        ? `A chamada ao Gemini excedeu o prazo de ${timeoutMs / 1000} segundos. Os dados anteriores foram preservados; nenhuma repetição automática foi feita.`
+        : 'Não foi possível concluir a conexão com o Gemini. Os dados anteriores foram preservados; nenhuma repetição automática foi feita.',
+    ),
+    {
+      reason,
+      provider: { category: reason, ...(timeout ? { timeoutMs } : {}) },
+    },
+  );
+}
+
 export function providerRequestError(httpStatus, payload) {
   const status = typeof payload?.error?.status === 'string' && /^[A-Z_]{1,50}$/.test(payload.error.status) ? payload.error.status : 'UNKNOWN';
   const message = typeof payload?.error?.message === 'string' ? payload.error.message : '';

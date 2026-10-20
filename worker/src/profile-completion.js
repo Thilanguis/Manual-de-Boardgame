@@ -21,6 +21,9 @@ export function completeProfileFromModel(raw, game, sources, occupied = {}, mode
   const blocked = new Set(Object.keys(occupied));
   for (const key of modelProfileFields)
     if (
+      // Um rótulo/descrição bruta de catálogo não é o resumo PT-BR validado.
+      // Só occupied.description, vindo de metadata ou visão utilizável, o ocupa.
+      key !== 'description' &&
       sources.some(
         (s) =>
           !s.modelOnly &&

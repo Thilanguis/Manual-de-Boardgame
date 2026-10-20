@@ -24,7 +24,7 @@ export function savedKnowledgeCandidate(record, game) {
     fieldOrigins[key] = source.modelOnly ? 'gemini-model' : fact.generated || knowledge.profile?.[key] || key === 'description' ? (source.pages ? 'gemini' : 'gemini-public') : source.pages ? 'pdf' : source.catalogSource;
     evidence[key] = {
       ...evidence[key],
-      excerpt: fact.excerpt || fact.quote || source.fieldEvidence?.[key]?.excerpt,
+      excerpt: fact.excerpt || fact.quote || source.fieldEvidence?.[key]?.excerpt || evidence[key]?.excerpt,
       ...(fact.page ? { page: fact.page, evidenceId: fact.evidenceId } : {}),
       ...(source.pages
         ? { documentId: source.documentId || 'main', sourceHash: source.sourceHash }

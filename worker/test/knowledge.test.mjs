@@ -117,7 +117,7 @@ test('falhas, quota e saída inválida não produzem conhecimento falso nem fall
     synthesizePublicKnowledge({ title: 'Catan' }, [source], { GEMINI_API_KEY: 'x' }, async () => {
       throw new Error('rede');
     }),
-    (e) => e.status === 504,
+    (e) => e.status === 502 && e.reason === 'provider-network',
   );
   await assert.rejects(synthesizePublicKnowledge({ title: 'Catan' }, [source], { GEMINI_API_KEY: 'x' }, async () => Response.json({ candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '{}' }] } }] })));
   await assert.rejects(synthesizePublicKnowledge({ title: 'Catan' }, [], { GEMINI_API_KEY: 'x' }, () => assert.fail('Sem fonte não chama o provedor.')));
