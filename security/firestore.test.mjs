@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs, runTransaction, serverTimestamp, Timestamp, onSnapshot, writeBatch } from 'firebase/firestore';
 import { OWNER_UID, emptyPermissions, defaultSubadminPermissions, profileSummary, userChange } from '../js/permissions.js';
+import { execFileSync } from 'node:child_process';
 
 let env;
 const projectId = 'demo-acervo';
@@ -34,8 +35,9 @@ async function change(database, uid, action, permissions, overrides = {}) {
   const eventId = crypto.randomUUID(),
     ref = doc(database, 'users', uid);
   return runTransaction(database, async (tx) => {
-    const previous = (await tx.get(ref)).data(),
-      next = userChange(previous, action, permissions),
+    const previous = (await tx.get(ref)).data();
+    const previousBlockEvent = previous.status === 'blocked' && !previous.blockedFrom && previous.lastEventId ? (await tx.get(doc(database, 'auditEvents', previous.lastEventId))).data() : undefined;
+    const next = userChange(previous, action, permissions, previousBlockEvent),
       version = previous.version + 1;
     tx.update(ref, { ...next, version, lastEventId: eventId, updatedAt: serverTimestamp() });
     const actor = overrides.actorUid || (database === ownerDb ? OWNER_UID : 'sub');
@@ -54,11 +56,11 @@ beforeEach(async () => {
     const database = context.firestore();
     for (const p of [
       profile(OWNER_UID, 'superadmin', 'approved', flags),
-      profile('sub', 'subadmin', 'approved', defaultSubadminPermissions()),
+      profile('sub', 'subadmin', 'approved', { ...emptyPermissions(), addGames: true, editGames: true }),
       profile('addonly', 'subadmin', 'approved', { ...emptyPermissions(), addGames: true }),
       profile('pending', 'user', 'pending'),
       profile('member'),
-      profile('blocked', 'subadmin', 'blocked', defaultSubadminPermissions()),
+      profile('blocked', 'subadmin', 'blocked', { ...emptyPermissions(), addGames: true, editGames: true }),
     ])
       await setDoc(doc(database, 'users', p.uid), p);
     await setDoc(doc(database, 'settings', 'library'), { publicRead: true, version: 1, updatedAt: stamp, lastEventId: '' });
@@ -268,10 +270,10 @@ test('usuário não altera o próprio status, cargo, permissões nem recria apó
   await assertFails(deleteDoc(doc(pendingDb, 'users', 'pending')));
   await assertFails(setDoc(doc(pendingDb, 'users', 'pending'), { ...profile('pending', 'user', 'pending'), createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
 });
-test('somente proprietário aprova; subadmin não recebe poder de aprovação por flag legada', async () => {
-  await env.withSecurityRulesDisabled((c) => updateDoc(doc(c.firestore(), 'users', 'sub'), { 'permissions.approveUsers': true }));
-  await assertFails(change(db('sub'), 'pending', 'approve'));
-  await assertFails(change(db('sub'), 'pending', 'reject'));
+test('flag em usuário comum não permite aprovar/recusar nem concede privilégios ao aprovado', async () => {
+  await env.withSecurityRulesDisabled((c) => updateDoc(doc(c.firestore(), 'users', 'member'), { 'permissions.approveUsers': true }));
+  await assertFails(change(db('member'), 'pending', 'approve', undefined, { actorUid: 'member' }));
+  await assertFails(change(db('member'), 'pending', 'reject', undefined, { actorUid: 'member' }));
   await assertSucceeds(change(ownerDb, 'pending', 'approve'));
   const approved = (await getDoc(doc(db('pending'), 'users', 'pending'))).data();
   assert.equal(approved.role, 'user');
@@ -312,6 +314,125 @@ test('proprietário promove, restringe, rebaixa, bloqueia e desbloqueia com audi
   assert.equal(result.role, 'user');
   assert.equal(result.version, 6);
   assert.equal((await getDocs(collection(ownerDb, 'auditEvents'))).size, 5);
+});
+
+test('promoção sem privilégios e quatro combinações explícitas persistem, com revogação imediata', async () => {
+  await assertSucceeds(change(ownerDb, 'member', 'promote'));
+  assert.deepEqual((await getDoc(doc(ownerDb, 'users', 'member'))).data().permissions, emptyPermissions());
+  const member = db('member');
+  await assertFails(updateDoc(doc(member, 'games', 'existing'), { title: 'Sem flag', updatedAt: serverTimestamp() }));
+  for (const [addGames, editGames] of [[true, false], [false, true], [true, true], [false, false]]) {
+    const permissions = { ...emptyPermissions(), addGames, editGames };
+    await assertSucceeds(change(ownerDb, 'member', 'permissions', permissions));
+    assert.deepEqual((await getDoc(doc(ownerDb, 'users', 'member'))).data().permissions, permissions);
+    const id = `new-${addGames}-${editGames}`;
+    const add = setDoc(doc(member, 'games', id), { ...game(id), createdBy: 'member', createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    await (addGames ? assertSucceeds(add) : assertFails(add));
+    const edit = updateDoc(doc(member, 'games', 'existing'), { title: 'Mudança explícita', updatedAt: serverTimestamp() });
+    await (editGames ? assertSucceeds(edit) : assertFails(edit));
+  }
+  await assertSucceeds(change(ownerDb, 'member', 'permissions', { ...emptyPermissions(), editGames: true }));
+  await assertSucceeds(change(ownerDb, 'member', 'demote'));
+  await assertFails(updateDoc(doc(member, 'games', 'existing'), { title: 'Após rebaixamento', updatedAt: serverTimestamp() }));
+});
+
+test('frontend novo aprova, promove e salva permissões com as regras anteriores ainda publicadas', async () => {
+  const oldRules = execFileSync('git', ['show', '92e6c6d:firestore.rules'], { encoding: 'utf8' });
+  const oldEnv = await initializeTestEnvironment({ projectId, firestore: { host: '127.0.0.1', port: 8080, rules: oldRules } });
+  try {
+    await assertSucceeds(change(ownerDb, 'pending', 'approve'));
+    await assertSucceeds(change(ownerDb, 'member', 'promote'));
+    assert.deepEqual((await getDoc(doc(ownerDb, 'users', 'member'))).data().permissions, emptyPermissions());
+    for (const permissions of [{ ...emptyPermissions(), addGames: true }, { ...emptyPermissions(), editGames: true }, emptyPermissions()]) await assertSucceeds(change(ownerDb, 'member', 'permissions', permissions));
+    await assertSucceeds(change(ownerDb, 'member', 'demote'));
+  } finally {
+    await initializeTestEnvironment({ projectId, firestore: { host: '127.0.0.1', port: 8080, rules: await readFile(new URL('../firestore.rules', import.meta.url), 'utf8') } });
+    await oldEnv.cleanup();
+  }
+});
+
+async function forgedUserChange(database, uid, action, overrides) {
+  const ref = doc(database, 'users', uid), id = crypto.randomUUID();
+  return runTransaction(database, async (tx) => {
+    const before = (await tx.get(ref)).data();
+    const after = { ...userChange(before, action), ...overrides };
+    const version = before.version + 1;
+    tx.update(ref, { ...after, version, lastEventId: id, updatedAt: serverTimestamp() });
+    tx.set(doc(database, 'auditEvents', id), { id, targetType: 'user', targetId: uid, actorUid: OWNER_UID, action, before: profileSummary(before), after, version, createdAt: serverTimestamp() });
+  });
+}
+
+test('bloqueio guarda status real e desbloqueio não aprova pendentes/rejeitados nem aceita marcador forjado', async () => {
+  await env.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'users', 'rejected'), profile('rejected', 'user', 'rejected'));
+    await setDoc(doc(context.firestore(), 'users', 'legacy-blocked'), profile('legacy-blocked', 'user', 'blocked'));
+  });
+  await assertFails(forgedUserChange(ownerDb, 'pending', 'block', { blockedFrom: 'approved' }));
+  for (const [uid, status] of [['pending', 'pending'], ['rejected', 'rejected'], ['member', 'approved']]) {
+    await assertSucceeds(change(ownerDb, uid, 'block'));
+    if (status !== 'approved') await assertFails(forgedUserChange(ownerDb, uid, 'unblock', { status: 'approved' }));
+    await assertSucceeds(change(ownerDb, uid, 'unblock'));
+    assert.equal((await getDoc(doc(ownerDb, 'users', uid))).data().status, status);
+  }
+  await assertSucceeds(change(ownerDb, 'legacy-blocked', 'unblock'));
+  assert.equal((await getDoc(doc(ownerDb, 'users', 'legacy-blocked'))).data().status, 'pending');
+});
+
+test('proprietário delega aprovação, mantém exclusão exclusiva e flags de usuário comum não concedem acesso', async () => {
+  await assertSucceeds(forgedUserChange(ownerDb, 'sub', 'permissions', { permissions: { ...emptyPermissions(), approveUsers: true } }));
+  await assertFails(forgedUserChange(ownerDb, 'sub', 'permissions', { permissions: { ...emptyPermissions(), deleteGames: true } }));
+  await env.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), 'users', 'member'), { permissions: flags });
+  });
+  await assertFails(updateDoc(doc(db('member'), 'games', 'existing'), { title: 'Flags antigas', updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(doc(db('member'), 'users', 'member'), { role: 'subadmin' }));
+});
+
+test('subadmin com flag aprova/recusa somente pendentes e não acessa pessoas aprovadas, cargos ou histórico', async () => {
+  await env.withSecurityRulesDisabled(async (context) => {
+    for (const uid of ['pending2', 'pending3']) await setDoc(doc(context.firestore(), 'users', uid), profile(uid, 'user', 'pending'));
+  });
+  await assertSucceeds(change(ownerDb, 'sub', 'permissions', { ...emptyPermissions(), approveUsers: true }));
+  const sub = db('sub');
+  const requests = query(collection(sub, 'users'), where('status', '==', 'pending'));
+  assert.equal((await assertSucceeds(getDocs(requests))).size, 3);
+  await assertFails(getDocs(collection(sub, 'users')));
+  await assertFails(getDoc(doc(sub, 'users', 'member')));
+  await assertFails(getDoc(doc(sub, 'users', OWNER_UID)));
+  await assertFails(getDocs(collection(sub, 'auditEvents')));
+  await assertSucceeds(change(sub, 'pending', 'approve'));
+  await assertSucceeds(change(sub, 'pending2', 'reject'));
+  assert.deepEqual((await getDoc(doc(ownerDb, 'users', 'pending'))).data().permissions, emptyPermissions());
+  assert.equal((await getDoc(doc(ownerDb, 'users', 'pending2'))).data().status, 'rejected');
+  await assertFails(getDoc(doc(sub, 'users', 'pending')));
+  await assertFails(change(sub, 'member', 'promote'));
+  await assertFails(change(sub, 'addonly', 'permissions', { ...emptyPermissions(), approveUsers: true }));
+  await assertFails(updateDoc(doc(sub, 'users', 'sub'), { permissions: { ...emptyPermissions(), approveUsers: true, addGames: true } }));
+  await assertFails(updateDoc(doc(sub, 'games', 'existing'), { title: 'Aprovar não é editar', updatedAt: serverTimestamp() }));
+  await assertSucceeds(change(ownerDb, 'sub', 'permissions', emptyPermissions()));
+  await assertFails(getDocs(requests));
+  await assertFails(change(sub, 'pending3', 'approve'));
+  await assertSucceeds(change(ownerDb, 'sub', 'permissions', { ...emptyPermissions(), approveUsers: true }));
+  await assertSucceeds(change(ownerDb, 'sub', 'block'));
+  await assertFails(getDocs(requests));
+});
+
+test('bloqueio legado usa o evento imutável para preservar aprovação anterior sem conceder outra', async () => {
+  await env.withSecurityRulesDisabled(async (context) => {
+    for (const status of ['approved', 'pending', 'rejected']) {
+      const uid = `legacy-${status}`, eventId = `old-block-${status}`;
+      const current = { ...profile(uid, 'subadmin', 'blocked', { ...emptyPermissions(), editGames: true }), lastEventId: eventId, version: 2 };
+      await setDoc(doc(context.firestore(), 'users', uid), current);
+      await setDoc(doc(context.firestore(), 'auditEvents', eventId), { id: eventId, action: 'block', targetType: 'user', targetId: uid, actorUid: OWNER_UID, version: 2, before: { role: 'subadmin', status, permissions: current.permissions }, after: { role: 'subadmin', status: 'blocked', permissions: current.permissions }, createdAt: stamp });
+    }
+  });
+  for (const status of ['approved', 'pending', 'rejected']) {
+    await assertSucceeds(change(ownerDb, `legacy-${status}`, 'permissions', { ...emptyPermissions(), addGames: true, editGames: true }));
+    await assertSucceeds(change(ownerDb, `legacy-${status}`, 'unblock'));
+    const saved = (await getDoc(doc(ownerDb, 'users', `legacy-${status}`))).data();
+    assert.equal(saved.status, status);
+    assert.equal(saved.permissions.editGames, true);
+  }
 });
 test('proprietário é protegido contra remoção ou mudança, inclusive pelo próprio cliente', async () => {
   for (const database of [ownerDb, db('sub'), db('pending')]) {

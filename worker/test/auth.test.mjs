@@ -50,6 +50,33 @@ test('cada autorização consulta o perfil atual pelo JWT Firebase, inclusive ap
   await assert.rejects(requirePermission(env, identity, 'add', fetcher), denied(403));
   assert.equal(count, 2);
 });
+test('Worker nega flags antigas de usuário e revoga edição/adicionar sem trocar o JWT', async () => {
+  let role = 'user', status = 'approved', addGames = true, editGames = true, reads = 0;
+  const env = { FIREBASE_PROJECT_ID: 'demo-acervo', OWNER_UID: 'owner' };
+  const identity = { uid: 'person', token: 'same-token' };
+  const fetcher = async () => {
+    reads++;
+    return Response.json({ fields: { uid: { stringValue: 'person' }, role: { stringValue: role }, status: { stringValue: status }, permissions: { mapValue: { fields: { addGames: { booleanValue: addGames }, editGames: { booleanValue: editGames }, deleteGames: { booleanValue: true } } } } } });
+  };
+  await assert.rejects(requirePermission(env, identity, 'add', fetcher), denied(403));
+  await assert.rejects(requirePermission(env, identity, 'edit', fetcher), denied(403));
+  role = 'subadmin';
+  await requirePermission(env, identity, 'add', fetcher);
+  await requirePermission(env, identity, 'edit', fetcher);
+  await assert.rejects(requirePermission(env, identity, 'delete', fetcher), denied(403));
+  addGames = false;
+  await assert.rejects(requirePermission(env, identity, 'add', fetcher), denied(403));
+  await requirePermission(env, identity, 'edit', fetcher);
+  editGames = false;
+  await assert.rejects(requirePermission(env, identity, 'edit', fetcher), denied(403));
+  editGames = true;
+  status = 'blocked';
+  await assert.rejects(requirePermission(env, identity, 'edit', fetcher), denied(403));
+  status = 'approved'; role = 'user';
+  await assert.rejects(requirePermission(env, identity, 'edit', fetcher), denied(403));
+  assert.equal(reads, 10, 'cada operação consulta o perfil atual, sem cache de privilégios');
+});
+
 test('tickets criptografados vinculam UID/tipo/prazo e rejeitam alteração ou chave diferente', async () => {
   const secret = base64url(crypto.getRandomValues(new Uint8Array(32)));
   const payload = { uid: 'owner', type: 'upload', expires: Date.now() + 60000, sessionURL: 'https://private-session.invalid' };

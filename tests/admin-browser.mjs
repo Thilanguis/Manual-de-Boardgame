@@ -70,7 +70,7 @@ async function page() {
   await context.route('**/config/app-config.js', (route) =>
     route.fulfill({
       contentType: 'text/javascript',
-      body: `export const APP_CONFIG=${JSON.stringify({ firebase: { apiKey: 'demo-api-key', authDomain: 'demo-acervo.firebaseapp.com', projectId, appId: '1:000:web:test' }, fileStorage: { provider: 'drive', apiBase: 'http://127.0.0.1:8789' }, emulators: { auth: 'http://127.0.0.1:9099', host: '127.0.0.1', port: 8080 }, enableBgg: false, enableGoogleLogin: false, maxPdfBytes: 209715200 })};`,
+      body: `export const APP_CONFIG=${JSON.stringify({ firebase: { apiKey: 'demo-api-key', authDomain: 'demo-acervo.firebaseapp.com', projectId, appId: '1:000:web:test' }, sdkBase: '/__dev/sdk', fileStorage: { provider: 'drive', apiBase: 'http://127.0.0.1:8789' }, emulators: { auth: 'http://127.0.0.1:9099', host: '127.0.0.1', port: 8080 }, enableBgg: false, enableGoogleLogin: false, maxPdfBytes: 209715200 })};`,
     }),
   );
   await context.route('http://127.0.0.1:8789/v1/catalog/status', (route) =>
@@ -339,13 +339,16 @@ try {
   await owner.locator('[data-admin-tab=people]').click();
   await owner.locator('#all-users .person-row').filter({ hasText: 'person@example.test' }).getByRole('button', { name: 'Gerenciar', exact: true }).click();
   await owner.getByRole('button', { name: 'Promover a subadministrador' }).click();
-  await applicant.locator('#manage-button').waitFor({ state: 'visible' });
-  await applicant.locator('#manage-button').click();
-  assert.equal(await applicant.locator('#admin-settings-tab').isVisible(), false);
+  await owner.waitForFunction(() => document.querySelector('#person-status').textContent.includes('Subadministrador'));
+  assert.equal(await owner.locator('#permission-add').isChecked(), false);
+  assert.equal(await owner.locator('#permission-edit').isChecked(), false);
+  assert.equal(await applicant.locator('#manage-button').isVisible(), false);
+  await owner.locator('[data-close=person-dialog]').click();
   const second = await page();
   await signup(second, 'Outra pessoa', 'second@example.test');
-  await applicant.locator('#pending-users .person-row').filter({ hasText: 'second@example.test' }).waitFor();
-  await applicant.locator('#pending-users .person-row').filter({ hasText: 'second@example.test' }).getByRole('button', { name: 'Aprovar', exact: true }).click();
+  assert.equal(await applicant.locator('#manage-button').isVisible(), false);
+  await owner.locator('#all-users .person-row').filter({ hasText: 'second@example.test' }).waitFor();
+  await owner.locator('#all-users .person-row').filter({ hasText: 'second@example.test' }).getByRole('button', { name: 'Aprovar', exact: true }).click();
   await owner.locator('#all-users .person-row').filter({ hasText: 'person@example.test' }).getByRole('button', { name: 'Gerenciar', exact: true }).click();
   await owner.getByRole('button', { name: 'Bloquear conta', exact: true }).click();
   await applicant.locator('#manage-button').waitFor({ state: 'hidden' });

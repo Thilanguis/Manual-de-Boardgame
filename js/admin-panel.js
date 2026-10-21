@@ -1,4 +1,4 @@
-import { OWNER_UID, roleLabel, statusLabel, defaultSubadminPermissions } from './permissions.js';
+import { OWNER_UID, roleLabel, statusLabel, subadminPermissions } from './permissions.js';
 export function createAdminPanel({ repository, config, onNotice, onError }) {
   const ownerUid = config.ownerUid || OWNER_UID;
   const $ = (id) => document.getElementById(id),
@@ -12,6 +12,7 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
     stopAudit = null,
     subscriptionKey = '',
     selected = null,
+    discardAction = null,
     busy = false;
   const label = {
     approve: 'Cadastro aprovado',
@@ -36,6 +37,7 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
   }
   function tab(name) {
     if (name === 'settings' && !session.canConfigure) return;
+    if (['people', 'history'].includes(name) && !session.canManageUsers) return;
     document.querySelectorAll('[data-admin-section]').forEach((section) => (section.hidden = section.dataset.adminSection !== name));
     document.querySelectorAll('[data-admin-tab]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.adminTab === name)));
     const needsPeople = ['people', 'history'].includes(name);
@@ -47,6 +49,17 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
         people = data;
         renderPeople();
         renderHistory();
+        if (selected && $('person-dialog').open && !busy) {
+          const fresh = people.find((person) => person.uid === selected.uid);
+          if (!fresh) $('person-dialog').close();
+          else if ((!permissionsDirty() && fresh.version !== selected.version) || fresh.role !== selected.role || fresh.status !== selected.status) {
+            selected = fresh;
+            renderPerson(true);
+          } else if (fresh.version !== selected.version) {
+            $('person-error').textContent = 'O perfil foi alterado em outra sessão. Feche e reabra antes de salvar.';
+            $('person-error').hidden = false;
+          }
+        }
       }, error);
     if (name !== 'history') {
       stopAudit?.();
@@ -66,20 +79,33 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
   async function change(person, action, permissions) {
     if (busy) return;
     busy = true;
-    const controls = [...document.querySelectorAll('#admin-dialog button,#person-dialog button')];
-    controls.forEach((button) => (button.disabled = true));
+    const controls = [...document.querySelectorAll('#admin-dialog button,#person-dialog button,#person-dialog input')].map((control) => [control, control.disabled]);
+    controls.forEach(([control]) => (control.disabled = true));
     $('admin-error').hidden = $('person-error').hidden = true;
     try {
-      await repository.changeUser(person.uid, action, permissions);
-      onNotice(label[action] + '.');
-      if ($('person-dialog').open) $('person-dialog').close();
+      const result = await repository.changeUser(person.uid, action, permissions, { expectedVersion: person.version });
+      const saved = { ...person, ...result };
+      people = people.map((value) => value.uid === person.uid ? saved : value);
+      pending = pending.map((value) => value.uid === person.uid ? saved : value).filter((value) => value.status === 'pending');
+      renderPeople();
+      renderPending();
+      if (!result?.unchanged) onNotice(action === 'permissions' ? 'Permissões salvas.' : label[action] + '.');
+      if ($('person-dialog').open && selected?.uid === person.uid) {
+        if (['permissions', 'promote'].includes(action)) {
+          selected = saved;
+          renderPerson(true);
+          $('person-save-state').textContent = action === 'permissions' ? 'Permissões salvas e confirmadas.' : 'Promoção concluída. Nenhuma permissão foi concedida. Marque as opções e salve para conceder acesso.';
+        } else $('person-dialog').close();
+      }
     } catch (value) {
-      error(value);
-      $('person-error').textContent = onError(value);
-      $('person-error').hidden = false;
+      if ($('person-dialog').open) {
+        $('person-error').textContent = onError(value);
+        $('person-error').hidden = false;
+      } else error(value);
     } finally {
       busy = false;
-      controls.forEach((button) => (button.disabled = false));
+      controls.forEach(([control, disabled]) => (control.disabled = disabled));
+      updatePermissionState();
     }
   }
   function card(person, review = false) {
@@ -92,9 +118,9 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
         el(
           'span',
           'person-meta',
-          Object.entries(person.permissions || {})
-            .filter(([key, enabled]) => enabled && key !== 'deleteGames')
-            .map(([key]) => ({ approveUsers: 'aprovar pessoas', addGames: 'adicionar jogos', editGames: 'editar jogos' })[key])
+          Object.entries(subadminPermissions(person.permissions))
+            .filter(([key, enabled]) => enabled && ['approveUsers', 'addGames', 'editGames'].includes(key))
+            .map(([key]) => ({ approveUsers: 'aprovar cadastros', addGames: 'adicionar jogos', editGames: 'editar jogos' })[key])
             .join(' · ') || 'Sem permissões administrativas concedidas',
         ),
       );
@@ -154,33 +180,61 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
         : [el('p', 'muted-text', 'Nenhuma alteração registrada.')]),
     );
   }
-  function edit(person) {
-    if (!session.canManageUsers || person.uid === ownerUid || person.uid === session.user.uid) return;
-    selected = person;
+  const readPermissions = () => subadminPermissions({ approveUsers: $('permission-approve').checked, addGames: $('permission-add').checked, editGames: $('permission-edit').checked });
+  const permissionsDirty = () => selected?.role === 'subadmin' && ['approveUsers', 'addGames', 'editGames'].some((key) => readPermissions()[key] !== (selected.permissions?.[key] === true));
+  function updatePermissionState() {
+    const dirty = permissionsDirty();
+    $('save-person-permissions').disabled = busy || !dirty;
+    $('person-permissions-state').textContent = busy ? 'Salvando… Aguarde a confirmação.' : dirty ? 'Alterações não salvas.' : 'As opções mostram as permissões registradas.';
+    $('person-permissions-state').classList.toggle('unsaved-permissions', !!dirty);
+  }
+  function clearDiscard() {
+    discardAction = null;
+    $('person-discard').hidden = true;
+  }
+  function afterDiscard(run) {
+    if (busy) return;
+    if (!permissionsDirty()) return run();
+    discardAction = run;
+    $('person-discard').hidden = false;
+    $('person-keep-editing').focus();
+  }
+  function requestClose() {
+    afterDiscard(() => $('person-dialog').close());
+  }
+  function renderPerson(reset = false) {
+    const person = selected;
+    if (!person) return;
+    clearDiscard();
     $('person-title').textContent = person.name;
     $('person-email').textContent = person.email;
     $('person-status').textContent = `${roleLabel(person.role)} · ${statusLabel(person.status)}`;
-    $('person-permissions').hidden = person.status !== 'approved' && person.role !== 'subadmin';
-    const permissions = person.role === 'subadmin' ? person.permissions : defaultSubadminPermissions();
-    $('permission-approve').checked = false;
-    $('permission-add').checked = permissions.addGames === true;
-    $('permission-edit').checked = permissions.editGames === true;
-    const readPermissions = () => ({ approveUsers: false, addGames: $('permission-add').checked, editGames: $('permission-edit').checked, deleteGames: false });
+    $('person-permissions').hidden = person.role !== 'subadmin' || !session.canManageUsers;
+    if (reset) {
+      const permissions = person.role === 'subadmin' ? subadminPermissions(person.permissions) : subadminPermissions();
+      $('permission-add').checked = permissions.addGames;
+      $('permission-edit').checked = permissions.editGames;
+      $('permission-approve').checked = permissions.approveUsers;
+      $('person-save-state').textContent = '';
+      $('person-error').hidden = true;
+    }
+    updatePermissionState();
     const actions = [];
-    if (person.status === 'pending')
+    if (person.status === 'pending' && person.role === 'user')
       actions.push(
         button('Aprovar', () => change(selected, 'approve')),
         button('Recusar', () => change(selected, 'reject'), true),
       );
-    if (person.status === 'approved' && person.role === 'user') actions.push(button('Promover a subadministrador', () => change(selected, 'promote', readPermissions())));
+    if (person.status === 'approved' && person.role === 'user') actions.push(button('Promover a subadministrador', () => change(selected, 'promote')));
     if (person.role === 'subadmin')
-      actions.push(
-        button('Salvar permissões', () => change(selected, 'permissions', readPermissions())),
-        button('Rebaixar a usuário', () => change(selected, 'demote'), true),
-      );
-    actions.push(person.status === 'blocked' ? button('Desbloquear conta', () => change(selected, 'unblock')) : button('Bloquear conta', () => change(selected, 'block'), true));
+      actions.push(button('Rebaixar a usuário', () => afterDiscard(() => change(selected, 'demote')), true));
+    actions.push(person.status === 'blocked' ? button('Desbloquear conta', () => afterDiscard(() => change(selected, 'unblock'))) : button('Bloquear conta', () => afterDiscard(() => change(selected, 'block')), true));
     $('person-actions').replaceChildren(...actions);
-    $('person-error').hidden = true;
+  }
+  function edit(person) {
+    if (!session.canManageUsers || person.uid === ownerUid || person.uid === session.user.uid) return;
+    selected = person;
+    renderPerson(true);
     $('person-dialog').showModal();
   }
   function open() {
@@ -198,6 +252,39 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
     events = [];
   }
   dialog.addEventListener('close', closeSubscriptions);
+  $('person-dialog').addEventListener('cancel', (event) => {
+    event.preventDefault();
+    if (discardAction) {
+      clearDiscard();
+      $('person-dialog').querySelector('[data-close]').focus();
+    } else requestClose();
+  });
+  $('person-dialog').addEventListener('close', () => {
+    selected = null;
+    clearDiscard();
+  });
+  for (const id of ['permission-approve', 'permission-add', 'permission-edit']) $(id).addEventListener('change', () => {
+    $('person-save-state').textContent = '';
+    clearDiscard();
+    updatePermissionState();
+  });
+  $('save-person-permissions').onclick = () => {
+    if (permissionsDirty()) return change(selected, 'permissions', readPermissions());
+  };
+  $('person-keep-editing').onclick = () => {
+    clearDiscard();
+    $('save-person-permissions').focus();
+  };
+  $('person-discard-changes').onclick = () => {
+    const run = discardAction;
+    clearDiscard();
+    if (run) {
+      $('permission-add').checked = selected.permissions?.addGames === true;
+      $('permission-edit').checked = selected.permissions?.editGames === true;
+      $('permission-approve').checked = selected.permissions?.approveUsers === true;
+      run();
+    }
+  };
   document.querySelectorAll('[data-admin-tab]').forEach((button) => (button.onclick = () => tab(button.dataset.adminTab)));
   $('manage-button').onclick = open;
   $('people-search').oninput = renderPeople;
@@ -217,11 +304,14 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
   };
   return {
     isBusy: () => busy,
+    requestClose,
     updateSession(next) {
       session = next;
       const enabled = next.mode === 'firebase' && (next.canApproveUsers || next.canManageUsers);
       $('manage-button').hidden = !enabled;
       $('admin-settings-tab').hidden = !next.canConfigure;
+      for (const name of ['people', 'history']) document.querySelector(`[data-admin-tab="${name}"]`).hidden = !next.canManageUsers;
+      $('admin-title').textContent = next.canManageUsers ? 'Pessoas e solicitações' : 'Solicitações de cadastro';
       $('library-public').checked = next.publicRead === true;
       $('admin-storage-status').textContent = config.development
         ? 'Ambiente local. Arquivos e IA são simulados; dados fictícios.'

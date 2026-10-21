@@ -167,18 +167,22 @@ export async function createFirebaseRepository(config) {
         onError,
       );
     },
-    async changeUser(uid, action, permissions) {
+    async changeUser(uid, action, permissions, { expectedVersion } = {}) {
       if (!auth.currentUser || uid === auth.currentUser.uid || uid === ownerUid) throw new Error('Esta conta está protegida e não pode ser alterada.');
       if (['approve', 'reject'].includes(action) ? !this.session.canApproveUsers : !this.session.canManageUsers) throw new Error('Sua conta não tem permissão para esta operação.');
       const ref = dbSDK.doc(db, 'users', uid),
         eventId = crypto.randomUUID();
-      await dbSDK.runTransaction(db, async (tx) => {
+      return dbSDK.runTransaction(db, async (tx) => {
         const current = (await tx.get(ref)).data();
         if (!current) throw new Error('Conta não encontrada.');
-        const change = userChange(current, action, permissions),
+        if (expectedVersion != null && expectedVersion !== current.version) throw new Error('O perfil foi alterado em outra sessão. Feche e reabra para conferir as permissões atuais.');
+        const previousBlockEvent = current.status === 'blocked' && !current.blockedFrom && current.lastEventId ? (await tx.get(dbSDK.doc(db, 'auditEvents', current.lastEventId))).data() : undefined;
+        const change = userChange(current, action, permissions, previousBlockEvent),
           version = current.version + 1;
+        if (action === 'permissions' && Object.keys(change.permissions).every((key) => change.permissions[key] === current.permissions?.[key])) return { uid, ...change, version: current.version, unchanged: true };
         tx.update(ref, { ...change, version, lastEventId: eventId, updatedAt: dbSDK.serverTimestamp() });
         tx.set(dbSDK.doc(db, 'auditEvents', eventId), { id: eventId, targetType: 'user', targetId: uid, actorUid: auth.currentUser.uid, action, before: profileSummary(current), after: change, version, createdAt: dbSDK.serverTimestamp() });
+        return { uid, ...change, version };
       });
     },
     async setLibraryPublic(value) {

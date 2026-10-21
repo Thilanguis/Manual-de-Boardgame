@@ -1378,6 +1378,40 @@ body:not(.access-approved) > #reader {
   color: #f4ce97;
   font-weight: 600;
 }
+.person-save-state:not(:empty) {
+  padding: 0.75rem;
+  border: 1px solid #81c8a655;
+  border-radius: 8px;
+  color: #b2e4ca;
+  background: #81c8a60a;
+}
+#person-permissions > .check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 44px;
+  margin: 0;
+}
+#person-permissions > .check-row input {
+  flex: 0 0 auto;
+}
+#person-permissions-state.unsaved-permissions {
+  color: #f4ce97;
+  font-weight: 600;
+}
+.person-discard {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #e3ae6459;
+  border-radius: 10px;
+  background: #e3ae640e;
+}
+.person-discard .person-actions {
+  gap: 0.65rem;
+}
+.person-discard .button {
+  flex: 1 1 140px;
+}
 .metadata-origin > .metadata-alternative {
   border-left-color: #dba65f;
   background: #e3ae640a;

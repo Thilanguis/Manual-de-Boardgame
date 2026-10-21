@@ -841,23 +841,34 @@
       <div class="dialog-body">
         <p id="person-email"></p>
         <p id="person-status" class="muted-text"></p>
-        <fieldset id="person-permissions">
+        <fieldset id="person-permissions" hidden>
           <legend>Permissões de subadministrador</legend>
           <label class="check-row">
-            <input id="permission-approve" type="checkbox" disabled />
+            <input id="permission-approve" type="checkbox" />
             Aprovar ou recusar cadastros
           </label>
           <label class="check-row">
             <input id="permission-add" type="checkbox" />
-            Adicionar jogos e manuais
+            Adicionar jogos e PDFs
           </label>
           <label class="check-row">
             <input id="permission-edit" type="checkbox" />
-            Editar jogos e substituir manuais
+            Editar jogos e PDFs
           </label>
           <p class="muted-text">Exclusão definitiva e administração de cargos são exclusivas do proprietário.</p>
+          <p id="person-permissions-state" class="muted-text" role="status"></p>
+          <button id="save-person-permissions" type="button" class="button primary" disabled>Salvar permissões</button>
         </fieldset>
+        <p id="person-save-state" class="person-save-state" role="status"></p>
         <div id="person-actions" class="person-actions"></div>
+        <section id="person-discard" class="person-discard" role="group" aria-labelledby="person-discard-title" hidden>
+          <strong id="person-discard-title">Descartar alterações não salvas?</strong>
+          <p>As permissões registradas serão mantidas. Suas alterações ainda não foram salvas.</p>
+          <div class="person-actions">
+            <button id="person-keep-editing" type="button" class="button secondary">Continuar editando</button>
+            <button id="person-discard-changes" type="button" class="button primary">Descartar alterações</button>
+          </div>
+        </section>
         <p id="person-error" class="inline-error" role="alert" hidden></p>
       </div>
     </dialog>

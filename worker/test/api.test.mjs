@@ -351,6 +351,15 @@ test('conhecimento é privado; falta de chave não quebra leitura e leitor não 
   });
   await isolated({ role: 'subadmin', permissions: { editGames: true } }, async () => assert.equal((await handleRequest(request(`/v1/games/${id}/knowledge`, { method: 'POST', json: { requestId: crypto.randomUUID() } }), env)).status, 200));
 });
+
+test('requisições diretas de leitor com flags antigas não enviam/substituem PDFs nem excluem jogos', async () => {
+  await isolated({ role: 'user', permissions: { addGames: true, editGames: true, deleteGames: true, approveUsers: true } }, async (s) => {
+    const upload = await handleRequest(request('/v1/uploads', { method: 'POST', json: { gameId: id, kind: 'manual', size: 10, mimeType: 'application/pdf', name: 'manual.pdf' } }), env);
+    assert.equal(upload.status, 403);
+    assert.equal((await handleRequest(request(`/v1/games/${id}`, { method: 'DELETE' }), env)).status, 403);
+    assert.equal(s.calls.some((call) => call.url.includes('/drive/') || call.url.includes('oauth2.googleapis.com/token')), false);
+  });
+});
 test('imagem publicada pode ser lida; imagem exclusiva de rascunho exige edição', async () => {
   await isolated({ guideAssets: 1 }, async () => {
     assert.equal((await handleRequest(request(`/v1/games/${id}/guide-assets/asset-000000`), env)).status, 200);

@@ -169,6 +169,7 @@ function showDialog(id) {
   document.body.classList.add('modal-open');
 }
 function closeDialog(id) {
+  if (id === 'person-dialog') return adminPanel?.requestClose();
   if (id === 'login-dialog' && !localMode && !state.session.canRead) return;
   if (id === 'guide-dialog') {
     guidePanel?.close();

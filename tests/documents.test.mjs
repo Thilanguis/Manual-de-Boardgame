@@ -49,14 +49,16 @@ test('mesmo PDF em documentos distintos não autoriza índice associado ao outro
   assert.equal(indexMatches(index, view), false);
   await assert.rejects(unpackIndex(await packIndex(index), view), /não corresponde/);
 });
-test('aprovação é exclusiva do proprietário; pendentes e bloqueados perdem leitura e todas as mutações', () => {
+test('aprovação é delegável por flag; pendentes e bloqueados perdem leitura e todas as mutações', () => {
   const profile = { uid: 'sub', role: 'subadmin', status: 'approved', permissions: { approveUsers: true, addGames: true, editGames: true } };
-  assert.equal(accessFor(profile, 'sub').canApproveUsers, false);
+  assert.equal(accessFor(profile, 'sub').canApproveUsers, true);
+  assert.equal(accessFor({ ...profile, permissions: { addGames: true } }, 'sub').canApproveUsers, false);
   assert.equal(accessFor(profile, 'sub').canRead, true);
   for (const status of ['pending', 'rejected', 'blocked']) {
     const a = accessFor({ ...profile, status }, 'sub');
     assert.equal(a.canRead, false);
     assert.equal(a.canWrite, false);
+    assert.equal(a.canApproveUsers, false);
   }
   const owner = accessFor({ uid: OWNER_UID, role: 'superadmin', status: 'approved' }, OWNER_UID);
   assert.equal(owner.canApproveUsers, true);

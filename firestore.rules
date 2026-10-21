@@ -4,11 +4,11 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
     function active() { return signedIn() && profile().uid == request.auth.uid && profile().status == 'approved' && (profile().role in ['user','subadmin'] || (request.auth.uid == '7TitBObtb8a0W8GisSstSM1RHiX2' && profile().role == 'superadmin')); }
-    function owner() { return signedIn() && request.auth.uid == '7TitBObtb8a0W8GisSstSM1RHiX2' && profile().status == 'approved' && profile().role == 'superadmin'; }
+    function owner() { return signedIn() && request.auth.uid == '7TitBObtb8a0W8GisSstSM1RHiX2' && profile().uid == request.auth.uid && profile().status == 'approved' && profile().role == 'superadmin'; }
     function subadmin() { return active() && profile().role == 'subadmin'; }
-    function allowed(permission) { return signedIn() && (owner() || (profile().status == 'approved' && profile().role == 'subadmin' && profile().permissions[permission] == true)); }
+    function allowed(permission) { return signedIn() && (owner() || (subadmin() && profile().permissions[permission] == true)); }
     function admin() { return owner() || subadmin(); }
-    function reviewer() { return owner(); }
+    function reviewer() { return owner() || (subadmin() && profile().permissions.approveUsers == true); }
     function publicLibrary() {
       return !exists(/databases/$(database)/documents/settings/library) || get(/databases/$(database)/documents/settings/library).data.publicRead == true;
     }
@@ -20,7 +20,7 @@ service cloud.firestore {
         && (role != 'user' || (p.approveUsers == false && p.addGames == false && p.editGames == false && p.deleteGames == false));
     }
     function validUser(u, uid) {
-      return u.keys().hasOnly(['uid','name','email','role','status','permissions','createdAt','updatedAt','version','lastEventId'])
+      return u.keys().hasOnly(['uid','name','email','role','status','permissions','createdAt','updatedAt','version','lastEventId','blockedFrom'])
         && u.keys().hasAll(['uid','name','email','role','status','permissions','createdAt','updatedAt','version','lastEventId'])
         && u.uid == uid && u.name is string && u.name.size() > 0 && u.name.size() <= 100
         && u.email is string && u.email.size() > 0 && u.email.size() <= 320
@@ -28,20 +28,39 @@ service cloud.firestore {
         && (u.role != 'superadmin' || uid == '7TitBObtb8a0W8GisSstSM1RHiX2')
         && (uid != '7TitBObtb8a0W8GisSstSM1RHiX2' || u.role == 'superadmin')
         && validPermissions(u.permissions,u.role) && u.createdAt is timestamp && u.updatedAt == request.time
+        && u.get('blockedFrom','') in ['', 'approved', 'pending', 'rejected']
+        && (u.status == 'blocked' || u.get('blockedFrom','') == '')
         && u.version is int && u.version >= 1 && u.lastEventId is string && u.lastEventId.size() <= 100;
     }
-    function summary(u) { return {'role':u.role,'status':u.status,'permissions':u.permissions}; }
+    function summary(u) {
+      return u.keys().hasAny(['blockedFrom'])
+        ? {'role':u.role,'status':u.status,'permissions':u.permissions,'blockedFrom':u.blockedFrom}
+        : {'role':u.role,'status':u.status,'permissions':u.permissions};
+    }
+    function retainedPermissions(u) {
+      return {'approveUsers':u.role == 'subadmin' && u.permissions.get('approveUsers',false) == true,'addGames':u.role == 'subadmin' && u.permissions.get('addGames',false) == true,'editGames':u.role == 'subadmin' && u.permissions.get('editGames',false) == true,'deleteGames':false};
+    }
+    function unblockedStatus(u) {
+      let path = /databases/$(database)/documents/auditEvents/$(u.lastEventId == '' ? '__missing_block__' : u.lastEventId);
+      return u.get('blockedFrom','') != '' ? u.blockedFrom
+        : u.lastEventId != '' && exists(path)
+          && get(path).data.action == 'block' && get(path).data.targetType == 'user'
+          && get(path).data.targetId == u.uid && get(path).data.version == u.version
+          && get(path).data.after.status == 'blocked' && get(path).data.after.role == u.role
+          && get(path).data.before.status in ['approved','pending','rejected']
+          ? get(path).data.before.status : 'pending';
+    }
     function userTransition(before, after, action) {
       let root = owner();
       let review = root || reviewer();
-      return (action == 'approve' && review && before.role == 'user' && before.status == 'pending' && after.role == 'user' && after.status == 'approved' && after.permissions == before.permissions)
-        || (action == 'reject' && review && before.role == 'user' && before.status == 'pending' && after.role == 'user' && after.status == 'rejected' && after.permissions == before.permissions)
+      return (action == 'approve' && review && before.role == 'user' && before.status == 'pending' && after.role == 'user' && after.status == 'approved' && after.permissions == retainedPermissions(before))
+        || (action == 'reject' && review && before.role == 'user' && before.status == 'pending' && after.role == 'user' && after.status == 'rejected' && after.permissions == retainedPermissions(before))
         || (root && (
           (action == 'promote' && before.role == 'user' && before.status == 'approved' && after.role == 'subadmin' && after.status == 'approved')
           || (action == 'demote' && before.role == 'subadmin' && after.role == 'user' && after.status == before.status)
           || (action == 'permissions' && before.role == 'subadmin' && after.role == 'subadmin' && after.status == before.status)
-          || (action == 'block' && before.status != 'blocked' && after.status == 'blocked' && after.role == before.role && after.permissions == before.permissions)
-          || (action == 'unblock' && before.status == 'blocked' && after.status == 'approved' && after.role == before.role && after.permissions == before.permissions)));
+          || (action == 'block' && before.status != 'blocked' && after.status == 'blocked' && after.get('blockedFrom','') == before.status && after.role == before.role && after.permissions == retainedPermissions(before))
+          || (action == 'unblock' && before.status == 'blocked' && after.status == unblockedStatus(before) && after.get('blockedFrom','') == '' && after.role == before.role && after.permissions == retainedPermissions(before))));
     }
     function validUserEvent(e, id) {
       let before = get(/databases/$(database)/documents/users/$(e.targetId)).data;
@@ -49,6 +68,8 @@ service cloud.firestore {
       return e.targetId != request.auth.uid && e.targetId != '7TitBObtb8a0W8GisSstSM1RHiX2'
         && after.lastEventId == id && after.version == before.version + 1 && e.version == after.version
         && after.updatedAt == request.time && e.before == summary(before) && e.after == summary(after)
+        && (e.action in ['block','unblock'] || after.get('blockedFrom','') == before.get('blockedFrom','')
+          || (before.status == 'blocked' && before.get('blockedFrom','') == '' && after.get('blockedFrom','') == unblockedStatus(before)))
         && userTransition(before,after,e.action);
     }
     function validSettingsEvent(e, id) {
@@ -65,8 +86,8 @@ service cloud.firestore {
         && ((e.targetType == 'user' && validUserEvent(e,id)) || (e.targetType == 'settings' && validSettingsEvent(e,id)) || (e.targetType == 'guide' && validGuideEvent(e,id)));
     }
     match /users/{uid} {
-      allow get: if (signedIn() && request.auth.uid == uid) || reviewer();
-      allow list: if reviewer();
+      allow get: if (signedIn() && request.auth.uid == uid) || owner() || (reviewer() && resource.data.status == 'pending');
+      allow list: if owner() || (reviewer() && resource.data.status == 'pending');
       // O perfil inicial só pode ser pending/user. O proprietário é criado pelo procedimento IAM local.
       allow create: if signedIn() && request.auth.uid == uid && uid != '7TitBObtb8a0W8GisSstSM1RHiX2'
         && validUser(request.resource.data,uid) && request.resource.data.email == request.auth.token.email
@@ -76,12 +97,12 @@ service cloud.firestore {
         && validUser(request.resource.data,uid) && request.resource.data.uid == resource.data.uid
         && request.resource.data.name == resource.data.name && request.resource.data.email == resource.data.email
         && request.resource.data.createdAt == resource.data.createdAt && request.resource.data.version == resource.data.version + 1
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role','status','permissions','version','updatedAt','lastEventId'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role','status','permissions','version','updatedAt','lastEventId','blockedFrom'])
         && validEvent(getAfter(/databases/$(database)/documents/auditEvents/$(request.resource.data.lastEventId)).data,request.resource.data.lastEventId);
       allow delete: if false;
     }
     match /auditEvents/{id} {
-      allow read: if reviewer();
+      allow read: if owner();
       allow create: if validEvent(request.resource.data,id);
       allow update, delete: if false;
     }
