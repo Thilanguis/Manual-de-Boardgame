@@ -7,7 +7,10 @@ import { titleCandidates } from './recognition.js';
 import { createAccountPanel } from './account-panel.js';
 import { APP_CONFIG } from '../config/app-config.js';
 import { fileErrorMessage } from './file-errors.js';
-import { filterGames, playersLabel, validateGame, normalizeGameDraft, safeImageUrl, durationRange, durationLabel, isTechnicalTitle, displayTitle, displayDescription } from './model.js';
+import { centralDriveFailure, driveWarning } from './drive-diagnostics.js';
+import { playersLabel, validateGame, normalizeGameDraft, safeImageUrl, durationRange, durationLabel, isTechnicalTitle, displayTitle, displayDescription } from './model.js';
+import { filterLibraryGames } from './library-filter-model.js';
+import { createLibraryFilters } from './library-filters.js';
 import { inspectPdf, imageToJpeg } from './pdf.js';
 import { createReader } from './reader.js';
 import { setupPwa } from './pwa.js';
@@ -33,6 +36,7 @@ import { fieldLabels } from './research-client.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { gamesLoading: true, games: [], filter: 'all', query: '', players: '', sort: 'recent', session: { resolving: true, canWrite: false, canRead: false, user: null }, selected: null, busy: false, importing: false };
+const libraryFilters = createLibraryFilters({ root: $('biblioteca'), state, onChange: () => renderGrid() });
 let repository,
   adminPanel,
   guidePanel,
@@ -232,7 +236,7 @@ async function populateImage(image, game) {
   } catch (error) {
     if (state.session.canRead && image.isConnected && image.dataset.gameId === id) {
       image.title = fileErrorMessage(error);
-      $('cover-warning').hidden = false;
+      $('cover-warning').hidden = centralDriveFailure(error);
       $('cover-warning').title = fileErrorMessage(error);
     }
   }
@@ -250,8 +254,10 @@ function renderGrid() {
     $('bgg-attribution').replaceChildren(img);
   }
   const available = state.games.filter(readableGame);
-  const games = filterGames(available, { ...state, favorites: readPreferences('favorites') });
-  $('game-count').textContent = `${available.length} ${available.length === 1 ? 'jogo' : 'jogos'}`;
+  const favorites = readPreferences('favorites');
+  libraryFilters.render(available, favorites);
+  const games = filterLibraryGames(available, { ...state, favorites });
+  $('game-count').textContent = games.length === available.length ? `${available.length} ${available.length === 1 ? 'jogo' : 'jogos'}` : `${games.length} de ${available.length} jogos`;
   $('games-grid').replaceChildren();
   $('empty-state').hidden = state.gamesLoading || available.length > 0;
   $('no-results').hidden = state.gamesLoading || !available.length || games.length > 0;
@@ -308,13 +314,8 @@ function renderGrid() {
     $('games-grid').append(card);
     populateImage(image, game);
   }
-  document.querySelectorAll('[data-filter]').forEach((button) => {
-    const active = button.dataset.filter === state.filter;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
-  });
-  $('nav-favorites').classList.toggle('active', state.filter === 'favorites');
-  $('nav-library').classList.toggle('active', state.filter !== 'favorites');
+  $('nav-favorites').classList.toggle('active', state.favoritesOnly);
+  $('nav-library').classList.toggle('active', !state.favoritesOnly);
 }
 function renderUnavailable() {
   const missing = state.games.filter((game) => !readableGame(game));
@@ -403,7 +404,7 @@ async function renderHero() {
     if (token === heroSequence && url) $('hero-backdrop').style.backgroundImage = `url(${JSON.stringify(url)})`;
   } catch (error) {
     if (token === heroSequence && state.session.canRead) {
-      $('cover-warning').hidden = false;
+      $('cover-warning').hidden = centralDriveFailure(error);
       $('cover-warning').title = fileErrorMessage(error);
     }
   }
@@ -450,35 +451,11 @@ function renderRecent() {
     populateImage(image, game);
   }
 }
-function setFilter(filter) {
-  state.filter = filter;
-  renderGrid();
-}
-document.querySelectorAll('[data-filter]').forEach((button) => (button.onclick = () => setFilter(button.dataset.filter)));
-$('search').oninput = (event) => {
-  state.query = event.target.value;
-  renderGrid();
-};
-$('players-filter').onchange = (event) => {
-  state.players = event.target.value;
-  renderGrid();
-};
-$('sort').onchange = (event) => {
-  state.sort = event.target.value;
-  renderGrid();
-};
-$('clear-filters').onclick = () => {
-  state.query = '';
-  state.players = '';
-  $('search').value = '';
-  $('players-filter').value = '';
-  setFilter('all');
-};
 $('nav-favorites').onclick = () => {
-  setFilter('favorites');
+  libraryFilters.favorites(true);
   $('biblioteca').scrollIntoView({ behavior: 'smooth' });
 };
-$('nav-library').onclick = () => setFilter('all');
+$('nav-library').onclick = () => libraryFilters.favorites(false);
 document.addEventListener('keydown', (event) => {
   if (event.key === '/' && !document.querySelector('dialog[open]') && $('reader').hidden && !['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) {
     event.preventDefault();
@@ -1467,11 +1444,15 @@ window.addEventListener('online', () => {
 });
 function updateSession(session) {
   const previous = state.session;
+  if (!session.canRead || previous.user?.uid !== session.user?.uid) libraryFilters.reset();
   const resolving = session.resolving === true;
   $('session-loading').hidden = !resolving;
   document.body.classList.toggle('access-approved', session.canRead === true);
   if (state.session.user?.uid !== session.user?.uid && !$('reader').hidden) reader?.close();
   state.session = session;
+  $('drive-warning').hidden = !session.canRead || !session.driveIssue;
+  $('drive-diagnostic').textContent = driveWarning(session.driveIssue, ['superadmin', 'subadmin'].includes(session.role));
+  if (session.driveIssue) $('cover-warning').hidden = true;
 
   if (!session.canEdit) knowledgePanel?.close();
   if (!session.canEdit && !session.canDelete && $('game-management-dialog').open) $('game-management-dialog').close();
@@ -1673,6 +1654,7 @@ async function start() {
       (error) => {
         state.gamesLoading = false;
         $('library-loading').hidden = true;
+        if (centralDriveFailure(error)) return;
         $('library-error').textContent = errorMessage(error);
         $('library-error').hidden = false;
       },
@@ -1695,6 +1677,20 @@ $('retry-covers').onclick = () => {
   renderGrid();
   renderHero();
   if (state.selected) void populateImage($('detail-cover'), state.selected);
+};
+$('retry-drive').onclick = async () => {
+  const button = $('retry-drive');
+  button.disabled = true;
+  try {
+    await repository?.retryDrive?.();
+    renderGrid();
+    renderHero();
+    if (state.selected) void populateImage($('detail-cover'), state.selected);
+  } catch (error) {
+    showNotice(fileErrorMessage(error));
+  } finally {
+    button.disabled = false;
+  }
 };
 $('retry-preparation').onclick = async () => {
   const button = $('retry-preparation');

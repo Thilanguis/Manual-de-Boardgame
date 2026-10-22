@@ -166,6 +166,10 @@
         </div>
         <div id="library-error" class="inline-error" role="status" hidden></div>
         <p id="connection-warning" class="inline-error" role="status" hidden></p>
+        <div id="drive-warning" class="inline-error" role="status" hidden>
+          <span id="drive-diagnostic"></span>
+          <button id="retry-drive" class="text-button" type="button">Verificar conexão</button>
+        </div>
         <p id="cover-warning" class="inline-error" role="status" hidden>
           Algumas capas não carregaram.
           <button type="button" class="text-button" id="retry-covers">Tentar novamente</button>
@@ -187,25 +191,19 @@
               <span class="red-dot">.</span>
             </h2>
           </div>
-          <span class="count-badge" id="game-count">0 jogos</span>
+          <span class="count-badge" id="game-count" role="status" aria-live="polite" aria-atomic="true">0 jogos</span>
         </div>
         <div class="library-toolbar">
           <label class="search-field">
             <svg><use href="#i-search" /></svg>
-            <input id="search" type="search" placeholder="Buscar jogo" aria-label="Buscar jogos por nome ou categoria" autocomplete="off" />
+            <input id="search" type="search" placeholder="Nome, tipo, categoria ou mecânica" aria-label="Buscar jogos por nome, tipo, categoria ou mecânica" autocomplete="off" />
             <kbd>/</kbd>
           </label>
           <div class="select-filters">
             <label>
               <span class="sr-only">Quantidade de jogadores</span>
-              <select id="players-filter">
+              <select id="players-filter" data-library-facet="players" data-placeholder="Todos os jogadores">
                 <option value="">Todos os jogadores</option>
-                <option value="1">1 jogador</option>
-                <option value="2">2 jogadores</option>
-                <option value="3">3 jogadores</option>
-                <option value="4">4 jogadores</option>
-                <option value="5">5 jogadores</option>
-                <option value="6">6 jogadores</option>
               </select>
             </label>
             <label>
@@ -219,6 +217,47 @@
           </div>
         </div>
         <button class="text-button" id="refresh-library" hidden>Atualizar biblioteca</button>
+        <details class="library-filters" id="library-filters">
+          <summary>
+            Filtrar biblioteca
+            <span id="library-filter-count"></span>
+          </summary>
+          <div class="library-filters-grid">
+            <label>
+              Tipo de jogo
+              <select data-library-facet="gameType" data-placeholder="Todos os tipos">
+                <option value="">Todos os tipos</option>
+              </select>
+            </label>
+            <label>
+              Categorias e temas
+              <select data-library-facet="category" data-placeholder="Todas as categorias">
+                <option value="">Todas as categorias</option>
+              </select>
+            </label>
+            <label>
+              Mecânicas
+              <select data-library-facet="mechanic" data-placeholder="Todas as mecânicas">
+                <option value="">Todas as mecânicas</option>
+              </select>
+            </label>
+            <label>
+              Duração
+              <select data-library-facet="duration" data-placeholder="Qualquer duração">
+                <option value="">Qualquer duração</option>
+              </select>
+            </label>
+            <label>
+              Idade recomendada
+              <select data-library-facet="age" data-placeholder="Qualquer idade">
+                <option value="">Qualquer idade</option>
+              </select>
+            </label>
+          </div>
+          <p class="label-hint">As opções mostram quantos jogos combinam com os outros filtros. Duração considera o tempo máximo; idade considera a recomendação até o limite escolhido. Dados não informados ficam fora dessas seleções.</p>
+          <button type="button" class="text-button" data-clear-library-filters hidden>Limpar filtros</button>
+        </details>
+        <div id="library-active-filters" class="library-active-filters" role="group" aria-label="Filtros ativos" hidden></div>
         <div class="filter-chips" role="group" aria-label="Filtrar jogos">
           <button class="chip active" data-filter="all" aria-pressed="true">Todos os jogos</button>
           <button class="chip" data-filter="favorites" aria-pressed="false">
@@ -290,6 +329,9 @@
       </a>
       <span>Para quem gosta de reunir pessoas em volta da mesa.</span>
       <span>v1.11.0</span>
+      <a href="sobre.html">Sobre o Acervo</a>
+      <a href="privacidade.html">Política de privacidade</a>
+      <a href="termos.html">Termos de uso</a>
       <a id="bgg-attribution" href="https://boardgamegeek.com" target="_blank" rel="noopener noreferrer" hidden>Powered by BoardGameGeek</a>
       <a id="ludopedia-attribution" href="https://ludopedia.com.br" target="_blank" rel="noopener noreferrer" hidden>Dados: Ludopedia</a>
     </footer>
@@ -640,6 +682,7 @@
       </div>
       <div class="dialog-body">
         <p id="guide-status" role="status" aria-live="polite" hidden></p>
+        <button id="guide-back" class="button secondary small rules-back" type="button" hidden>← Voltar aos assuntos</button>
         <input id="guide-search" type="search" placeholder="Pesquise uma regra ou faça uma pergunta…" aria-label="Consultar regras" />
         <div id="guide-content"></div>
       </div>
@@ -777,6 +820,9 @@
         </details>
         <button class="button secondary full logout-button" id="logout-button">Sair da conta</button>
       </div>
+      <nav class="dialog-body" aria-label="Informações públicas do Acervo">
+        <a href="sobre.html">Sobre o Acervo</a> · <a href="privacidade.html">Privacidade</a> · <a href="termos.html">Termos de uso</a>
+      </nav>
     </dialog>
     <dialog id="admin-dialog" class="wide-dialog admin-dialog" aria-labelledby="admin-title">
       <div class="dialog-header">

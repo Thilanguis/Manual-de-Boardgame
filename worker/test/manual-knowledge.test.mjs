@@ -73,6 +73,17 @@ test('metadados explícitos do índice verificado alimentam o cadastro sem outra
   assert.equal(facts.minDurationMinutes, 60);
   assert.equal(facts.maxDurationMinutes, 150);
 });
+test('somente assistente de regras aproveita páginas legíveis de índice parcial; cadastro mantém critério original', async () => {
+  const index = structuredClone(baseIndex);
+  index.analysisComplete = false;
+  index.pages[0].text = '□'.repeat(40);
+  const transport = await fixture({ index });
+  const analysis = await collectManualKnowledge(game, env, { token: 'fixture-jwt' }, transport);
+  assert.equal(analysis.sources.length, 0);
+  const rules = await collectManualKnowledge(game, env, { token: 'fixture-jwt' }, transport, { forRules: true });
+  assert.deepEqual(rules.sources[0].pages, [{ page: 2, text }]);
+  assert.equal(index.pages[0].text, '□'.repeat(40), 'nenhuma escrita no índice original');
+});
 test('preparo ausente ou incompleto aguarda sem gerar; hash errado e arquivo alheio são negados', async () => {
   for (const options of [{ missing: true }, { index: { ...baseIndex, analysisComplete: false } }]) {
     const result = await collectManualKnowledge(game, env, { token: 'fixture-jwt' }, await fixture(options));

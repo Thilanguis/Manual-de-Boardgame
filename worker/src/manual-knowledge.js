@@ -27,7 +27,7 @@ async function readLimited(stream, limit) {
 }
 
 // O servidor lê somente índices já vinculados ao jogo. Nenhum texto arbitrário do cliente.
-export async function collectManualKnowledge(game, env, identity, fetcher = fetch) {
+export async function collectManualKnowledge(game, env, identity, fetcher = fetch, { forRules = false } = {}) {
   const sources = [],
     missing = [];
   let characters = 0;
@@ -62,11 +62,11 @@ export async function collectManualKnowledge(game, env, identity, fetcher = fetc
       index.pages.some((p, i) => p.page !== i + 1 || typeof p.text !== 'string')
     )
       throw new ApiError(409, 'O índice não corresponde à versão atual do manual.');
-    if (index.analysisComplete === false || index.pages.some((p) => !textQuality(p.text).readable && !p.ocrStatus)) {
+    if (!forRules && (index.analysisComplete === false || index.pages.some((p) => !textQuality(p.text).readable && !p.ocrStatus))) {
       missing.push(document.id);
       continue;
     }
-    const pages = index.pages.map((p) => ({ page: p.page, text: p.text.trim() }));
+    const pages = index.pages.filter((p) => !forRules || textQuality(p.text).readable).map((p) => ({ page: p.page, text: p.text.trim() }));
     characters += pages.reduce((n, p) => n + p.text.length, 0);
     checkManualText(characters);
     const metadata = extractPageMetadata(pages);

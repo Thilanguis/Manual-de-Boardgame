@@ -3,6 +3,7 @@ import { findDocument, gameDocuments, documentKind, primaryDocumentId } from '..
 import { cleanupDocuments, removeDocumentSafely } from './document-assets.js';
 import { ApiError, bearer, verifyFirebaseToken, sealTicket, openTicket } from './auth.js';
 import { getDocument, requirePermission, driveToken, driveMetadata, requireProjectFile, deleteProjectFile, belongsToProject, safeDriveSession, validateUpload, parseRange, firestoreURL } from './services.js';
+import { driveError, driveResponseError } from './drive-errors.js';
 import { XMLParser } from 'fast-xml-parser';
 import { parseSearch, parseThing } from '../../backend/bgg-parser.js';
 import { cleanupGuides } from './guide-assets.js';
@@ -10,6 +11,8 @@ import { queryCatalog, researchCapabilities } from './catalog/index.js';
 import { RESEARCH_VERSION, RESEARCH_PROTOCOL, RESEARCH_QUERY_VERSION } from '../../js/research-contract.js';
 import { knowledgeEndpoint } from './game-knowledge.js';
 import { draftKnowledgeEndpoint } from './draft-knowledge.js';
+import { ruleAssistantEndpoint } from './rule-assistant.js';
+import { RULE_ASSISTANT_PROTOCOL, RULE_ASSISTANT_LIMITS } from '../../js/rule-assistant-contract.js';
 import { DRAFT_REQUEST_BYTES, KNOWLEDGE_REQUEST_BYTES } from './knowledge-limits.js';
 export { KnowledgeStore } from './game-knowledge.js';
 
@@ -241,8 +244,10 @@ async function media(request, env, identity, gameId, kind, assetId = '', documen
     if (!/^bytes=\d*-\d*$/.test(range) || range === 'bytes=-') throw new ApiError(416, 'Faixa de leitura inválida.');
     headers.Range = range;
   }
-  const upstream = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media`, { headers, redirect: 'manual' });
-  if (!upstream.ok && upstream.status !== 416) throw new ApiError(upstream.status === 429 || upstream.status === 403 ? 429 : 502, 'O Drive não disponibilizou o arquivo agora. Tente novamente.');
+  const upstream = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media`, { headers, redirect: 'manual' }).catch(() => {
+    throw driveError('drive/unavailable');
+  });
+  if (!upstream.ok && upstream.status !== 416) throw await driveResponseError(upstream);
   const result = new Headers({
     'Content-Type': ['guideAsset', 'documentIndex'].includes(kind) ? (['image/jpeg', 'application/gzip'].includes(file.mimeType) ? file.mimeType : 'application/octet-stream') : ['manual', 'document'].includes(kind) ? 'application/pdf' : 'image/jpeg',
     'Cache-Control': 'no-store',
@@ -320,6 +325,17 @@ async function catalogStatus(request, env, identity) {
   const admin = ['superadmin', 'subadmin'].includes(identity.profile?.role);
   const settings = admin ? null : await getDocument(env, 'settings/library', identity.token);
   const allMembers = admin || !settings || settings.publicRead === true;
+  let folderCheck;
+  const confirmFolder = () =>
+    (folderCheck ||= (async () => {
+      try {
+        const folder = await driveMetadata(env, env.DRIVE_FOLDER_ID);
+        if (!belongsToProject(folder, env, { kind: 'folder' })) throw driveError('drive/permission');
+      } catch (error) {
+        if (error.code === 'drive/file-permission') throw driveError('drive/permission');
+        throw error;
+      }
+    })());
   const games = await Promise.all(
     [...new Set(input.gameIds)].map(async (id) => {
       let game;
@@ -333,7 +349,12 @@ async function catalogStatus(request, env, identity) {
       if (!game || game.deleting || !game.manual?.driveFileId) return { id, available: false, reason: 'missing' };
       // O ID vem do documento efetivamente autorizado pelo Firestore, nunca do cliente.
       const file = await driveMetadata(env, game.manual.driveFileId);
-      if (!file) return { id, available: false, reason: 'missing' };
+      if (!file) {
+        // 404 também pode significar perda de acesso. Conferir a pasta central
+        // antes de marcar o arquivo como ausente, preservando o catálogo em falhas.
+        await confirmFolder();
+        return { id, available: false, reason: 'missing' };
+      }
       const document = findDocument(game),
         kind = documentKind(document);
       if (!belongsToProject(file, env, { gameId: id, kind, allowTrashed: true, ...(kind === 'manual' ? {} : { documentId: document.id, sourceHash: document.manual.sha256 }) })) return { id, available: false, reason: 'unavailable' };
@@ -429,6 +450,8 @@ export async function handleRequest(request, env, ctx) {
         profileDiscoveryModel: 'gemini-2.5-flash-lite',
         profileDiscoveryLimits: { perAnalysis: 1, perMinute: null, perDay: null },
         knowledgeInternalQuota: false,
+        ruleAssistantProtocol: RULE_ASSISTANT_PROTOCOL,
+        ruleAssistantLimits: RULE_ASSISTANT_LIMITS,
         googleSearchGrounding: false,
         knowledgeReuseProtocol: 1,
         informationIdentityProtocol: 1,
@@ -436,6 +459,8 @@ export async function handleRequest(request, env, ctx) {
         manualAiEnabled: env.ALLOW_MANUAL_AI === 'true',
         firebaseProject: env.FIREBASE_PROJECT_ID,
         driveConnected: !!(env.GOOGLE_REFRESH_TOKEN && env.DRIVE_FOLDER_ID && env.TICKET_KEY),
+        // Compatibilidade: driveConnected indica apenas presença de bindings.
+        driveOAuth: { configured: !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REFRESH_TOKEN && env.DRIVE_FOLDER_ID && env.DRIVE_OWNER_EMAIL), verified: false, check: 'configuration-only' },
       });
     else {
       const token = bearer(request);
@@ -448,7 +473,9 @@ export async function handleRequest(request, env, ctx) {
       identity.profile = access;
       const research = /^\/v1\/research\/(wikidata|wikipedia|ludopedia|bgg)$/.exec(url.pathname);
       const knowledge = /^\/v1\/games\/([a-f0-9-]{36})\/knowledge$/.exec(url.pathname);
-      if (url.pathname === '/v1/research/draft-knowledge' && request.method === 'POST') response = await draftKnowledgeEndpoint(request, env, identity, await readJSON(request, DRAFT_REQUEST_BYTES, 'Os dados dos manuais'), ctx);
+      const question = /^\/v1\/games\/([a-f0-9-]{36})\/rule-question$/.exec(url.pathname);
+      if (question && request.method === 'POST') response = await ruleAssistantEndpoint(request, env, identity, question[1], await readJSON(request, 8192, 'A pergunta'));
+      else if (url.pathname === '/v1/research/draft-knowledge' && request.method === 'POST') response = await draftKnowledgeEndpoint(request, env, identity, await readJSON(request, DRAFT_REQUEST_BYTES, 'Os dados dos manuais'), ctx);
       else if (knowledge && ['GET', 'POST'].includes(request.method))
         response = await knowledgeEndpoint(request, env, identity, knowledge[1], request.method === 'POST' ? await readJSON(request, KNOWLEDGE_REQUEST_BYTES, 'Os dados da análise ou correção') : null, ctx);
       else if (url.pathname === '/v1/research/sources' && request.method === 'GET') response = json(researchCapabilities(env));
@@ -484,7 +511,11 @@ export async function handleRequest(request, env, ctx) {
   } catch (error) {
     // Não registrar tokens, cabeçalhos de autorização, respostas OAuth ou tickets.
     response = json(
-      { error: error instanceof ApiError ? error.message : 'Não foi possível concluir a operação. Tente novamente.', ...(error instanceof ApiError && error.reason ? { reason: error.reason } : {}) },
+      {
+        error: error instanceof ApiError ? error.message : 'Não foi possível concluir a operação. Tente novamente.',
+        ...(error instanceof ApiError && error.reason ? { reason: error.reason } : {}),
+        ...(error instanceof ApiError && error.code?.startsWith('drive/') ? { code: error.code, retryAfter: error.retryAfter } : {}),
+      },
       error instanceof ApiError ? error.status : 502,
     );
   }

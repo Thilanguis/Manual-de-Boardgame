@@ -7,13 +7,27 @@ import { join, resolve } from 'node:path';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { DRIVE_FOLDER_ID } from '../js/permissions.js';
-async function setup(run, failure = '') {
+const fixtureClientId = '548436978015-fixture.apps.googleusercontent.com';
+const fixtureWorkerVersion = '11111111-1111-4111-8111-111111111111';
+async function setup(run, failure = '', mode = ['--initialize', '--apply']) {
   const temporary = await mkdtemp(join(tmpdir(), 'acervo-drive-setup-')),
     clientFile = join(temporary, 'fixture-oauth.json');
-  await writeFile(clientFile, JSON.stringify({ web: { client_id: '548436978015-fixture.apps.googleusercontent.com', client_secret: 'fixture-private-client', redirect_uris: ['http://localhost:4180/oauth/callback'] } }));
+  await writeFile(clientFile, JSON.stringify({ web: { project_id: 'manual-de-boardgame', client_id: fixtureClientId, client_secret: 'fixture-private-client', redirect_uris: ['http://localhost:4180/oauth/callback'] } }));
   const child = spawn(
     process.execPath,
-    ['--import', pathToFileURL(resolve('tests/helpers/mock-drive-setup.mjs')).href, resolve('scripts/connect-drive.mjs'), '--client-file', clientFile, '--owner-email', 'owner@example.test', '--picker-key', 'AIzaFixturePublicPickerKey0000000000'],
+    [
+      '--import',
+      pathToFileURL(resolve('tests/helpers/mock-drive-setup.mjs')).href,
+      resolve('scripts/connect-drive.mjs'),
+      '--client-file',
+      clientFile,
+      '--owner-email',
+      'owner@example.test',
+      '--picker-key',
+      'AIzaFixturePublicPickerKey0000000000',
+      ...(mode.includes('--reconnect') ? ['--production-confirmed', '--expected-client-id', fixtureClientId, '--expected-worker-version', fixtureWorkerVersion] : []),
+      ...mode,
+    ],
     { env: { ...process.env, ACERVO_SETUP_MOCK: '1', ACERVO_SETUP_MOCK_FAILURE: failure }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
   );
   let output = '';
@@ -31,7 +45,7 @@ async function setup(run, failure = '') {
     child.on('error', reject);
     child.once('exit', (code) => {
       clearTimeout(timer);
-      if (code !== 0) reject(new Error('O assistente local encerrou antes de iniciar. Confira as dependências do Worker e o stderr do processo de teste.'));
+      if (code !== 0) reject(new Error('Assistente interrompido antes de iniciar: ' + output));
     });
   });
   child.stderr.on('data', (chunk) => (output += chunk));
@@ -86,3 +100,90 @@ test('Drive API desativada mostra diagnóstico sem expor respostas privadas nem 
     assert.ok(!output().includes('MOCK_FOLDER_PATCH'));
     assert.ok(!output().includes('salvo no Worker'));
   }, 'drive-disabled'));
+
+test('reconexão altera somente refresh token; preserva arquivos, permissões e chave de tickets', async () =>
+  setup(
+    async ({ state, exit, output }) => {
+      assert.equal((await callback(state)).status, 303);
+      assert.equal((await exit)[0], 0);
+      assert.doesNotMatch(output(), /MOCK_FOLDER_PATCH|fixture-private-refresh|fixture-private-client/);
+      assert.deepEqual(
+        [...output().matchAll(/MOCK_SECRET (\w+)/g)].map((m) => m[1]),
+        ['GOOGLE_REFRESH_TOKEN'],
+      );
+    },
+    'reconnect',
+    ['--reconnect', '--apply'],
+  ));
+
+test('validação sem apply não grava secrets nem modifica pasta', async () =>
+  setup(
+    async ({ state, exit, output }) => {
+      assert.equal((await callback(state)).status, 303);
+      assert.equal((await exit)[0], 0);
+      assert.doesNotMatch(output(), /MOCK_FOLDER_PATCH|MOCK_SECRET|fixture-private-refresh|fixture-private-client/);
+      assert.match(output(), /Nenhum secret ou arquivo foi alterado/);
+    },
+    'reconnect',
+    ['--reconnect'],
+  ));
+
+test('rotação explícita atualiza par OAuth em um bulk sem trocar tickets ou IDs', async () =>
+  setup(
+    async ({ state, exit, output }) => {
+      assert.equal((await callback(state)).status, 303);
+      assert.equal((await exit)[0], 0);
+      assert.match(output(), /MOCK_BULK GOOGLE_CLIENT_SECRET,GOOGLE_REFRESH_TOKEN/);
+      assert.doesNotMatch(output(), /MOCK_FOLDER_PATCH|MOCK_SECRET|fixture-private-refresh|fixture-private-client/);
+    },
+    'reconnect',
+    ['--reconnect', '--rotate-client-secret', '--apply'],
+  ));
+
+test('outro cliente sem marca privada da pasta não pode sobrescrever a conexão', async () =>
+  setup(
+    async ({ state, exit, output }) => {
+      await callback(state);
+      const selected = await fetch('http://localhost:4180/select-folder', { method: 'POST', headers: local(state), body: JSON.stringify({ folderId: DRIVE_FOLDER_ID }) });
+      assert.equal(selected.status, 500);
+      assert.equal((await exit)[0], 1);
+      assert.doesNotMatch(output(), /MOCK_FOLDER_PATCH|MOCK_SECRET/);
+      assert.match(output(), /mesmo cliente/);
+    },
+    '',
+    ['--reconnect', '--apply'],
+  ));
+
+test('refresh com validade informada de sete dias é rejeitado antes de gravar secrets', async () =>
+  setup(
+    async ({ state, exit, output }) => {
+      assert.equal((await callback(state)).status, 500);
+      assert.equal((await exit)[0], 1);
+      assert.match(output(), /sete dias ou menos/);
+      assert.doesNotMatch(output(), /MOCK_SECRET|MOCK_BULK|MOCK_FOLDER_PATCH|fixture-private-refresh|fixture-private-client/);
+    },
+    'seven-day',
+    ['--reconnect', '--rotate-client-secret', '--apply'],
+  ));
+
+test('escopo adicional e conta diferente interrompem sem escrita', async () => {
+  for (const failure of ['extra-scope', 'wrong-owner'])
+    await setup(
+      async ({ state, exit, output }) => {
+        assert.equal((await callback(state)).status, 500);
+        assert.equal((await exit)[0], 1);
+        assert.doesNotMatch(output(), /MOCK_SECRET|MOCK_BULK|MOCK_FOLDER_PATCH|fixture-private-refresh|fixture-private-client/);
+      },
+      failure,
+      ['--reconnect', '--rotate-client-secret', '--apply'],
+    );
+});
+
+test('versão não ativa ou versão de produção divergente bloqueiam antes de iniciar OAuth', async () => {
+  for (const failure of ['latest-inactive', 'deployment-changed']) {
+    await assert.rejects(
+      setup(() => assert.fail('OAuth não deveria iniciar'), failure, ['--reconnect', '--apply']),
+      /versão enviada mais recente|versão ativa do Worker diverge/,
+    );
+  }
+});

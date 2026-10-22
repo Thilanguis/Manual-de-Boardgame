@@ -64,8 +64,11 @@ export async function loadRemotePdf(source, { signal } = {}) {
     const response = await fetch(source.url, { headers: source.headers, signal: combined, cache: 'no-store' });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      throw Object.assign(new Error(data.error || 'Não foi possível abrir o manual.'), { status: response.status });
+      const error = Object.assign(new Error(data.error || 'Não foi possível abrir o manual.'), { status: response.status, code: data.code, retryAfter: data.retryAfter });
+      source.onError?.(error);
+      throw error;
     }
+    source.onSuccess?.();
     const limit = MAX_PDF_READ_BYTES;
     if (Number(response.headers.get('Content-Length')) > limit) throw new Error('Arquivo maior que o permitido.');
     if (!response.body) throw new Error('O manual não foi recebido.');

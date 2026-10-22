@@ -1,9 +1,9 @@
 import '../scripts/test-guard.mjs';
 import assert from 'node:assert/strict';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
-import { gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { browserDependencies } from './browser-dependencies.mjs';
+import { realIndex } from './real-index-fixture.mjs';
 
 const { chromium } = browserDependencies('playwright');
 const base = process.env.ACERVO_TEST_URL || 'http://127.0.0.1:4186';
@@ -20,7 +20,7 @@ await mkdir('test-output/rule-quality', { recursive: true });
 try {
   for (const item of cases) {
     const bytes = await readFile('PDFs/' + item.pdf);
-    const index = JSON.parse(gunzipSync(await readFile('PDFs/' + item.pdf + ' — índice.gz')));
+    const index = await realIndex(item.pdf);
     assert.equal(createHash('sha256').update(bytes).digest('hex'), index.sourceHash, 'índice pertence ao PDF real');
     const originalIndex = JSON.stringify(index);
     const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1440, height: 1000 } });
@@ -108,6 +108,52 @@ try {
         assert.match(result.title, /componentes/i);
         assert.doesNotMatch(result.title, /objetivo|visão geral/i);
       }
+      if (item.title === 'Duelo pela Terra Média' && query === 'Turnos') {
+        const card = page.locator('.rule-result').first();
+        assert.equal(
+          await card
+            .locator('.rule-preview h4')
+            .filter({ hasText: /^A\. Pegar uma Carta de Capítulo$/ })
+            .count(),
+          1,
+        );
+        assert.equal(await card.locator('.rule-preview p').filter({ hasText: /^A\.$/ }).count(), 0);
+        const previewText = await card.locator('.rule-preview').textContent();
+        assert.doesNotMatch(previewText, /turnos ,|Lugar \./);
+        assert.match(previewText, /nenhuma outra carta/);
+        assert.doesNotMatch(previewText, /disponível, Carta|nenhuma disponível/);
+        assert.equal((await card.locator('.rule-preview').innerText()).includes('\nCarta disponível'), false);
+        assert.equal(
+          await card
+            .locator('summary')
+            .filter({ hasText: /^Texto lateral do PDF$/ })
+            .count(),
+          1,
+        );
+        const full = card.locator('details').filter({ has: page.locator('summary', { hasText: 'Ler trecho completo' }) });
+        await full.locator('summary').click();
+        assert.equal(
+          await full
+            .locator('h4')
+            .filter({ hasText: /^Jogar a carta na sua frente$/ })
+            .count(),
+          1,
+        );
+        assert.equal(
+          await full
+            .locator('h4')
+            .filter({ hasText: /^Descarte a carta$/ })
+            .count(),
+          1,
+        );
+        assert.match(await full.textContent(), /coloque-a na sua área de jogo/);
+        for (const width of [1440, 768, 390]) {
+          await page.setViewportSize({ width, height: 1000 });
+          assert(await card.evaluate((n) => n.scrollWidth <= n.clientWidth + 1));
+          await page.screenshot({ path: `test-output/rule-reading-audit/turnos-${width}.png` });
+        }
+        await page.setViewportSize({ width: 1440, height: 1000 });
+      }
       if (item.title === 'Dead by Daylight' && query === 'Componentes') assert.match(result.preview, /7 Tabuleiros|44 Peças/);
       if (item.title === 'Resident Evil' && query === 'Como atacar um inimigo?') assert.match(result.preview, /arma|Escolha um inimigo/i);
       if (item.title === 'Dead by Daylight' && query === 'Como mover o sobrevivente?') {
@@ -164,6 +210,23 @@ try {
         assert(await page.evaluate(() => document.querySelector('#guide-dialog').getBoundingClientRect().width <= innerWidth));
         await page.screenshot({ path: `test-output/rule-quality/rules-${width}.png` });
       }
+    }
+    if (item.language === 'en') {
+      // Tradução já disponível, simulada e vinculada literalmente ao OCR real.
+      await page.evaluate(async () => {
+        const p = window.testIndex.pages[20];
+        p.translation = { sourceText: p.text, text: 'ATACAR\nGaste uma ação para realizar um ataque. Confira a arma e as condições no manual original.', targetLanguage: 'pt-BR', sourceLanguage: 'en', method: 'simulated-local-translation' };
+        await window.panel.refreshIndexes();
+      });
+      await page.locator('#guide-search').fill('atacar');
+      await page.waitForFunction(() => document.querySelector('#guide-content').dataset.query === 'atacar' && document.querySelector('.rule-preview')?.textContent.includes('Gaste uma ação'));
+      const translated = await page.locator('.rule-result').first().textContent();
+      assert.match(translated, /Texto original/);
+      assert.equal(await page.locator('.rule-result').first().getAttribute('data-page'), '21');
+      await page.screenshot({ path: 'test-output/rule-quality/translated-ocr-real.png' });
+      await page.evaluate(() => {
+        delete window.testIndex.pages[20].translation;
+      });
     }
     assert.equal(await page.evaluate(() => window.generationCalls), 0);
     assert((await page.evaluate(() => window.manualReads)) <= item.queries.length + 1, 'organizar o índice não repete leitura do PDF a cada pergunta');

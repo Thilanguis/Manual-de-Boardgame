@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const source = await readFile(new URL('../service-worker.js', import.meta.url), 'utf8');
-function worker({ networkFails = false, cachedConfig = null } = {}) {
+function worker({ networkFails = false, cachedConfig = null, scope = 'https://example.com/' } = {}) {
   const handlers = {},
     deleted = [],
     cached = [],
@@ -41,7 +41,7 @@ function worker({ networkFails = false, cachedConfig = null } = {}) {
     },
     self: {
       location: { origin: 'https://example.com' },
-      registration: { scope: 'https://example.com/' },
+      registration: { scope },
       clients: { claim: async () => {} },
       addEventListener: (event, callback) => (handlers[event] = callback),
       skipWaiting: () => responses.push('skipWaiting'),
@@ -89,6 +89,20 @@ test('worker novo aguarda mensagem de atualização', () => {
   const context = worker();
   context.handlers.message({ data: 'skipWaiting' });
   assert.deepEqual(context.responses, ['skipWaiting']);
+});
+
+test('páginas institucionais não recebem o HTML privado do cache, inclusive em Pages com subpasta', () => {
+  for (const scope of ['https://example.com/', 'https://example.com/Manual-de-Boardgame/']) {
+    const context = worker({ scope, cachedConfig: 'HTML da biblioteca em cache' });
+    for (const page of ['sobre.html', 'privacidade.html', 'termos.html']) {
+      let intercepted = false;
+      context.handlers.fetch({ request: { method: 'GET', mode: 'navigate', url: new URL(page + '?origem=acervo', scope).href, headers: new Headers() }, respondWith: () => { intercepted = true; } });
+      assert.equal(intercepted, false, scope + page);
+    }
+    let intercepted = false;
+    context.handlers.fetch({ request: { method: 'GET', mode: 'navigate', url: scope, headers: new Headers() }, respondWith: () => { intercepted = true; } });
+    assert.equal(intercepted, true, 'a navegação da biblioteca conserva o cache existente');
+  }
 });
 
 test('configuração pública busca a rede mesmo quando uma configuração anterior está no cache', async () => {

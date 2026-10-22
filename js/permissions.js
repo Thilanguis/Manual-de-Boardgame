@@ -15,6 +15,7 @@ export function accessFor(profile, uid, ownerUid = OWNER_UID) {
     canManageUsers: owner,
     canConfigure: owner,
     canReadAll: owner || subadmin,
+    canAskRules: owner || subadmin,
   };
   return { ...rights, canWrite: rights.canAdd || rights.canEdit || rights.canDelete, isOwner: owner };
 }

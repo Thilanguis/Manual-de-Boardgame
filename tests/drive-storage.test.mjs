@@ -3,6 +3,35 @@ import assert from 'node:assert/strict';
 import { createDriveStorage } from '../js/drive-storage.js';
 import { MAX_PDF_BYTES } from '../js/pdf-limits.js';
 
+test('assistente exige protocolo próprio, JWT e conserva uso informado em 429, sem repetição', async () => {
+  const previous = globalThis.fetch;
+  let protocol = false,
+    calls = 0;
+  globalThis.fetch = async (url, options) => {
+    if (url.endsWith('/health')) return Response.json({ ruleAssistantProtocol: protocol ? 1 : 0 });
+    calls++;
+    assert.equal(options.headers.Authorization, 'Bearer fixture');
+    assert(url.endsWith('/rule-question'));
+    assert.equal(JSON.parse(options.body).question, 'Como atacar?');
+    return Response.json({ error: 'Orçamento atingido.', usage: { used: 10, limit: 10 } }, { status: 429 });
+  };
+  const create = () =>
+    createDriveStorage(
+      { apiBase: 'https://api.example.test' },
+      async () => 'fixture',
+      () => 'owner',
+    );
+  try {
+    await assert.rejects(create().askRules({ id: 'game' }, { question: 'Como atacar?' }), /ainda não oferece/);
+    assert.equal(calls, 0);
+    protocol = true;
+    await assert.rejects(create().askRules({ id: 'game' }, { question: 'Como atacar?' }), (e) => e.status === 429 && e.usage.used === 10);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
+
 test('429 de conhecimento preserva mensagem, prazo e estado em vez de erro genérico de Drive', async () => {
   const original = globalThis.fetch;
   const record = { status: 'quota', reason: 'provider-rate-limit', message: 'A cota do Gemini foi atingida.', retryAt: Date.now() + 60000 };

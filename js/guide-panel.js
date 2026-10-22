@@ -1,12 +1,16 @@
-import { gameDocuments, documentGame, documentName, findDocument } from './documents.js';
-import { staleSection, ruleCategory } from './guide-model.js';
+import { gameDocuments, documentGame, documentName, findDocument, DOCUMENT_TYPES } from './documents.js';
+import { staleSection } from './guide-model.js';
 import { indexMatches } from './pdf-index.js';
 import { fileErrorMessage } from './file-errors.js';
-import { usableKnowledge, KNOWLEDGE_TOPICS } from './knowledge-model.js';
+import { usableKnowledge } from './knowledge-model.js';
+import { ruleTopics } from './rule-topics.js';
 import { searchKnowledge, queryWords } from './rule-relevance.js';
-import { cleanRuleText, contextualExcerpt } from './rule-passages.js';
+import { contextualExcerpt } from './rule-passages.js';
 import { readableIndex } from './rule-layout.js';
 import { observeKnowledge } from './knowledge-observer.js';
+import { renderRuleReading } from './rule-reading.js';
+import { createRuleAssistantPanel } from './rule-assistant-panel.js';
+import { assistantIdentity } from './rule-assistant-contract.js';
 
 const el = (tag, text = '', className = '') => {
   const node = document.createElement(tag);
@@ -20,45 +24,18 @@ const button = (text, action) => {
   node.onclick = action;
   return node;
 };
-export function formattedText(target, text) {
-  let list = null,
-    listType = '';
-  for (const block of cleanRuleText(text)
-    .split(/\n\s*\n/)
-    .filter(Boolean)) {
-    const marker = block.match(/^(?:([•●▪◦*–—-])\s+|(\d{1,2})[.)]\s+)([\s\S]*)$/);
-    let paragraph;
-    if (marker) {
-      const type = marker[2] ? 'ol' : 'ul';
-      if (!list || listType !== type) {
-        list = el(type);
-        target.append(list);
-        listType = type;
-      }
-      paragraph = el('li');
-      if (marker[2]) paragraph.value = Number(marker[2]);
-      list.append(paragraph);
-    } else {
-      list = null;
-      paragraph = el('p');
-      target.append(paragraph);
-    }
-    for (const part of (marker ? marker[3] : block).split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g)) {
-      if (/^\*\*[^*]+\*\*$/.test(part)) paragraph.append(el('strong', part.slice(2, -2)));
-      else if (/^\*[^*]+\*$/.test(part)) paragraph.append(el('em', part.slice(1, -1)));
-      else paragraph.append(document.createTextNode(part));
-    }
-  }
+export function formattedText(target, text, headings = []) {
+  renderRuleReading(target, text, { headings });
 }
 
-// O nome do módulo é mantido para compatibilidade. Não contém editor ou escrita
-// de guias: a consulta usa apenas conteúdo previamente armazenado e autorizado.
+// A consulta e a recuperação do assistente são independentes da geração de fichas.
 export function createGuidePanel({ repository, openManual, getPreparation = () => null, scope = 'local' }) {
   const $ = (id) => document.getElementById(id);
   const dialog = $('guide-dialog'),
     view = $('guide-content'),
     status = $('guide-status'),
-    input = $('guide-search');
+    input = $('guide-search'),
+    back = $('guide-back');
   const worker = new Worker(new URL('./rule-search-worker.js', import.meta.url), { type: 'module' });
   let game,
     published,
@@ -70,10 +47,12 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     observation,
     returnFocus,
     layoutController,
-    loading = false;
+    loading = false,
+    selectedTopic = null;
   let errors = new Map(),
     sessionUid = repository.session.user?.uid;
   const urls = new Map();
+  const assistant = createRuleAssistantPanel({ repository, container: view.parentElement, getGame: () => game, pageButton });
   const message = () => {
     status.textContent = [...errors.values()].join(' ');
     status.hidden = !status.textContent;
@@ -120,19 +99,48 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     card.dataset.page = result.page || '';
     card.dataset.document = result.documentId || 'main';
     card.append(el('h3', result.title), el('small', result.source));
+    if (result.needsPdf) card.append(el('p', 'Confira ilustrações e tabelas na página original do PDF.', 'rule-notice'));
     if (result.editionUnconfirmed) card.append(el('small', 'Informação geral da obra · edição não confirmada'));
-    if (result.needsTranslation) card.append(el('p', 'Tradução pendente. Consulte o texto original ou a página do manual.'));
+    if (result.needsTranslation)
+      card.append(
+        el('p', ['other', 'unknown', 'und'].includes(result.language) ? 'O idioma deste trecho ainda não foi identificado. Consulte o texto original ou a página do manual.' : 'Tradução pendente. Consulte o texto original ou a página do manual.'),
+      );
     else {
       const excerpt = contextualExcerpt(result.text, queryWords(input.value), 480);
+      if (result.readingText && result.readingText.length <= 600) {
+        excerpt.preview = result.readingText;
+        excerpt.hasMore = false;
+      }
+      if (result.literalRows) {
+        const rows = (result.readingText || result.text)
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const previewRows = [];
+        let length = 0;
+        for (const row of rows) {
+          if (length + row.length > 600) break;
+          previewRows.push(row);
+          length += row.length;
+        }
+        excerpt.preview = previewRows.join('\n\n') || 'Confira a disposição dos componentes na página original.';
+        excerpt.hasMore = true;
+      }
       const preview = el('div', '', 'rule-preview');
-      formattedText(preview, excerpt.preview);
+      formattedText(preview, excerpt.preview, result.readingHeadings);
       card.append(preview);
       if (excerpt.hasMore) {
-        const full = el('details');
+        const full = el('details', '', 'rule-full');
         full.append(el('summary', result.generated || result.sectionId ? 'Ler explicação completa' : 'Ler trecho completo'));
-        formattedText(full, excerpt.text);
+        formattedText(full, result.readingText || excerpt.text, result.readingHeadings);
         card.append(full);
       }
+    }
+    if (result.readingSideNotes?.length) {
+      const notes = el('details');
+      notes.append(el('summary', 'Texto lateral do PDF'));
+      for (const text of result.readingSideNotes) notes.append(el('p', text));
+      card.append(notes);
     }
     if (result.needsTranslation || result.translated || result.layoutRebuilt) {
       const original = el('details');
@@ -141,9 +149,11 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
       card.append(original);
     }
     const document = findDocument(game, result.documentId || 'main');
+    if (document?.edition && game.edition && document.edition !== game.edition) card.append(el('p', `Documento de outra edição (${document.edition}). Confira a aplicabilidade antes de usar esta regra.`, 'rule-notice'));
+    if (document?.documentType === 'expansao') card.append(el('p', 'Regra de expansão: aplica-se somente ao conteúdo desta expansão.', 'rule-notice'));
     if (result.page) {
       const referenceRow = el('div', '', 'rule-reference');
-      if (document) referenceRow.append(el('small', documentName(document)));
+      if (document) referenceRow.append(el('small', `${documentName(document)} · ${DOCUMENT_TYPES[document.documentType] || 'Manual'}${document.edition ? ' · edição ' + document.edition : ''}`));
       const reference = pageButton(result.page, result.sourceHash, result.documentId);
       if (reference) referenceRow.append(reference);
       card.append(referenceRow);
@@ -175,6 +185,8 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
       }
     }
     if (result.imageId) void image(result.imageId, card, result.caption);
+    const ask = assistant.action(result);
+    if (ask) card.append(ask);
     return card;
   }
   const hasContent = () => indexes.length || knowledge?.sections.length || published?.sections.length;
@@ -185,6 +197,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     return preparing ? 'Os documentos estão sendo preparados. Você já pode ler os PDFs.' : 'Ainda não há conteúdo preparado para consulta. Você pode ler o manual.';
   }
   function overview() {
+    back.hidden = true;
     view.dataset.query = '';
     view.replaceChildren();
     const section = knowledge?.sections.find((section) => section.topic === 'visao-geral');
@@ -195,28 +208,34 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
       const section = published?.sections.find((section) => /visão geral|visao geral|objetivo/i.test(section.title));
       if (section) view.append(resultCard({ ...section, source: 'Informação revisada', sourceHash: section.sourceHash || published.sourceHash, sectionId: section.id }));
     }
-    const topics = new Map();
-    for (const section of knowledge?.sections || []) if (KNOWLEDGE_TOPICS[section.topic] && section.topic !== 'visao-geral') topics.set(KNOWLEDGE_TOPICS[section.topic], KNOWLEDGE_TOPICS[section.topic]);
-    for (const section of published?.sections || []) {
-      const topic = ruleCategory(section.title);
-      if (topic) topics.set(topic, topic);
-    }
-    for (const entry of indexes)
-      for (const heading of entry.index.headings || []) {
-        const topic = heading.category || ruleCategory(heading.title);
-        if (topic) topics.set(topic, topic);
-      }
-    if (topics.size) {
-      const nav = el('nav', '', 'rules-topics');
-      nav.setAttribute('aria-label', 'Assuntos das regras');
-      for (const title of [...topics.keys()].slice(0, 12))
-        nav.append(
-          button(title, () => {
-            input.value = title === 'Pontuação e vitória' ? 'vitória' : title;
+    const topics = ruleTopics({ indexes, guide: published, knowledge, documents: gameDocuments(game) });
+    if (topics.length) {
+      const group = el('details', '', 'rules-topic-group');
+      group.open = true;
+      group.append(el('summary', 'Assuntos encontrados nos documentos'));
+      function navigation(items) {
+        const nav = el('nav', '', 'rules-topics');
+        nav.setAttribute('aria-label', 'Assuntos das regras');
+        for (const topic of items) {
+          const item = button(topic.title, () => {
+            assistant.close();
+            selectedTopic = topic.id;
+            input.value = topic.title;
             renderSearch();
-          }),
-        );
-      view.append(nav);
+          });
+          item.classList.add('rule-topic');
+          item.append(el('small', topic.sources.slice(0, 2).join(' · ')));
+          nav.append(item);
+        }
+        return nav;
+      }
+      group.append(navigation(topics.slice(0, 12)));
+      if (topics.length > 12) {
+        const more = el('details', '', 'rules-more');
+        more.append(el('summary', `Mais assuntos (${topics.length - 12})`), navigation(topics.slice(12)));
+        group.append(more);
+      }
+      view.append(group);
     }
     if (!hasContent()) {
       view.append(
@@ -264,8 +283,9 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     ++searchSequence;
     message();
     if (!input.value.trim()) return overview();
+    back.hidden = false;
     view.replaceChildren(el('p', 'Pesquisando…'));
-    worker.postMessage({ type: 'query', id: searchSequence, query: input.value });
+    worker.postMessage({ type: 'query', id: searchSequence, query: input.value, topicId: selectedTopic });
   }
   worker.onmessage = ({ data }) => {
     if (data.id !== searchSequence || data.query !== input.value.trim() || !dialog.open) return;
@@ -334,6 +354,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     await observation.refresh();
   }
   function close() {
+    assistant.close();
     ++sequence;
     layoutController?.abort();
     ++searchSequence;
@@ -349,6 +370,8 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     indexes = [];
     errors.clear();
     loading = false;
+    selectedTopic = null;
+    back.hidden = true;
     input.value = '';
     view.replaceChildren();
     status.textContent = '';
@@ -356,14 +379,27 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     return true;
   }
   $('guide-close').onclick = close;
+  back.onclick = () => {
+    ++searchSequence;
+    clearTimeout(timer);
+    assistant.close();
+    selectedTopic = null;
+    input.value = '';
+    overview();
+    view.parentElement.scrollTop = 0;
+    input.focus({ preventScroll: true });
+  };
   dialog.addEventListener('close', () => {
-    if (game) close();
+    // Um evento enfileirado do fechamento anterior não fecha uma consulta reaberta.
+    if (!dialog.open && game) close();
   });
   dialog.addEventListener('cancel', (event) => {
     event.preventDefault();
     close();
   });
   input.oninput = () => {
+    selectedTopic = null;
+    back.hidden = !input.value.trim();
     ++searchSequence; // Descarta respostas antigas antes do próximo debounce.
     view.dataset.query = '';
     view.replaceChildren(el('p', 'Pesquisando…'));
@@ -374,15 +410,19 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     close,
     isBusy: () => false,
     updateSession(session) {
+      assistant.updateSession();
       if (!session.canRead || sessionUid !== session.user?.uid) close();
       sessionUid = session.user?.uid;
+      if (game && dialog.open) renderSearch();
     },
     invalidate(next) {
       if (game?.id !== next.id) return;
       if (next.deleting) return close();
-      const changed = JSON.stringify(gameDocuments(game)) !== JSON.stringify(gameDocuments(next));
+      const changed = assistantIdentity(game) !== assistantIdentity(next);
       game = next;
       if (changed) {
+        assistant.invalidate();
+        ++sequence;
         observation?.close();
         observation = null;
         knowledge = usableKnowledge(knowledge, game);

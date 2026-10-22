@@ -66,7 +66,7 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.locator('.card-main').click();
   assert.match(await page.locator('#detail-stats').textContent(), /60–120 min/);
-  assert.match(await page.locator('#detail-guide-status').textContent(), /Verificando|ainda não/);
+  assert.equal(await page.locator('#quick-rules').isVisible(), true, 'Consultar regras permanece disponível na ficha');
   await page.locator('[data-close=detail-dialog]').click();
   assert.match(await page.locator('#hero-meta').textContent(), /60–120 min/);
   assert.match(await page.locator('.card-meta').textContent(), /60–120 min/);
@@ -97,6 +97,7 @@ try {
   await page.locator('#edit-game').click();
   assert.equal(await page.locator('[name=minDurationMinutes]').inputValue(), '30');
   assert.equal(await page.locator('[name=maxDurationMinutes]').inputValue(), '30');
+  await page.locator('[data-step-target="1"]').click();
   await page.locator('#game-title').fill('Legado revisado');
   await page.locator('[data-step-target="3"]').click();
   await page.locator('[name=confirmed]').check();
@@ -119,6 +120,7 @@ try {
   await openGameManagement(page, 'manage-information');
   await page.locator('#edit-game').click();
   assert.equal(await page.locator('#game-title').inputValue(), 'ZMGPSM0101 v1.0.indd');
+  await page.locator('[data-step-target="1"]').click();
   await page.locator('#game-next').click();
   assert.equal(await page.locator('[data-game-step="1"]').isVisible(), true);
   assert.match(await page.locator('#save-error').textContent(), /título técnico/);

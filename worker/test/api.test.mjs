@@ -4,8 +4,11 @@ import assert from 'node:assert/strict';
 import { handleRequest } from '../src/index.js';
 import { base64url, openTicket } from '../src/auth.js';
 import { DRIVE_FOLDER_ID } from '../../js/permissions.js';
+import { gzipSync, gunzipSync } from 'node:zlib';
 
 const id = '12345678-1234-1234-1234-123456789abc';
+const indexFixture = { schemaVersion: 1, gameId: id, sourceHash: 'a'.repeat(64), pageCount: 1, pages: [{ page: 1, text: 'Regra original preservada.' }] };
+const indexBytes = gzipSync(JSON.stringify(indexFixture));
 test('health anuncia ausência de limites internos sem consultar serviços externos', async () => {
   const previous = globalThis.fetch;
   globalThis.fetch = () => assert.fail('health não deve acessar nenhum serviço');
@@ -19,6 +22,7 @@ test('health anuncia ausência de limites internos sem consultar serviços exter
     assert.equal(data.profileModelCompletionProtocol, 1);
     assert.equal(data.knowledgeReuseProtocol, 1);
     assert.equal(data.informationIdentityProtocol, 1);
+    assert.deepEqual(data.driveOAuth, { configured: false, verified: false, check: 'configuration-only' });
   } finally {
     globalThis.fetch = previous;
   }
@@ -83,7 +87,8 @@ function services(options = {}) {
     url = String(url);
     calls.push({ url, ...init });
     if (url.includes('/jwk/')) return Response.json({ keys: [jwk] });
-    if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'fake-owner-access', expires_in: 3600 });
+    if (url === 'https://oauth2.googleapis.com/token')
+      return options.oauthState?.failed ? Response.json({ error: 'invalid_grant', error_description: 'fixture-private-response' }, { status: 400 }) : Response.json({ access_token: 'fake-owner-access', expires_in: 3600 });
     if (url.includes('/documents/users/owner'))
       return Response.json({ fields: value({ uid: 'owner', status: options.enabled !== false ? 'approved' : 'blocked', role: options.role || 'superadmin', permissions: options.permissions || {} }).mapValue.fields });
     if (url.endsWith('/documents/settings/library')) return Response.json({ fields: value({ publicRead: options.publicRead !== false }).mapValue.fields });
@@ -152,7 +157,9 @@ function services(options = {}) {
       return Response.json(upload);
     }
     if (url.includes(`/drive/v3/files/${env.DRIVE_FOLDER_ID}`))
-      return Response.json({ id: env.DRIVE_FOLDER_ID, mimeType: 'application/vnd.google-apps.folder', owners: [{ me: true, emailAddress: env.DRIVE_OWNER_EMAIL }], appProperties: { acervoProject: env.FIREBASE_PROJECT_ID } });
+      return options.folderUnavailable
+        ? new Response(null, { status: 404 })
+        : Response.json({ id: env.DRIVE_FOLDER_ID, mimeType: 'application/vnd.google-apps.folder', owners: [{ me: true, emailAddress: env.DRIVE_OWNER_EMAIL }], appProperties: { acervoProject: env.FIREBASE_PROJECT_ID } });
     const fileId = /\/drive\/v3\/files\/([^?]+)/.exec(url)?.[1];
     if (fileId) {
       const file = files.get(fileId);
@@ -164,6 +171,7 @@ function services(options = {}) {
       }
       if (url.includes('alt=media')) {
         assert.equal(init.headers.Authorization, 'Bearer fake-owner-access');
+        if (file.mimeType === 'application/gzip') return new Response(indexBytes, { headers: { 'Content-Length': String(indexBytes.length) } });
         return new Response('%PDF-test', { status: init.headers.Range ? 206 : 200, headers: { 'Content-Length': '9', ...(init.headers.Range ? { 'Content-Range': 'bytes 0-8/9' } : {}) } });
       }
       if (options.metadataFailure) return new Response(null, { status: 503 });
@@ -202,6 +210,54 @@ async function isolated(options, run) {
   }
 }
 
+test('OAuth inválido retorna 503 seguro, preserva catálogo/arquivos e retoma capa/índice sem escrita após reconectar', async () => {
+  const oauthState = { failed: true };
+  const connection = { ...env, GOOGLE_REFRESH_TOKEN: 'fixture-expired-refresh' };
+  await isolated({ oauthState }, async (s) => {
+    s.game.manual.sha256 = 'a'.repeat(64);
+    s.guides.set(`games/${id}/indexes/main`, { sourceHash: 'a'.repeat(64), fileId: 'fixture-index' });
+    s.files.set('fixture-index', {
+      ...owned('fixture-index', 'documentIndex'),
+      mimeType: 'application/gzip',
+      appProperties: { acervoProject: env.FIREBASE_PROJECT_ID, gameId: id, kind: 'documentIndex', documentId: 'main', sourceHash: 'a'.repeat(64) },
+    });
+    const catalog = structuredClone(s.game),
+      files = structuredClone([...s.files]);
+    const response = await handleRequest(request('/v1/catalog/status', { method: 'POST', json: { gameIds: [id] } }), connection);
+    assert.equal(response.status, 503);
+    const error = await response.json();
+    assert.equal(error.code, 'drive/oauth-expired');
+    assert.match(error.error, /proprietário precisa renovar/);
+    assert.doesNotMatch(JSON.stringify(error), /fixture-private-response|fixture-expired-refresh|owner@example/);
+    const cover = `/v1/games/${id}/cover`,
+      index = `/v1/games/${id}/documents/main/index`;
+    assert.equal((await handleRequest(request(cover), connection)).status, 503);
+    assert.equal(s.calls.filter((c) => c.url === 'https://oauth2.googleapis.com/token').length, 1);
+    assert.deepEqual(s.game, catalog);
+    assert.deepEqual([...s.files], files);
+    oauthState.failed = false;
+    connection.GOOGLE_REFRESH_TOKEN = 'fixture-renewed-refresh';
+    for (const path of [cover, index]) {
+      const result = await handleRequest(request(path), connection);
+      assert.equal(result.status, 200, await result.clone().text());
+      if (path === index) assert.deepEqual(JSON.parse(gunzipSync(Buffer.from(await result.arrayBuffer())).toString()), indexFixture);
+      else assert.equal(await result.text(), '%PDF-test');
+    }
+    assert.equal((await handleRequest(request(index, { auth: false }), connection)).status, 401);
+    assert.deepEqual(s.game, catalog);
+    assert.deepEqual([...s.files], files);
+    assert(!s.calls.some((c) => ['PATCH', 'DELETE', 'PUT'].includes(c.method) || c.url.includes('documents:commit') || c.url.includes('generativelanguage')));
+  });
+});
+
+test('diagnóstico OAuth temporário foi removido e não acessa credenciais', async () => {
+  await isolated({}, async (s) => {
+    const response = await handleRequest(request('/v1/drive/compare-secret', { method: 'POST', json: { suffixes: ['cret', 'xxxx'] } }), env);
+    assert.equal(response.status, 404);
+    assert(!s.calls.some((c) => /oauth2|drive\/v3|generativelanguage/.test(c.url) || ['DELETE', 'PATCH', 'PUT'].includes(c.method)));
+  });
+});
+
 test('API inicia sessão Drive de até 50 MiB e recusa excesso antes de tocar no Drive', async () => {
   await isolated({}, async ({ calls }) => {
     for (const size of [52428799, 52428800]) {
@@ -221,6 +277,16 @@ test('API inicia sessão Drive de até 50 MiB e recusa excesso antes de tocar no
       assert.equal(response.status, 413);
     }
     assert.equal(calls.filter((c) => c.url.includes('googleapis.com/upload')).length, before);
+  });
+});
+
+test('endpoint direto do assistente recusa leitor aprovado e visitante antes de Drive/Gemini', async () => {
+  await isolated({ role: 'user' }, async ({ calls }) => {
+    for (const auth of [true, false]) {
+      const response = await handleRequest(request(`/v1/games/${id}/rule-question`, { method: 'POST', auth, json: { question: 'Como atacar?' } }), env);
+      assert.equal(response.status, auth ? 403 : 401);
+    }
+    assert.equal(calls.filter((c) => /generativelanguage|drive\/v3/.test(c.url)).length, 0);
   });
 });
 
@@ -357,7 +423,10 @@ test('requisições diretas de leitor com flags antigas não enviam/substituem P
     const upload = await handleRequest(request('/v1/uploads', { method: 'POST', json: { gameId: id, kind: 'manual', size: 10, mimeType: 'application/pdf', name: 'manual.pdf' } }), env);
     assert.equal(upload.status, 403);
     assert.equal((await handleRequest(request(`/v1/games/${id}`, { method: 'DELETE' }), env)).status, 403);
-    assert.equal(s.calls.some((call) => call.url.includes('/drive/') || call.url.includes('oauth2.googleapis.com/token')), false);
+    assert.equal(
+      s.calls.some((call) => call.url.includes('/drive/') || call.url.includes('oauth2.googleapis.com/token')),
+      false,
+    );
   });
 });
 test('imagem publicada pode ser lida; imagem exclusiva de rascunho exige edição', async () => {
@@ -522,11 +591,22 @@ test('disponibilidade não consulta Drive quando regras Firestore negam a leitur
 test('falha transitória do Drive não é reportada como PDF excluído', async () =>
   isolated({ metadataFailure: true }, async (s) => {
     const response = await handleRequest(request('/v1/catalog/status', { method: 'POST', json: { gameIds: [id] } }), env);
-    assert.equal(response.status, 502);
+    assert.equal(response.status, 503);
+    assert.equal((await response.clone().json()).code, 'drive/unavailable');
     assert.equal((await response.json()).games, undefined);
-    assert.equal((await handleRequest(request(`/v1/games/${id}`, { method: 'DELETE' }), env)).status, 502);
+    assert.equal((await handleRequest(request(`/v1/games/${id}`, { method: 'DELETE' }), env)).status, 503);
     assert.equal(s.game.deleting, false);
   }));
+test('404 de arquivo e de pasta central não transforma o catálogo em PDFs removidos', async () =>
+  isolated({ folderUnavailable: true }, async (s) => {
+    s.files.delete('manual123');
+    const before = structuredClone(s.game);
+    const result = await handleRequest(request('/v1/catalog/status', { method: 'POST', json: { gameIds: [id] } }), env);
+    assert.equal(result.status, 503);
+    assert.equal((await result.json()).code, 'drive/permission');
+    assert.deepEqual(s.game, before);
+  }));
+
 test('disponibilidade limita lote antes de consultar serviços', async () =>
   isolated({}, async (s) => {
     assert.equal((await handleRequest(request('/v1/catalog/status', { method: 'POST', json: { gameIds: Array(21).fill(id) } }), env)).status, 400);

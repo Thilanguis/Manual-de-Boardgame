@@ -1,9 +1,8 @@
 import { MAX_PDF_BYTES } from '../../js/pdf-limits.js';
 import { ApiError, permissions } from './auth.js';
 import { DRIVE_FOLDER_ID } from '../../js/permissions.js';
+import { driveError, driveResponseError } from './drive-errors.js';
 
-let oauthCache = null,
-  refreshing = null;
 export function decodeValue(value) {
   if ('stringValue' in value) return value.stringValue;
   if ('booleanValue' in value) return value.booleanValue;
@@ -35,31 +34,56 @@ export async function requirePermission(env, identity, action, fetcher = fetch) 
   if (!permissions(profile, identity.uid, env.OWNER_UID)[action]) throw new ApiError(403, 'Sua conta não tem permissão para esta operação.');
   return profile;
 }
-export async function driveToken(env, fetcher = fetch) {
-  const simulated = env.FIREBASE_PROJECT_ID === 'demo-acervo' && env.LOCAL_SIMULATED_SERVICES === 'true' && env.DRIVE_FOLDER_ID === 'dev-acervo-folder';
-  if (env.DRIVE_FOLDER_ID && env.DRIVE_FOLDER_ID !== DRIVE_FOLDER_ID && !simulated) throw new ApiError(503, 'O armazenamento deve usar a pasta PDFs indicada pelo proprietário.');
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.GOOGLE_REFRESH_TOKEN || !env.DRIVE_FOLDER_ID || !env.DRIVE_OWNER_EMAIL) throw new ApiError(503, 'O Drive central ainda precisa ser conectado pelo proprietário.');
-  if (oauthCache?.expires > Date.now() + 60000) return oauthCache.token;
-  if (refreshing) return refreshing;
-  refreshing = (async () => {
-    const response = await fetcher('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: env.GOOGLE_REFRESH_TOKEN, grant_type: 'refresh_token' }),
-      signal: AbortSignal.timeout(15000),
+export function createDriveTokenProvider({ now = Date.now } = {}) {
+  let state;
+  return async function tokenFor(env, fetcher = fetch) {
+    const simulated = env.FIREBASE_PROJECT_ID === 'demo-acervo' && env.LOCAL_SIMULATED_SERVICES === 'true' && env.DRIVE_FOLDER_ID === 'dev-acervo-folder';
+    if (env.DRIVE_FOLDER_ID && env.DRIVE_FOLDER_ID !== DRIVE_FOLDER_ID && !simulated) throw driveError('drive/configuration');
+    const credentials = [env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, env.GOOGLE_REFRESH_TOKEN, env.DRIVE_FOLDER_ID, env.DRIVE_OWNER_EMAIL];
+    if (credentials.some((value) => !value)) throw driveError('drive/configuration');
+    // Cache e falhas pertencem às credenciais atuais. Uma reconexão não herda a falha antiga.
+    if (!state || credentials.some((value, i) => value !== state.credentials[i])) state = { credentials };
+    const current = state;
+    if (current.expires > now() + 60000) return current.token;
+    if (current.retryAt > now()) throw current.failure;
+    if (current.refreshing) return current.refreshing;
+    current.refreshing = (async () => {
+      let response;
+      try {
+        response = await fetcher('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: env.GOOGLE_REFRESH_TOKEN, grant_type: 'refresh_token' }),
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch {
+        throw driveError('drive/unavailable');
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (data.error === 'invalid_grant') throw driveError('drive/oauth-expired');
+        if (['invalid_client', 'unauthorized_client', 'invalid_scope'].includes(data.error)) throw driveError('drive/oauth-client');
+        if (['access_denied', 'admin_policy_enforced'].includes(data.error)) throw driveError('drive/permission');
+        throw driveError(response.status === 429 ? 'drive/rate-limit' : 'drive/unavailable');
+      }
+      if (typeof data.access_token !== 'string' || !data.access_token || !(Number(data.expires_in || 3600) > 0)) throw driveError('drive/unavailable');
+      current.token = data.access_token;
+      current.expires = now() + Number(data.expires_in || 3600) * 1000;
+      current.failure = null;
+      return current.token;
+    })().catch((error) => {
+      current.failure = error;
+      current.retryAt = now() + error.retryAfter * 1000;
+      throw error;
     });
-    if (!response.ok) throw new ApiError(503, 'A autorização do Drive central expirou ou foi revogada. O proprietário precisa reconectar a conta.');
-    const data = await response.json();
-    if (!data.access_token) throw new ApiError(503, 'O Google não retornou a autorização do Drive.');
-    oauthCache = { token: data.access_token, expires: Date.now() + Number(data.expires_in || 3600) * 1000 };
-    return oauthCache.token;
-  })();
-  try {
-    return await refreshing;
-  } finally {
-    refreshing = null;
-  }
+    try {
+      return await current.refreshing;
+    } finally {
+      current.refreshing = null;
+    }
+  };
 }
+export const driveToken = createDriveTokenProvider();
 export function safeDriveSession(value) {
   try {
     const url = new URL(value);
@@ -75,9 +99,11 @@ export async function driveMetadata(env, id, fetcher = fetch) {
   const response = await fetcher(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,size,parents,appProperties,owners(emailAddress,me),trashed,permissions(type,role)`, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(15000),
+  }).catch(() => {
+    throw driveError('drive/unavailable');
   });
   if (response.status === 404) return null;
-  if (!response.ok) throw new ApiError(response.status === 429 || response.status === 403 ? 429 : 502, 'Não foi possível consultar o Drive central. Confira suas cotas e a autorização da pasta.');
+  if (!response.ok) throw await driveResponseError(response);
   return response.json();
 }
 export function belongsToProject(file, env, { gameId, kind, nonce, documentId, sourceHash, allowTrashed = false, allowPublic = false } = {}) {

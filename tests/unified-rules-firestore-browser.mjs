@@ -289,7 +289,7 @@ try {
   await owner.getByRole('button', { name: 'Consultar regras', exact: true }).click();
   await owner.waitForFunction(() => document.querySelector('#guide-content').textContent.includes('A Sociedade coopera'));
   assert.equal(await owner.locator('.rule-result').count(), 1, 'início mostra resumo, não dezenas de títulos');
-  assert((await owner.locator('.rules-topics button').count()) <= 12);
+  assert((await owner.locator('.rules-topics button:visible').count()) <= 12);
   for (const query of ['Como funciona o ataque?', 'preparação', 'movimento', 'objetivo', 'ataque']) {
     console.log(`Consulta local: ${query}`);
     await owner.locator('#guide-search').fill(query);

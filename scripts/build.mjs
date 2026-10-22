@@ -7,7 +7,7 @@ const target = resolve(root, 'public');
 if (relative(root, target) !== 'public' || !target.startsWith(root + sep)) throw new Error('Destino de build inválido.');
 await rm(target, { recursive: true, force: true });
 await mkdir(target, { recursive: true });
-for (const path of ['index.html', 'styles', 'js', 'assets', 'vendor', 'manifest.webmanifest', 'service-worker.js']) await cp(resolve(root, path), resolve(target, path), { recursive: true });
+for (const path of ['index.html', 'sobre.html', 'privacidade.html', 'termos.html', 'styles', 'js', 'assets', 'vendor', 'manifest.webmanifest', 'service-worker.js']) await cp(resolve(root, path), resolve(target, path), { recursive: true });
 await mkdir(resolve(target, 'config'));
 await cp(resolve(root, 'config/app-config.js'), resolve(target, 'config/app-config.js'));
 const config = await readFile(resolve(target, 'config/app-config.js'), 'utf8');

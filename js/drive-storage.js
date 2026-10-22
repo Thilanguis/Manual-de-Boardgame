@@ -1,4 +1,5 @@
 import { MAX_PDF_BYTES } from './pdf-limits.js';
+import { centralDriveFailure, DRIVE_MESSAGES } from './drive-diagnostics.js';
 // Somente o JWT Firebase vai à API. Credenciais OAuth do Drive ficam no Worker.
 function endpointRoot(value) {
   try {
@@ -10,10 +11,33 @@ function endpointRoot(value) {
     throw new Error('O Drive central ainda não foi conectado. Configure o endereço da API em config/app-config.js seguindo o guia do projeto.');
   }
 }
-export function createDriveStorage(config, getToken, getUid) {
+export function createDriveStorage(config, getToken, getUid, onDriveStatus = () => {}) {
   const api = () => endpointRoot(config.apiBase);
   let controller = new AbortController();
   let health;
+  let driveFailure = null,
+    retryAt = 0,
+    probe = null,
+    knownGood = false;
+  function reportFailure(error) {
+    if (!centralDriveFailure(error)) return;
+    error.message = DRIVE_MESSAGES[error.code];
+    driveFailure = error;
+    retryAt = Date.now() + Math.min(300, Math.max(30, Number(error.retryAfter) || 60)) * 1000;
+    knownGood = false;
+    onDriveStatus({ code: error.code, message: error.message });
+  }
+  function reportSuccess() {
+    knownGood = true;
+    if (driveFailure) {
+      driveFailure = null;
+      retryAt = 0;
+      onDriveStatus(null);
+    }
+  }
+  function checkDrive() {
+    if (driveFailure && Date.now() < retryAt) throw driveFailure;
+  }
   async function capabilities(refresh = false) {
     if (refresh) health = null;
     return (health ||= fetch(`${api()}/health`, { cache: 'no-store', signal: AbortSignal.timeout(4000) })
@@ -44,22 +68,54 @@ export function createDriveStorage(config, getToken, getUid) {
       current = controller;
     const token = await getToken();
     if (!token || !uid || current !== controller) throw new Error('Entre com uma conta aprovada.');
-    const response = await fetch(`${api()}${path}`, {
-      method,
-      signal: signal ? AbortSignal.any([signal, current.signal]) : current.signal,
-      cache: 'no-store',
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(json ? { 'Content-Type': 'application/json' } : {}), ...headers },
-      body: json ? JSON.stringify(json) : body,
-    });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      const error = new Error(data.error || data.message || 'Não foi possível concluir a solicitação.');
-      error.status = response.status;
-      if (data.reason) error.reason = data.reason;
-      if (data.status === 'quota') error.record = data;
-      throw error;
+    const isDrive = /^\/v1\/(?:catalog\/status|uploads(?:\/|$)|games\/[^/]+\/(?:manual|cover|documents(?:\/|$)|guide-assets\/))/.test(path);
+    // Uma leitura inicial verifica a conexão antes de liberar as demais capas.
+    if (isDrive) {
+      while (probe) await probe;
+      checkDrive();
     }
-    return response;
+    let release;
+    if (isDrive && !knownGood)
+      probe = new Promise((resolve) => {
+        release = resolve;
+      });
+    try {
+      const response = await fetch(`${api()}${path}`, {
+        method,
+        signal: signal ? AbortSignal.any([signal, current.signal]) : current.signal,
+        cache: 'no-store',
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(json ? { 'Content-Type': 'application/json' } : {}), ...headers },
+        body: json ? JSON.stringify(json) : body,
+      });
+      current.signal.throwIfAborted();
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const error = new Error(data.error || data.message || 'Não foi possível concluir a solicitação.');
+        error.status = response.status;
+        if (DRIVE_MESSAGES[data.code]) {
+          error.code = data.code;
+          error.retryAfter = data.retryAfter;
+        } else if (isDrive && response.status === 503) error.code = 'drive/unavailable';
+        if (isDrive) reportFailure(error);
+        if (data.reason) error.reason = data.reason;
+        if (data.usage) error.usage = data.usage;
+        if (data.status === 'quota') error.record = data;
+        throw error;
+      }
+      if (isDrive) reportSuccess();
+      return response;
+    } catch (error) {
+      if (isDrive && error instanceof TypeError && !current.signal.aborted && !signal?.aborted) {
+        error = Object.assign(new Error(DRIVE_MESSAGES['drive/unavailable']), { status: 503, code: 'drive/unavailable' });
+        reportFailure(error);
+      }
+      throw error;
+    } finally {
+      if (release) {
+        probe = null;
+        release();
+      }
+    }
   }
   function loadState(key) {
     try {
@@ -81,6 +137,11 @@ export function createDriveStorage(config, getToken, getUid) {
     provider: 'drive',
     capabilities,
     validatePdfUpload,
+    async askRules(game, input, { signal } = {}) {
+      const info = await capabilities();
+      if (!(info.ruleAssistantProtocol >= 1)) throw new Error('O servidor conectado ainda não oferece o assistente de regras. A consulta dos PDFs continua disponível.');
+      return (await call(`/v1/games/${encodeURIComponent(game.id)}/rule-question`, { method: 'POST', json: input, signal })).json();
+    },
     async draftKnowledge(input, { signal } = {}) {
       const info = await capabilities();
       if (!(info.profileMetadataProtocol >= 1)) return { status: 'pending_configuration', knowledge: null, message: 'A análise da ficha precisa da atualização do servidor.' };
@@ -170,7 +231,7 @@ export function createDriveStorage(config, getToken, getUid) {
           onProgress(Math.round((position / blob.size) * 100));
         } catch (error) {
           if (error.name === 'AbortError' || options.signal?.aborted) throw error;
-          if ((error.status && ![429, 502, 503, 504].includes(error.status)) || failures++ >= 3) throw error;
+          if (centralDriveFailure(error) || (error.status && ![429, 502, 503, 504].includes(error.status)) || failures++ >= 3) throw error;
           await new Promise((resolve) => setTimeout(resolve, Math.min(8000, 1000 * 2 ** failures)));
           const result = await (await call('/v1/uploads/status', { method: 'POST', signal: options.signal, headers: { 'X-Upload-Ticket': state.ticket } })).json();
           if (result.complete) {
@@ -191,12 +252,19 @@ export function createDriveStorage(config, getToken, getUid) {
       return blob;
     },
     async readerSource(game) {
+      checkDrive();
       const current = controller;
       const token = await getToken();
       if (!token || !getUid() || current !== controller || current.signal.aborted) throw new Error('Entre com uma conta aprovada.');
       const modern = game.documentId && (await capabilities()).fileProtocol >= 2;
       if (game.documentId && !game.legacyManual && !modern) throw Object.assign(new Error('A conexão dos documentos precisa ser atualizada para abrir este PDF.'), { status: 426 });
       return {
+        onError: (error) => {
+          if (current === controller && !current.signal.aborted) reportFailure(error);
+        },
+        onSuccess: () => {
+          if (current === controller && !current.signal.aborted) reportSuccess();
+        },
         signal: current.signal,
         url: `${api()}/v1/games/${encodeURIComponent(game.id)}/${modern ? `documents/${encodeURIComponent(game.documentId)}/pdf` : 'manual'}`,
         headers: { Authorization: `Bearer ${token}`, ...(modern && game.manual?.sha256 ? { 'X-Document-Hash': game.manual.sha256 } : {}) },
@@ -244,6 +312,14 @@ export function createDriveStorage(config, getToken, getUid) {
     resetSession() {
       controller.abort();
       controller = new AbortController();
+      driveFailure = null;
+      retryAt = 0;
+      knownGood = false;
+      probe = null;
+    },
+    retryConnection() {
+      retryAt = 0;
+      knownGood = false;
     },
     close() {
       controller.abort();

@@ -6,6 +6,8 @@
 
 # Acervo — Manual de Boardgames
 
+Para localizar os guias de manutenção e os relatórios anteriores, comece pelo [índice da documentação](docs/README.md). O histórico foi preservado nos caminhos originais; os relatórios antigos descrevem o estado da época.
+
 Biblioteca pessoal em HTML, CSS e JavaScript puro, publicada no [GitHub Pages](https://thilanguis.github.io/Manual-de-Boardgame/). Catálogo real, reconhecimento de PDFs com evidências, capas, filtros, favoritos locais, leitor PDF.js e PWA. Não há catálogo fictício nem framework de interface. O Buraco permanece independente.
 
 **Implementação local 1.11.0, ainda não publicada:** ficha com Ler manual, Como jogar e Buscar regras; administração centralizada; conhecimento Gemini com revisão, persistência e controle de cota. [Implementação, testes e configuração da chave](docs/IMPLEMENTACAO-1.11.md). A versão em produção permanece inalterada até autorização.

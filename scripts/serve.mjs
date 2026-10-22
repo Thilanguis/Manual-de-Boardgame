@@ -9,7 +9,7 @@ const args = process.argv.slice(2),
   isolated = !real && process.env.ACERVO_DEVELOPMENT === '1',
   port = real ? 4174 : Number(process.env.PORT || 4173),
   host = args.includes('--lan') ? '0.0.0.0' : '127.0.0.1';
-const allowedRoots = new Set(['index.html', 'manifest.webmanifest', 'service-worker.js', 'assets', 'styles', 'js', 'vendor', 'config']);
+const allowedRoots = new Set(['index.html', 'sobre.html', 'privacidade.html', 'termos.html', 'manifest.webmanifest', 'service-worker.js', 'assets', 'styles', 'js', 'vendor', 'config']);
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',

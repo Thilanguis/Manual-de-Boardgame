@@ -36,6 +36,10 @@ export async function createFirebaseRepository(config) {
     { ...config.fileStorage, projectId: config.firebase.projectId },
     () => auth.currentUser?.getIdToken(),
     () => auth.currentUser?.uid,
+    (issue) => {
+      driveIssue = issue;
+      publishSession(auth.currentUser);
+    },
   );
   const gameListeners = new Set(),
     sessionListeners = new Set(),
@@ -55,6 +59,7 @@ export async function createFirebaseRepository(config) {
     availabilityBlocked = false,
     availabilityCheckedAt = 0,
     storageStatus = null,
+    driveIssue = null,
     profile = null,
     publicRead = false,
     stopSettings = null,
@@ -73,6 +78,11 @@ export async function createFirebaseRepository(config) {
       requireWrite();
       return files.draftKnowledge(input, options);
     },
+    askRules(game, input, options) {
+      requireRead();
+      if (!repository.session.canAskRules) throw new Error('Somente administrador e subadministradores aprovados podem perguntar ao Gemini.');
+      return files.askRules(game, input, options);
+    },
     getKnowledge(game, options) {
       requireRead();
       return files.knowledge(game, undefined, options);
@@ -87,6 +97,13 @@ export async function createFirebaseRepository(config) {
     },
     refreshAvailability,
     retryCovers() {
+      coverErrors.clear();
+      files.retryConnection();
+    },
+    async retryDrive() {
+      requireRead();
+      files.retryConnection();
+      await refreshAvailability();
       coverErrors.clear();
     },
     async retryPreparation() {
@@ -446,6 +463,7 @@ export async function createFirebaseRepository(config) {
       resolving: sessionResolving,
       cacheError,
       storageStatus,
+      driveIssue,
       ...rights,
       cacheReady: privateCacheUnlocked(),
       publicRead,
@@ -623,6 +641,7 @@ export async function createFirebaseRepository(config) {
     const sequence = ++sessionSequence;
     sessionResolving = !!user && navigator.onLine;
     cacheError = '';
+    driveIssue = null;
     cacheAttempted = false;
     cachePreparing = null;
     settingsLoaded = false;

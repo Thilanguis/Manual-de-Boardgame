@@ -15,6 +15,7 @@ import { currentKnowledgeStatus } from '../../js/knowledge-status.js';
 import { collectPublisherFacts } from './profile-publishers.js';
 import { sameWork, linkCatalogIdentities } from '../../js/research-client.js';
 import { completeProfileFromModel } from './profile-completion.js';
+import { assistantStore, cleanAssistantStore } from './rule-assistant-store.js';
 
 export const KNOWLEDGE_MODEL = 'gemini-3.5-flash-lite';
 export const TOPICS = ['visao-geral', 'objetivo', 'mecanicas', 'componentes', 'preparacao', 'turnos', 'acoes', 'pontuacao', 'vitoria', 'conceitos', 'estrategias', 'perguntas'];
@@ -158,8 +159,17 @@ export class KnowledgeStore {
   constructor(ctx) {
     this.storage = ctx.storage;
   }
+  async alarm() {
+    await cleanAssistantStore(this.storage);
+    if ((await this.storage.list({ prefix: 'qa:', limit: 1 })).size) await this.storage.setAlarm(Date.now() + 86400000);
+  }
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/assistant/') && request.method === 'POST') {
+      const result = await assistantStore(this.storage, url.pathname, await request.json());
+      if (!(await this.storage.getAlarm?.())) await this.storage.setAlarm?.(Date.now() + 86400000);
+      return result;
+    }
     if (request.method === 'GET')
       return this.storage.transaction(async (tx) => {
         const key = `job:${url.searchParams.get('key')}`,

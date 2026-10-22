@@ -33,6 +33,7 @@ export function passageHeading(line, known = []) {
 }
 
 // Projeção de apresentação. O texto do índice e as citações nunca são alterados.
+export const readingPunctuation = (text) => text.replace(/[\t ]+([,.;:!?\)\]\}])/g, '$1').replace(/([\(\[\{])[\t ]+/g, '$1');
 export function cleanRuleText(value) {
   const lines = String(value || '')
     .replace(/\r\n?/g, '\n')
@@ -47,7 +48,7 @@ export function cleanRuleText(value) {
     paragraph = '';
   };
   for (const raw of lines) {
-    const line = raw.trim().replace(/[\t ]+/g, ' ');
+    const line = readingPunctuation(raw.trim().replace(/[\t ]+/g, ' '));
     if (!line) {
       flush();
       continue;
@@ -138,7 +139,7 @@ export function splitPassages(text, headings = [], page = 0) {
 export function contextualExcerpt(value, query = '', limit = 480) {
   const text = cleanRuleText(value);
   const units = text.split(/\n\s*\n/).flatMap((paragraph) => {
-    const protectedText = paragraph.replace(/\b(pág|pag|p|ex|fig|sr|dr)\.(?=\s)/gi, '$1');
+    const protectedText = paragraph.replace(/\b(pág|pag|p|ex|fig|sr|dr)\.(?=\s)/gi, '$1').replace(/^(\d{1,2}|[A-Z])\.(?=\s)/, '$1');
     return protectedText
       .split(/(?<=[.!?])\s+(?=[A-ZÀ-Ý])/)
       .map((s) => s.replaceAll('', '.').trim())

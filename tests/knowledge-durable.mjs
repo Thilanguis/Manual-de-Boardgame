@@ -35,6 +35,26 @@ try {
   runtime = new Miniflare(settings);
   assert.equal((await (await operation('/?key=game')).json()).knowledge.sections[0].text, 'Resumo salvo');
   assert.equal((await (await operation('/claim', { requestId: 'reload' })).json()).claimed, false);
+  const conversationId = crypto.randomUUID();
+  const question = { uid: 'assistant-admin', identity: 'game-documents-hash', conversationId, key: 'verified-question', question: 'Como atacar?' };
+  const claim = await (await operation('/assistant/claim', question)).json();
+  assert.equal(claim.claimed, true);
+  await operation('/assistant/finish', {
+    ...question,
+    lease: claim.lease,
+    answer: { id: 'answer', blocks: [{ kind: 'explanation', text: 'Resposta simulada com referência.', citations: [{ documentId: 'main', page: 2, sourceHash: 'a'.repeat(64) }] }] },
+  });
+  await runtime.dispose();
+  runtime = new Miniflare(settings);
+  const cached = await (await operation('/assistant/claim', { ...question, conversationId: crypto.randomUUID() })).json();
+  assert.equal(cached.cached, true);
+  assert.equal(cached.usage.used, 1);
+  const privateThread = await (await operation('/assistant/read', { ...question, uid: 'other-admin' })).json();
+  assert.equal(privateThread.history.length, 0);
+  assert.equal(privateThread.usage.used, 0);
+  const stale = await (await operation('/assistant/read', { ...question, identity: 'replaced-pdf' })).json();
+  assert.equal(stale.history.length, 0);
+  console.log('Assistente no SQLite: resposta/cache/orçamento persistem após reiniciar; histórico privado e identidade invalidada.');
   if (process.env.ACERVO_KNOWLEDGE_FIXTURE) {
     const knowledge = JSON.parse(await readFile(process.env.ACERVO_KNOWLEDGE_FIXTURE, 'utf8'));
     const actual = await (await operation('/claim', { force: true, requestId: 'real-manual-local-storage' })).json();

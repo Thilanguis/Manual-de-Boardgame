@@ -3,6 +3,7 @@ import { normalizeText } from './model.js';
 import { isPortuguese, translatedValue } from './translation.js';
 import { ruleMatch } from './rule-relevance.js';
 import { splitPassages, cleanRuleText } from './rule-passages.js';
+import { ruleTextLanguage } from './rule-language.js';
 export const GUIDE_LIMIT = 350000;
 export const SECTION_TYPES = ['texto', 'lista', 'aviso', 'exemplo', 'pergunta'];
 export function emptyGuide(game) {
@@ -105,7 +106,8 @@ export function searchRules(index, guide, query, { currentHash } = {}) {
   if (!phrase) return [];
   const candidates = [];
   for (const s of guide?.sections || []) {
-    const foreign = !isPortuguese(s.language || 'pt-BR');
+    const language = ruleTextLanguage(s.language, s.text);
+    const foreign = !isPortuguese(language);
     candidates.push({
       title: foreign ? ruleCategory(s.title) || 'Seção do guia' : s.title,
       text: foreign ? '' : s.text,
@@ -120,14 +122,15 @@ export function searchRules(index, guide, query, { currentHash } = {}) {
       sourceLicense: s.sourceLicense || '',
       sourceAuthors: s.sourceAuthors || '',
       sourceLicenseUrl: s.sourceLicenseUrl || '',
-      language: s.language || 'pt-BR',
+      language,
     });
   }
   if (index?.sourceHash === currentHash)
     for (const p of index.pages || []) {
       const headings = (index.headings || []).filter((h) => h.page === p.page);
       const translated = translatedValue(p.translation, p.text),
-        foreign = !isPortuguese(index.language || 'pt-BR');
+        language = ruleTextLanguage(index.language, p.searchLayout?.text || p.text),
+        foreign = !isPortuguese(language);
       const contentsPage = (p.text.match(/[.…]{3,}/g) || []).length >= 3 || headings.filter((h) => h.printedPage).length >= 3;
       const passages = splitPassages(
         translated || p.searchLayout?.text || p.text,
@@ -139,15 +142,26 @@ export function searchRules(index, guide, query, { currentHash } = {}) {
           title: foreign && !translated ? ruleCategory(passage.searchTitle) || 'Trecho do manual' : passage.searchTitle || passage.title,
           searchTitle: passage.searchTitle,
           text: translated || !foreign ? passage.text : '',
+          readingText: translated || !foreign ? passage.originalText : '',
+          readingHeadings: [
+            ...headings
+              .filter((h) => !h.printedPage)
+              .map((h) => (translated ? translatedValue(h.translation, h.title) : h.title))
+              .filter(Boolean),
+            ...(!translated ? p.searchLayout?.readingHeadings || [] : []),
+          ],
           searchText: passage.text,
           originalText: translated || p.searchLayout ? p.text : passage.originalText,
           layoutRebuilt: !!p.searchLayout,
+          needsPdf: !!p.searchLayout?.needsPdf,
+          literalRows: !!p.searchLayout?.literalRows,
+          readingSideNotes: !translated ? p.searchLayout?.readingSideNotes || [] : [],
           originalPage: !!translated || !!p.searchLayout,
           passageStart: passage.start,
           passageEnd: passage.end,
           contentsPage,
           page: p.page,
-          language: translated ? 'pt-BR' : index.language || 'pt-BR',
+          language: translated ? 'pt-BR' : language,
           needsTranslation: foreign && !translated,
           translated: !!translated,
           source: p.method === 'ocr-local' ? 'PDF · OCR; confira a página' : 'Trecho do PDF',

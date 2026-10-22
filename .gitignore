@@ -10,6 +10,8 @@ client_secret*.json
 oauth-client*.json
 google-credentials*.json
 public/
+# Saidas locais geradas pelo Worker; arquivos ja versionados permanecem no historico.
+/.build/
 # Acervo local de PDFs; os manuais publicados são armazenados no Google Drive.
 /PDFs/
 test-output/

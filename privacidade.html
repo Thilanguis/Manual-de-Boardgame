@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="description" content="Como o Acervo utiliza dados de conta, arquivos do Google Drive e serviços de apoio à biblioteca privada." />
+    <title>Privacidade — Acervo</title>
+    <link rel="canonical" href="https://thilanguis.github.io/Manual-de-Boardgame/privacidade.html" />
+    <link rel="stylesheet" href="styles/public-pages.css" />
+    <link rel="icon" href="assets/icon-192.png" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="sobre.html">
+        acervo
+        <span>.</span>
+      </a>
+      <nav aria-label="Institucional">
+        <a href="sobre.html">Sobre</a>
+        <a href="termos.html">Termos de uso</a>
+        <a href="./">Biblioteca</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Transparência</p>
+      <h1>Política de privacidade</h1>
+      <p>Atualizada em 21 de outubro de 2026.</p>
+      <h2>Finalidade e responsáveis</h2>
+      <p>
+        O Acervo é uma biblioteca privada administrada pelo seu proprietário, com colaboração de subadministradores conforme as permissões concedidas. Para assuntos relativos à sua conta, procure o responsável que forneceu seu acesso à biblioteca.
+      </p>
+      <h2>Dados da conta e uso da biblioteca</h2>
+      <p>
+        O sistema utiliza Firebase Authentication e Firestore para autenticação e para guardar nome, e-mail, identificação da conta, situação de aprovação, permissões e histórico administrativo. Também guarda as fichas de jogos e informações
+        necessárias para localizar seus manuais e índices. Preferências, favoritos e progresso de leitura podem ser mantidos no dispositivo.
+      </p>
+      <h2>Dados do Google Drive</h2>
+      <p>
+        A conexão com o Drive é feita exclusivamente pela conta proprietária. O escopo
+        <code>drive.file</code>
+        permite criar e gerenciar arquivos vinculados ao aplicativo ou explicitamente autorizados. A API verifica também a pasta, a propriedade e a associação do arquivo ao jogo antes de permitir operações.
+      </p>
+      <p>
+        O Acervo utiliza esses dados para armazenar, consultar e entregar PDFs, capas e índices aos usuários autorizados. O servidor consulta metadados como tipo, tamanho, pasta, proprietário e permissões para proteger os arquivos. Não solicita
+        acesso irrestrito ao Drive dos leitores.
+      </p>
+      <p>
+        As credenciais da conexão central são protegidas no servidor e utilizadas para comunicar-se com o Google. Somente o proprietário autoriza essa conexão. Credenciais Google não são publicadas nestas páginas nem entregues aos leitores da
+        biblioteca.
+      </p>
+      <h2>Serviços e recursos opcionais</h2>
+      <p>
+        GitHub Pages hospeda o site. Firebase processa autenticação e catálogo. Cloudflare Workers intermedeia o acesso aos arquivos do Google Drive. Esses provedores processam informações técnicas necessárias para atender às requisições, conforme
+        suas próprias políticas.
+      </p>
+      <p>
+        Quando um recurso de IA é acionado por uma pessoa autorizada, perguntas, contexto do jogo e trechos ou imagens dos manuais podem ser enviados ao Google Gemini para produzir respostas, índices ou sugestões. Fichas e resultados aproveitados
+        podem ser salvos na biblioteca. Pesquisas em catálogos externos enviam termos de identificação do jogo aos conectores habilitados. O Acervo não utiliza os resultados do Google Search Grounding para construir sua base permanente.
+      </p>
+      <p>
+        O Acervo não vende dados de usuários e não utiliza os arquivos privados para publicidade. O uso dos dados Google é limitado às funções descritas aqui e deve respeitar a
+        <a href="https://developers.google.com/terms/api-services-user-data-policy">Política de Dados de Usuários dos Serviços de API do Google</a>
+        , incluindo os requisitos de Uso Limitado.
+      </p>
+      <h2>Acesso, armazenamento e remoção</h2>
+      <p>
+        O acesso exige conta aprovada. A administração pode revisar contas e permissões; pessoas com autorização de edição podem alterar o conteúdo da biblioteca. Arquivos permanecem no Drive do proprietário até serem removidos por uma ação
+        autorizada. A exclusão de uma conta não implica automaticamente a exclusão de jogos compartilhados com a biblioteca.
+      </p>
+      <p>
+        Para solicitar correção ou remoção de dados pessoais, procure o responsável pela biblioteca, pelo canal de contato já utilizado. O proprietário pode revogar a autorização Google nas configurações da sua Conta Google. Isso interrompe o acesso
+        central do aplicativo, sem apagar automaticamente os arquivos existentes no Drive.
+      </p>
+      <p>
+        O aplicativo utiliza armazenamento local e cache para preferências e funcionamento. Dados privados de manuais preparados no dispositivo utilizam cache protegido associado à conta; sair ou perder a permissão bloqueia esse acesso. Proteja
+        também seu dispositivo e sua conta.
+      </p>
+      <h2 id="contato">Contato sobre privacidade</h2>
+      <p>
+        O endereço exclusivo de suporte do Acervo está em preparação. Até sua disponibilização, pessoas que já utilizam a biblioteca podem tratar de seus dados com o responsável que forneceu seu acesso. Nenhum e-mail pessoal é divulgado nesta página.
+      </p>
+      <h2>Atualizações</h2>
+      <p>Esta política será revisada quando o funcionamento ou o tratamento dos dados mudar. As páginas institucionais são públicas; isso não torna públicos os dados privados da biblioteca.</p>
+    </main>
+    <footer>
+      <a href="sobre.html">Sobre o Acervo</a>
+      <a href="termos.html">Termos de uso</a>
+      <a href="./">Biblioteca</a>
+    </footer>
+  </body>
+</html>

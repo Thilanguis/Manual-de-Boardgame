@@ -1,11 +1,15 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.11.0-reviewer-permission-22';
+const VERSION = 'acervo-v1.11.0-rules-filters-drive-33';
 const LOCAL_DEVELOPMENT = ['localhost', '127.0.0.1', '[::1]'].includes(self.location.hostname);
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
 const ESSENTIAL = [
   './',
   './index.html',
+  './sobre.html',
+  './privacidade.html',
+  './termos.html',
+  './styles/public-pages.css',
   './styles/app.css',
   './styles/interface.css',
   './config/app-config.js',
@@ -14,10 +18,13 @@ const ESSENTIAL = [
   './js/account-panel.js',
   './js/game-steps.js',
   './js/model.js',
+  './js/library-filter-model.js',
+  './js/library-filters.js',
   './js/recognition.js',
   './js/pdf.js',
   './js/pdf-limits.js',
   './js/file-errors.js',
+  './js/drive-diagnostics.js',
   './js/reader.js',
   './js/pwa.js',
   './js/local-repository.js',
@@ -62,8 +69,13 @@ const ESSENTIAL = [
   './js/knowledge-model.js',
   './js/knowledge-status.js',
   './js/rule-relevance.js',
+  './js/rule-topics.js',
+  './js/rule-language.js',
   './js/rule-passages.js',
   './js/rule-layout.js',
+  './js/rule-reading.js',
+  './js/rule-assistant-contract.js',
+  './js/rule-assistant-panel.js',
   './js/pdf-index.js',
   './js/index-cache.js',
   './js/private-cache.js',
@@ -138,6 +150,8 @@ self.addEventListener('fetch', (event) => {
   }
   if (/\.pdf$/i.test(url.pathname)) return;
   const relative = './' + url.pathname.slice(new URL('./', self.registration.scope).pathname.length);
+  // Páginas públicas têm documento próprio; não devolver o index da biblioteca.
+  if (['./sobre.html', './privacidade.html', './termos.html'].includes(relative)) return;
   const isShell = ESSENTIAL.includes(relative) || request.mode === 'navigate';
   const isPdfResource = /\/vendor\/pdfjs\/(cmaps|standard_fonts|wasm)\//.test(url.pathname);
   const isOcrResource = /\/vendor\/tesseract\//.test(url.pathname) && /(?:\.js|\.traineddata\.gz)$/.test(url.pathname);
@@ -161,7 +175,7 @@ self.addEventListener('fetch', (event) => {
         return (await cache.match(key)) || unavailable();
       }
       // Arquivos de uma versão são servidos juntos. Atualizações entram pelo novo SW.
-      const key = request.mode === 'navigate' ? new URL('./index.html', self.registration.scope).href : new URL(url.pathname, self.location.origin).href;
+      const key = request.mode === 'navigate' && !['./sobre.html', './privacidade.html', './termos.html'].includes(relative) ? new URL('./index.html', self.registration.scope).href : new URL(url.pathname, self.location.origin).href;
       const cached = await cache.match(key);
       if (cached) return cached;
       const response = await fetch(request);

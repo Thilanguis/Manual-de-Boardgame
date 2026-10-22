@@ -6,14 +6,16 @@ O proprietário concluiu a autorização OAuth local desta pasta existente. O as
 
 ## 1. Google Cloud
 
-No [Google Cloud Console](https://console.cloud.google.com/), selecione `manual-de-boardgame` ou um projeto dedicado, sem conta de faturamento.
+Para a interrupção de outubro de 2026, siga primeiro [Recuperação de OAuth e prevenção da expiração](RECUPERACAO-DRIVE-OAUTH.md). Não execute inicialização, deploy ou rotação para diagnosticar uma conexão existente. `/health` confere configurações e protocolos, não a validade do OAuth.
+
+No [Google Cloud Console](https://console.cloud.google.com/), use o projeto existente `manual-de-boardgame`, sem criar outro projeto ou ativar faturamento.
 
 1. Habilite **Google Drive API** e **Google Picker API** em APIs & Services → Library. Ambas são necessárias: consentimento OAuth e Picker habilitado não substituem a Drive API. Ela foi habilitada neste projeto sem ativar faturamento. Uma Drive API desativada pode retornar 403 após o consentimento.
 2. Em Google Auth platform → Branding, defina nome Acervo, e-mail de suporte e contato.
 3. Audience: **External**. Adicione o proprietário como test user durante a preparação; antes da autorização definitiva, mude para **Production**. Testing com Drive emite refresh tokens que expiram em sete dias.
 4. Data Access: somente `https://www.googleapis.com/auth/drive.file` para Drive. Não conceda `drive`, `drive.readonly` ou outros escopos mais amplos.
 5. Clients: OAuth de tipo **Web application**, Authorized redirect URI `http://localhost:4180/oauth/callback`. Cadastre também `http://localhost:4180` como Authorized JavaScript origin para o Picker local.
-6. Baixe o JSON privado do cliente e guarde fora do repositório. Não cole seu conteúdo no chat.
+6. Use a cópia privada do JSON original do cliente existente. Segredos Google só podem ser vistos/baixados na criação; o Console não permite recuperar seu valor depois. Se perdeu essa cópia, consulte o procedimento de recuperação antes de excluir, desativar ou criar qualquer chave. Não cole o conteúdo no chat.
 7. Crie uma **API key pública de navegador** para o Picker, no mesmo projeto do cliente OAuth. Restrinja aplicações a Websites/HTTP referrers `http://localhost:4180/*` e `https://docs.google.com/*`, pois o Picker é renderizado num iframe desse domínio. Restrinja APIs a **Google Picker API**; as chamadas à Drive API são feitas pelo servidor local, sem essa chave. Essa chave não é o client secret. Não reutilize uma chave restrita que não autorize Picker. [Configuração oficial do Picker](https://developers.google.com/workspace/drive/picker/guides/web-picker).
 
 A chave Picker é separada da chave Firebase em `config/app-config.js`. As restrições exclusivas do Picker não devem substituir os endereços autorizados da chave Firebase.
@@ -37,23 +39,24 @@ O build é um dry-run; a última linha publica a versão inicial. Ela não acess
 
 ## 3. Autorização local da pasta existente
 
-Execute com seu caminho privado, e-mail proprietário e chave pública Picker:
+Primeiro confira a configuração local, informando o caminho real quando solicitado. Esta verificação não faz chamadas externas nem grava secrets:
 
 ```powershell
-node scripts/connect-drive.mjs --client-file "C:\CAMINHO-PRIVADO\client_secret.json" --owner-email "PROPRIETARIO@gmail.com" --picker-key "CHAVE_PUBLICA_PICKER" --worker-config worker/wrangler.jsonc
+$oauthClientPath = (Get-Item -LiteralPath (Read-Host 'Caminho do JSON OAuth Web existente') -ErrorAction Stop).FullName
+node scripts/connect-drive.mjs --client-file "$oauthClientPath" --check-config
 ```
 
-O helper usa state, PKCE e callback local. Abra o link informado e autentique somente a conta Google que possui o espaço Google One. Ele confirma o e-mail pelo Drive. Não cria nenhuma pasta.
+O helper usa state, PKCE e callback local. Ele exige modo explícito: `--reconnect` para conexão existente ou `--initialize` exclusivamente para a primeira configuração. Sem `--apply`, valida a autorização e descarta o token da memória sem alterar arquivos ou secrets. Com `--reconnect --apply`, grava somente `GOOGLE_REFRESH_TOKEN`; com `--reconnect --rotate-client-secret --apply`, grava o par secret/refresh token e preserva os demais bindings. Esses modos de gravação exigem autorização prévia do proprietário. Autentique somente a conta que possui a pasta; o helper confirma essa identidade pelo Drive.
 
 Se `drive.file` já permite consultar a pasta PDFs, o helper valida diretamente. Caso contrário, apresenta Google Picker na página **local** `http://localhost:4180/picker`; selecione a pasta PDFs com o ID exato. O Picker é limitado a esse ID e o servidor rejeita qualquer outro alvo. Essa seleção concede acesso explícito ao cliente da aplicação.
 
 Foi autorizada pelo proprietário uma exceção exclusiva para o Picker local: o assistente entrega um **access token temporário** ao Picker, apenas durante essa configuração. Refresh token e client secret nunca vão ao navegador. Nenhum token Google vai ao site público, aos subadministradores, à PWA ou ao GitHub. A tela local não persiste tokens; endpoints exigem origem local e nonce, sem CORS público. O código de autorização sai da URL por redirecionamento antes da seleção.
 
-Depois da seleção, o helper confere proprietário, ID, tipo, situação, permissão para adicionar e ausência de compartilhamento público. Preserva nome, organização, compartilhamento e appProperties anteriores; adiciona apenas a marca do projeto à pasta. Arquivos existentes sem vínculo ao catálogo não são importados automaticamente.
+Depois da seleção, o helper confere proprietário, ID, tipo, situação, permissão para adicionar e ausência de compartilhamento público. A reconexão exige a marca privada existente e não altera appProperties. Somente `--initialize --apply` adiciona a marca inicial. Arquivos existentes sem vínculo ao catálogo não são importados automaticamente.
 
 O script envia por stdin ao Wrangler os secrets `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `DRIVE_FOLDER_ID`, `DRIVE_OWNER_EMAIL` e `TICKET_KEY`, sem imprimir valores privados ou gravá-los no repositório. O Worker recusa outro Folder ID, mesmo se alguém configurar esse binding incorretamente. [Secrets Cloudflare](https://developers.cloudflare.com/workers/configuration/secrets/).
 
-Revogação, expiração ou troca do cliente podem exigir nova autorização; não há ampliação silenciosa do escopo. Reconectar gera nova chave de tickets e invalida sessões de upload pendentes; cadastros e arquivos já vinculados permanecem.
+Revogação e expiração podem exigir nova autorização; não há ampliação silenciosa do escopo. Reconectar preserva `TICKET_KEY`, cadastros, arquivos e permissões. Não troque o cliente OAuth existente para resolver a perda de uma chave secreta.
 
 ## 4. Conectar o site
 
@@ -64,7 +67,7 @@ npm --prefix worker run deploy
 Use a URL HTTPS real informada pelo Wrangler em `config/app-config.js`:
 
 ```js
-fileStorage: { provider: 'drive', apiBase: 'https://acervo-drive-api.SEU-SUBDOMINIO.workers.dev' },
+fileStorage: { provider: 'drive', apiBase: 'https://acervo-drive-api.acervo-boardgames.workers.dev' },
 ```
 
 Faça build e publique pelo workflow GitHub Pages. Não coloque secrets no objeto público. O Worker valida assinatura/projeto/prazo do token Firebase e consulta `users/{uid}` no Firestore a cada operação. `pending`, `rejected`, `blocked` e perfil comum não autorizam uploads. Subadmins precisam de addGames/editGames; exclusão definitiva exige superadmin com o UID fixado.
@@ -75,7 +78,7 @@ O limite local para novos uploads é de 50 MiB (52.428.800 bytes) por PDF, tanto
 
 Uploads são retomáveis em blocos de 8 MiB; a URL da sessão Google fica em ticket criptografado. Reabrir e selecionar o mesmo PDF pode retomar a sessão pendente dentro da validade. O catálogo é salvo antes de remover arquivos substituídos. Exclusões usam marcação e controle de versão antes de apagar arquivos. Falhas podem ser retomadas.
 
-Visitantes leem arquivos públicos pelo proxy, com Range para PDF.js e sem login Google. Não compartilhe a pasta como “qualquer pessoa com o link”. A PWA não armazena todos os PDFs em lote.
+Somente contas aprovadas leem arquivos pelo proxy; visitantes e contas pendentes ou bloqueadas não têm acesso ao conteúdo. O leitor não precisa de login Google. Não compartilhe a pasta como “qualquer pessoa com o link”. A PWA não armazena todos os PDFs em lote.
 
 Se o PDF for removido diretamente no Drive, a biblioteca o oculta após verificar a disponibilidade ao abrir, voltar ao site ou clicar em **Atualizar biblioteca**. O Drive não envia uma notificação instantânea para esta página. A verificação é somente de leitura, em lotes de até 20 jogos, respeitando a autorização real do Firestore; falhas temporárias não são tratadas como exclusões. Não há consulta contínua em segundo plano. Cada conferência consome leituras do Firestore e requisições das APIs dentro das cotas gratuitas.
 

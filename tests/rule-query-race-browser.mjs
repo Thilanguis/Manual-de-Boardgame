@@ -73,7 +73,7 @@ try {
   assert.equal(await page.locator('#guide-content').textContent(), '');
   const cache = await page.evaluate(async () => {
     const { cachedIndex } = await import('/js/index-cache.js');
-    return cachedIndex('rule-layout-v1:isolated-race:race-user:revocation:' + window.game.manual.sha256);
+    return cachedIndex('rule-layout-v5:isolated-race:race-user:revocation:' + window.game.manual.sha256);
   });
   assert.equal(cache, null, 'revogação não grava projeção obtida em operação antiga');
   assert.deepEqual(errors, []);

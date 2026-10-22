@@ -69,7 +69,9 @@ async function waitReady(count) {
 try {
   await page.goto(`${base}/?local=1`);
   await page.locator('#empty-action').click();
-  const principalPdf = await pdf('Ilha dos Documentos', 'Exploracao', 13), referencePdf = await pdf('Referencia da Ilha', 'Navegacao', 60), errataPdf = await pdf('Errata da Ilha', 'Correcoes', 8);
+  const principalPdf = await pdf('Ilha dos Documentos', 'Exploracao', 13),
+    referencePdf = await pdf('Referencia da Ilha', 'Navegacao', 60),
+    errataPdf = await pdf('Errata da Ilha', 'Correcoes', 8);
   await page.locator('#pdf-file').setInputFiles([principalPdf, referencePdf]);
   await page.waitForFunction(() => document.querySelectorAll('[data-registration-document]').length === 1 && !document.querySelector('#registration-pdfs').disabled);
   await page.locator('#additional-pdf-file').setInputFiles(errataPdf);
@@ -86,7 +88,11 @@ try {
   await page.getByLabel('Tipo de Errata da Ilha.pdf', { exact: true }).selectOption('errata');
   await page.getByLabel('Nome de Errata da Ilha.pdf', { exact: true }).fill('Errata da Ilha');
   await page.locator('#game-title').fill('Ilha dos Documentos');
-  for (const [name, width, height] of [['desktop', 1440, 1000], ['tablet', 768, 1024], ['mobile', 390, 844]]) {
+  for (const [name, width, height] of [
+    ['desktop', 1440, 1000],
+    ['tablet', 768, 1024],
+    ['mobile', 390, 844],
+  ]) {
     await page.setViewportSize({ width, height });
     await page.locator('#registration-pdfs').scrollIntoViewIfNeeded();
     assert(await page.locator('#registration-pdfs').evaluate((node) => node.scrollWidth <= node.clientWidth + 1));
@@ -103,7 +109,12 @@ try {
   const [saved] = await readStore();
   assert.equal(Object.keys(saved.documents).length, 3);
   assert.equal(saved.primaryDocumentId, 'main');
-  assert.deepEqual(Object.values(saved.documents).filter((d) => d.id !== 'main').map((d) => d.documentType), ['referencia', 'errata']);
+  assert.deepEqual(
+    Object.values(saved.documents)
+      .filter((d) => d.id !== 'main')
+      .map((d) => d.documentType),
+    ['referencia', 'errata'],
+  );
   const guides = await readStore('drafts', 'acervo-guides-local-v1');
   assert.equal(guides.length, 0, 'O índice automático não cria rascunho didático.');
   await page.locator('.card-main').click();
@@ -271,6 +282,24 @@ try {
     ),
   );
   console.log('PDFs separados de 13/60/8 páginas: cadastro, abertura por nome, seletor, texto e progresso individuais, recarga, consulta com referência correta, substituição, principal e remoção; computador/tablet/celular.');
+} catch (error) {
+  await mkdir('test-output', { recursive: true });
+  await page.screenshot({ path: 'test-output/documents-failure.png' });
+  const diagnostic = await page.evaluate(() => ({
+    dialog: document.querySelector('#guide-dialog').open,
+    query: document.querySelector('#guide-search').value,
+    status: document.querySelector('#guide-status').textContent,
+    results: document.querySelector('#guide-content').textContent,
+  }));
+  console.error(JSON.stringify(diagnostic, null, 2));
+  console.error(
+    JSON.stringify(
+      (await readStore('files', 'acervo-documents-local-v1')).filter((v) => v?.pages).map((v) => ({ doc: v.documentId, sourceHash: v.sourceHash, firstPage: v.pages[0] })),
+      null,
+      2,
+    ),
+  );
+  throw error;
 } finally {
   await browser.close();
 }
