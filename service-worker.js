@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.11.0-specific-game-type-19';
+const VERSION = 'acervo-v1.11.0-oauth-branding-32';
 const LOCAL_DEVELOPMENT = ['localhost', '127.0.0.1', '[::1]'].includes(self.location.hostname);
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
@@ -138,6 +138,8 @@ self.addEventListener('fetch', (event) => {
   }
   if (/\.pdf$/i.test(url.pathname)) return;
   const relative = './' + url.pathname.slice(new URL('./', self.registration.scope).pathname.length);
+  // Páginas públicas têm documento próprio; não devolver o index da biblioteca.
+  if (['./sobre.html', './privacidade.html', './termos.html'].includes(relative)) return;
   const isShell = ESSENTIAL.includes(relative) || request.mode === 'navigate';
   const isPdfResource = /\/vendor\/pdfjs\/(cmaps|standard_fonts|wasm)\//.test(url.pathname);
   const isOcrResource = /\/vendor\/tesseract\//.test(url.pathname) && /(?:\.js|\.traineddata\.gz)$/.test(url.pathname);
