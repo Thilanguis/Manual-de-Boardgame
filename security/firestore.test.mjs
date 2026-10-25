@@ -48,7 +48,7 @@ let ownerDb;
 before(async () => {
   if (!process.env.FIRESTORE_EMULATOR_HOST) throw new Error('Testes de regras só podem usar o emulador local.');
   const [host, port] = process.env.FIRESTORE_EMULATOR_HOST.split(':');
-  env = await initializeTestEnvironment({ projectId, firestore: { host, port: Number(port), rules: await readFile(new URL('../firestore.rules', import.meta.url), 'utf8') } });
+  env = await initializeTestEnvironment({ projectId, firestore: { host, port: Number(port), rules: await readFile(process.env.ACERVO_TEST_RULES_PATH || new URL('../firestore.rules', import.meta.url), 'utf8') } });
 });
 beforeEach(async () => {
   await env.clearFirestore();
@@ -542,6 +542,27 @@ test('índice técnico é independente de guia, privado e vinculado ao documento
   await assertSucceeds(change(ownerDb, 'member', 'block'));
   await assertFails(getDoc(ref(db('member'))));
 });
+test('ordem compartilhada dos PDFs é exclusiva do administrador, inclusive em gravações diretas', async () => {
+  const id = '22345678-1234-1234-1234-123456789abc';
+  const main = { id: 'main', name: 'Principal', documentType: 'principal', language: 'pt', edition: '', manual: game('existing').manual };
+  const extra = { ...main, id, name: 'Personagens', documentType: 'complemento', manual: { ...main.manual, path: `games/existing/documents/${id}.pdf`, driveFileId: 'extra123' } };
+  const ref = (database) => doc(database, 'games', 'existing');
+  await assertSucceeds(updateDoc(ref(ownerDb), { documents: { main, [id]: extra }, documentChanges: ['main', id], primaryDocumentId: 'main', updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(ref(db('sub')), { primaryDocumentId: id, manual: extra.manual, updatedAt: serverTimestamp() }));
+  const order = { documentOrder: [id, 'main'], updatedAt: serverTimestamp() };
+  for (const database of [db('sub'), db('member'), db('blocked'), db(null)]) await assertFails(updateDoc(ref(database), order));
+  await assertSucceeds(updateDoc(ref(ownerDb), order));
+  await assertFails(updateDoc(ref(db('sub')), { documentOrder: ['main', id], updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(ref(db('sub')), { documentOrder: [], updatedAt: serverTimestamp() }));
+  await assertFails(setDoc(ref(db('sub')), { ...(await getDoc(ref(ownerDb))).data(), documentOrder: ['main', id], updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(ref(db('sub')), { title: 'Nome revisado', updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(ref(ownerDb), { documentOrder: ['main', 'main'], updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(ref(ownerDb), { documentOrder: ['unknown'], updatedAt: serverTimestamp() }));
+  // Remover um PDF não exige editar a ordem; a leitura ignora IDs ausentes.
+  await assertSucceeds(updateDoc(ref(ownerDb), { documents: { main }, documentChanges: [], updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(ref(db('sub')), { title: 'Após remoção', updatedAt: serverTimestamp() }));
+});
+
 test('múltiplos documentos preservam legado, validam alterações e impedem remoção por subadmin', async () => {
   let documents = { main: { id: 'main', name: 'Principal', documentType: 'principal', language: game('existing').language, edition: '', manual: game('existing').manual } };
   await assertSucceeds(updateDoc(doc(ownerDb, 'games', 'existing'), { documents, documentChanges: ['main'], primaryDocumentId: 'main', updatedAt: serverTimestamp() }));

@@ -33,17 +33,20 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
   const journalKey = () => `preparation:document-links:${scope()}`;
   async function changePending(change) {
     const owner = scope();
-    const task = journalChange.catch(() => {}).then(() => {
-      const apply = async () => {
-        requireEdit();
-        if (owner !== scope()) throw new Error('Sua sessão mudou. Reabra o jogo.');
-        const name = journalKey(), pending = (await cachedIndex(name)) || [];
-        const next = change(pending);
-        if (owner !== scope()) throw new Error('Sua sessão mudou. Reabra o jogo.');
-        await cachedIndex(name, next);
-      };
-      return globalThis.navigator?.locks ? navigator.locks.request(`acervo-document-links:${owner}`, apply) : apply();
-    });
+    const task = journalChange
+      .catch(() => {})
+      .then(() => {
+        const apply = async () => {
+          requireEdit();
+          if (owner !== scope()) throw new Error('Sua sessão mudou. Reabra o jogo.');
+          const name = journalKey(),
+            pending = (await cachedIndex(name)) || [];
+          const next = change(pending);
+          if (owner !== scope()) throw new Error('Sua sessão mudou. Reabra o jogo.');
+          await cachedIndex(name, next);
+        };
+        return globalThis.navigator?.locks ? navigator.locks.request(`acervo-document-links:${owner}`, apply) : apply();
+      });
     journalChange = task;
     return task;
   }
@@ -76,7 +79,8 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
       const snapshot = await tx.get(reference);
       requireEdit();
       if (!snapshot.exists() || snapshot.data().deleting) throw new Error('O jogo foi removido ou está em exclusão.');
-      const latest = { ...snapshot.data(), id: game.id }, old = findDocument(latest, document.id);
+      const latest = { ...snapshot.data(), id: game.id },
+        old = findDocument(latest, document.id);
       const alreadyLinked = old?.manual.sha256 === document.manual.sha256 && old?.manual.driveFileId === document.manual.driveFileId;
       if (!alreadyLinked && (previousHash ? old?.manual.sha256 !== previousHash : !!old)) throw new Error('Este documento mudou em outra sessão. Reabra o jogo antes de substituir.');
       const next = withDocument(latest, document);
@@ -84,7 +88,8 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
       // pode apagar complementos ou sobrescrever informações editadas em paralelo.
       tx.update(reference, { documents: next.documents, documentChanges: next.documentChanges, primaryDocumentId: next.primaryDocumentId, manual: next.manual, language: next.language, updatedAt: sdk.serverTimestamp() });
     });
-    const confirmed = await current(game), linked = findDocument(confirmed, document.id);
+    const confirmed = await current(game),
+      linked = findDocument(confirmed, document.id);
     if (linked?.manual.sha256 !== document.manual.sha256 || linked?.manual.driveFileId !== document.manual.driveFileId) throw new Error('O PDF foi enviado, mas o vínculo no cadastro não pôde ser confirmado. Tente novamente para concluir.');
     return confirmed;
   }
@@ -130,6 +135,33 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
       return () => listeners.delete(callback);
     },
     getDocuments: gameDocuments,
+    async reorderDocuments(game, ids) {
+      const requireOwner = () => {
+        requireRead();
+        if (!repository.session.isOwner) throw new Error('Somente o administrador pode ordenar os PDFs.');
+      };
+      const validate = (latest) => {
+        requireOwner();
+        const actual = gameDocuments(latest).map((doc) => doc.id);
+        if (latest.deleting || !Array.isArray(ids) || ids.length !== actual.length || new Set(ids).size !== actual.length || ids.some((id) => !actual.includes(id))) throw new Error('A lista de PDFs mudou. Reabra o jogo antes de ordenar.');
+        if (JSON.stringify(actual) !== JSON.stringify(gameDocuments(game).map((doc) => doc.id))) throw new Error('A ordem mudou em outra sessão. Reabra o jogo antes de ordenar.');
+      };
+      requireOwner();
+      if (!db) {
+        const latest = await current(game);
+        validate(latest);
+        return (await repository.saveGame({ ...latest, documentOrder: [...ids] })).game;
+      }
+      const reference = sdk.doc(db, 'games', game.id);
+      await sdk.runTransaction(db, async (tx) => {
+        const snapshot = await tx.get(reference);
+        if (!snapshot.exists()) throw new Error('Jogo não encontrado.');
+        validate({ ...snapshot.data(), id: game.id });
+        // Ordenação altera somente metadados; nenhum arquivo ou índice é enviado.
+        tx.update(reference, { documentOrder: [...ids], updatedAt: sdk.serverTimestamp() });
+      });
+      return current(game);
+    },
     async latestGame(game) {
       requireRead();
       return current(game);
@@ -177,11 +209,14 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
         } else if (!previous) throw new Error('Selecione um PDF.');
         const confirmed = await commitDocument(game, document, previousHash);
         if (receipt) {
-          await files.finalize(receipt).then(async () => {
-            if (db) await changePending((items) => items.filter((entry) => !(entry.gameId === game.id && entry.document.id === id)));
-          }).catch(() => {
-            repository.fileWarning = 'Documento salvo. A limpeza do arquivo anterior está pendente; tente novamente antes de sair.';
-          });
+          await files
+            .finalize(receipt)
+            .then(async () => {
+              if (db) await changePending((items) => items.filter((entry) => !(entry.gameId === game.id && entry.document.id === id)));
+            })
+            .catch(() => {
+              repository.fileWarning = 'Documento salvo. A limpeza do arquivo anterior está pendente; tente novamente antes de sair.';
+            });
         }
         return confirmed;
       } catch (error) {
@@ -193,6 +228,7 @@ export function createDocumentRepository(repository, { files, db, sdk, auth, pro
     },
     async setPrimaryDocument(game, id) {
       requireEdit();
+      if (!repository.session.isOwner) throw new Error('Somente o administrador pode escolher o manual principal.');
       game = await current(game);
       const doc = findDocument(game, id);
       if (!doc) throw new Error('Documento não encontrado.');

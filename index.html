@@ -13,6 +13,7 @@
     <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
     <link rel="stylesheet" href="styles/app.css" />
     <link rel="stylesheet" href="styles/interface.css" />
+    <link rel="stylesheet" href="styles/hero-showcase.css" />
     <script type="module" src="js/app.js"></script>
   </head>
   <body>
@@ -85,73 +86,64 @@
       </div>
     </header>
     <main>
-      <section class="hero" aria-labelledby="hero-title" hidden>
-        <div class="hero-backdrop" id="hero-backdrop"></div>
-        <div class="hero-content">
-          <p class="eyebrow">
-            <span class="red-line"></span>
-            SEUS JOGOS. SUAS HISTÓRIAS.
-          </p>
-          <h1 id="hero-title">
-            A próxima partida
-            <br />
-            começa
-            <em>aqui.</em>
-          </h1>
-          <p id="hero-description">
-            Todos os seus manuais, em um só lugar.
-            <br />
-            Menos tempo procurando. Mais tempo jogando.
-          </p>
-          <p id="hero-source" class="hero-source"></p>
-          <div class="hero-meta" id="hero-meta" hidden></div>
-          <div class="hero-actions">
-            <button class="button primary" id="hero-main">
-              <svg><use href="#i-plus" /></svg>
-              <span>Adicionar meu primeiro jogo</span>
-            </button>
-            <a class="button secondary" href="#biblioteca">
-              <svg><use href="#i-grid" /></svg>
-              Explorar biblioteca
-            </a>
+      <section class="hero cinematic-hero" aria-labelledby="hero-title" aria-roledescription="carrossel" hidden>
+        <div class="hero-backdrop" id="hero-backdrop" aria-hidden="true"></div>
+        <div class="hero-vignette" aria-hidden="true"></div>
+        <div class="hero-stage" id="hero-stage">
+          <div class="hero-intro">
+            <p class="eyebrow">
+              <span class="red-line"></span>
+              NA MESA, OUTROS MUNDOS.
+            </p>
+            <p class="hero-genre" id="hero-genre"></p>
+            <h1 id="hero-title"></h1>
           </div>
-          <p class="hero-caption" id="hero-caption" hidden></p>
-        </div>
-        <div class="hero-art" id="hero-art" aria-hidden="true">
-          <div class="orbit orbit-one"></div>
-          <div class="orbit orbit-two"></div>
-          <div class="art-book back-book">
-            <span>MANUAIS</span>
-            <div class="book-lines"></div>
-          </div>
-          <div class="art-book front-book">
-            <span class="art-acervo">
-              a
-              <span>.</span>
-            </span>
-            <div class="book-circle"></div>
-            <div class="book-mark">
-              <svg><use href="#i-book" /></svg>
-              <span>
-                SUA PRÓXIMA
-                <br />
-                PARTIDA
+          <button type="button" class="hero-cover-scene" id="hero-cover-button" aria-label="Conhecer o jogo">
+            <span class="hero-cover-placeholder" id="hero-cover-placeholder">Capa indisponível</span>
+            <span class="hero-box" id="hero-box" hidden>
+              <span class="hero-box-lid" id="hero-box-lid">
+                <img id="hero-cover-image" alt="" decoding="async" hidden />
+                <span class="hero-lid-edge" aria-hidden="true"></span>
+                <span class="hero-lid-left" aria-hidden="true"></span>
+                <span class="hero-lid-inside" aria-hidden="true"></span>
               </span>
+              <span class="hero-box-interior" aria-hidden="true"></span>
+              <span class="hero-box-components" aria-hidden="true">
+                <span class="hero-game-cards"></span>
+                <span class="hero-game-die"><span></span></span>
+                <span class="hero-game-pawn pawn-gold"></span>
+                <span class="hero-game-pawn pawn-teal"></span>
+                <span class="hero-game-token"></span>
+              </span>
+              <span class="hero-panel-preview" id="hero-panel-preview" aria-hidden="true" inert></span>
+              <span class="hero-box-side" aria-hidden="true"></span>
+              <span class="hero-box-bottom" aria-hidden="true"></span>
+              <span class="hero-box-back" aria-hidden="true"></span>
+            </span>
+            <span class="hero-cover-caption" aria-hidden="true">UMA NOVA HISTÓRIA A CADA PARTIDA</span>
+          </button>
+          <div class="hero-story">
+            <p id="hero-description"></p>
+            <p id="hero-source" class="hero-source"></p>
+            <div class="hero-meta" id="hero-meta"></div>
+            <div class="hero-actions">
+              <button type="button" class="button primary" id="hero-main">
+                <svg><use href="#i-book" /></svg>
+                <span>Ler manual</span>
+              </button>
+              <button type="button" class="button secondary" id="hero-details">
+                Conhecer o jogo
+                <span aria-hidden="true">↗</span>
+              </button>
             </div>
           </div>
-          <div class="art-dice">
-            <i></i>
-            <i></i>
-            <i></i>
-            <i></i>
-            <i></i>
-          </div>
-          <span class="art-label">CADA JOGO, UMA NOVA HISTÓRIA</span>
         </div>
-        <div class="hero-index">
-          <span>01</span>
-          / SUA COLEÇÃO
+        <div class="hero-navigation hero-controls" aria-label="Navegar pelos destaques">
+          <span class="hero-counter" id="hero-counter" aria-hidden="true"></span>
+          <button type="button" id="hero-prev" aria-label="Destaque anterior">←</button>
+          <button type="button" id="hero-next" aria-label="Próximo destaque">→</button>
         </div>
+        <p class="sr-only" id="hero-announcement" aria-live="polite"></p>
       </section>
       <div class="library-container" id="biblioteca">
         <div class="connection-bar">
@@ -216,7 +208,6 @@
             </label>
           </div>
         </div>
-        <button class="text-button" id="refresh-library" hidden>Atualizar biblioteca</button>
         <details class="library-filters" id="library-filters">
           <summary>
             Filtrar biblioteca
@@ -683,7 +674,14 @@
       <div class="dialog-body">
         <p id="guide-status" role="status" aria-live="polite" hidden></p>
         <button id="guide-back" class="button secondary small rules-back" type="button" hidden>← Voltar aos assuntos</button>
-        <input id="guide-search" type="search" placeholder="Pesquise uma regra ou faça uma pergunta…" aria-label="Consultar regras" />
+        <form id="guide-query-form" class="guide-query-form" role="search" aria-label="Pesquisar ou perguntar sobre regras">
+          <input id="guide-search" type="search" placeholder="Pesquise nos PDFs ou pergunte ao Gemini…" aria-label="Regra ou pergunta" maxlength="1000" aria-describedby="guide-query-help" />
+          <div class="guide-query-actions">
+            <button type="submit" class="button secondary small">Pesquisar nos PDFs</button>
+            <button type="button" id="guide-ask" class="button primary small" hidden>Perguntar ao Gemini</button>
+          </div>
+          <small id="guide-query-help">A busca nos PDFs é automática. O Gemini só é acionado ao enviar uma pergunta.</small>
+        </form>
         <div id="guide-content"></div>
       </div>
     </dialog>
@@ -821,7 +819,11 @@
         <button class="button secondary full logout-button" id="logout-button">Sair da conta</button>
       </div>
       <nav class="dialog-body" aria-label="Informações públicas do Acervo">
-        <a href="sobre.html">Sobre o Acervo</a> · <a href="privacidade.html">Privacidade</a> · <a href="termos.html">Termos de uso</a>
+        <a href="sobre.html">Sobre o Acervo</a>
+        ·
+        <a href="privacidade.html">Privacidade</a>
+        ·
+        <a href="termos.html">Termos de uso</a>
       </nav>
     </dialog>
     <dialog id="admin-dialog" class="wide-dialog admin-dialog" aria-labelledby="admin-title">
@@ -974,21 +976,27 @@
           <span id="reader-subtitle">Carregando manual…</span>
         </div>
         <div class="reader-zoom">
+          <button class="icon-button" id="reader-search-toggle" aria-label="Buscar no PDF" aria-expanded="false" aria-controls="reader-search"><svg><use href="#i-search" /></svg></button>
           <button class="icon-button" id="zoom-out" aria-label="Diminuir zoom">−</button>
-          <button class="text-button" id="zoom-fit" title="Ajustar página inteira" aria-label="Ajustar página inteira" aria-pressed="true">Ajustar</button>
+          <button class="text-button" id="zoom-fit" title="Ajustar à largura" aria-label="Ajustar à largura" aria-pressed="true">Ajustar</button>
           <button class="icon-button" id="zoom-in" aria-label="Ampliar zoom">+</button>
         </div>
       </header>
+      <form id="reader-search" class="reader-search" role="search" aria-label="Buscar texto neste PDF" hidden>
+        <label class="sr-only" for="reader-search-input">Texto para buscar no PDF</label>
+        <input id="reader-search-input" type="search" placeholder="Buscar no PDF…" maxlength="160" autocomplete="off" />
+        <span id="reader-search-status" role="status" aria-live="polite"></span>
+        <button class="icon-button" id="reader-search-prev" type="button" aria-label="Resultado anterior">↑</button>
+        <button class="icon-button" id="reader-search-next" type="submit" aria-label="Próximo resultado">↓</button>
+        <button class="icon-button" id="reader-search-close" type="button" aria-label="Fechar busca"><svg><use href="#i-close" /></svg></button>
+      </form>
       <label class="reader-document-picker" id="reader-document-picker" hidden>
         <span>Manual em leitura</span>
         <select id="reader-document" aria-label="Escolher manual deste jogo"></select>
       </label>
       <div class="reader-stage" id="reader-stage">
         <p id="reader-status" role="status">Carregando manual…</p>
-        <div id="pdf-page" class="pdf-page">
-          <canvas id="pdf-canvas" aria-label="Página do manual"></canvas>
-          <div id="pdf-text" class="textLayer"></div>
-        </div>
+        <div id="reader-pages" class="reader-pages"></div>
       </div>
       <footer class="reader-toolbar">
         <button class="button secondary small" id="page-prev">

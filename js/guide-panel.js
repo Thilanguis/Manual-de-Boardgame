@@ -35,6 +35,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     view = $('guide-content'),
     status = $('guide-status'),
     input = $('guide-search'),
+    ask = $('guide-ask'),
     back = $('guide-back');
   const worker = new Worker(new URL('./rule-search-worker.js', import.meta.url), { type: 'module' });
   let game,
@@ -49,10 +50,19 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     layoutController,
     loading = false,
     selectedTopic = null;
+  let searchResults = [],
+    resultsQuery = '';
   let errors = new Map(),
     sessionUid = repository.session.user?.uid;
   const urls = new Map();
   const assistant = createRuleAssistantPanel({ repository, container: view.parentElement, getGame: () => game, pageButton });
+  function questionControls() {
+    const permitted = repository.session.canRead && repository.session.canAskRules && !!repository.session.user?.uid;
+    ask.hidden = !permitted;
+    ask.disabled = !input.value.trim() || loading;
+    input.placeholder = permitted ? 'Pesquise nos PDFs ou pergunte ao Gemini…' : 'Pesquise uma regra nos PDFs…';
+    $('guide-query-help').textContent = permitted ? 'A busca nos PDFs é automática. O Gemini só é acionado ao enviar uma pergunta.' : 'Pesquise nos documentos ou escolha um assunto abaixo.';
+  }
   const message = () => {
     status.textContent = [...errors.values()].join(' ');
     status.hidden = !status.textContent;
@@ -197,6 +207,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     return preparing ? 'Os documentos estão sendo preparados. Você já pode ler os PDFs.' : 'Ainda não há conteúdo preparado para consulta. Você pode ler o manual.';
   }
   function overview() {
+    questionControls();
     back.hidden = true;
     view.dataset.query = '';
     view.replaceChildren();
@@ -280,6 +291,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
   }
   function renderSearch() {
     if (!game || !dialog.open) return;
+    questionControls();
     ++searchSequence;
     message();
     if (!input.value.trim()) return overview();
@@ -292,7 +304,11 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     if (data.error) {
       errors.set('search', data.error);
       message();
-    } else renderResults(data.results);
+    } else {
+      searchResults = data.results;
+      resultsQuery = data.query;
+      renderResults(data.results);
+    }
   };
   worker.onerror = () => {
     errors.set('search', 'Não foi possível iniciar a consulta. Feche e tente novamente.');
@@ -373,6 +389,8 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     selectedTopic = null;
     back.hidden = true;
     input.value = '';
+    searchResults = [];
+    resultsQuery = '';
     view.replaceChildren();
     status.textContent = '';
     returnFocus?.focus();
@@ -398,6 +416,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     close();
   });
   input.oninput = () => {
+    questionControls();
     selectedTopic = null;
     back.hidden = !input.value.trim();
     ++searchSequence; // Descarta respostas antigas antes do próximo debounce.
@@ -406,11 +425,30 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     clearTimeout(timer);
     timer = setTimeout(renderSearch, 150);
   };
+  $('guide-query-form').onsubmit = (event) => {
+    event.preventDefault();
+    clearTimeout(timer);
+    renderSearch();
+  };
+  ask.onclick = () => {
+    questionControls();
+    if (ask.hidden || ask.disabled || !game) return;
+    const query = input.value.trim();
+    const compatible = (doc) => doc && (!game.edition || !doc.edition || game.edition === doc.edition);
+    const result = resultsQuery === query && searchResults.find((result) => result.page && compatible(findDocument(game, result.documentId || 'main')));
+    const doc = gameDocuments(game).find((doc) => compatible(doc) && doc.documentType !== 'expansao');
+    const reference = result || (doc && { title: 'Regras do jogo', documentId: doc.id, sourceHash: doc.manual.sha256, page: 1, documentName: documentName(doc) });
+    if (!reference || !assistant.ask(query, reference)) {
+      errors.set('assistant', 'Não há documento compatível para esta pergunta. Confira os PDFs e a edição do jogo.');
+      message();
+    }
+  };
   const panel = {
     close,
     isBusy: () => false,
     updateSession(session) {
       assistant.updateSession();
+      questionControls();
       if (!session.canRead || sessionUid !== session.user?.uid) close();
       sessionUid = session.user?.uid;
       if (game && dialog.open) renderSearch();
@@ -441,6 +479,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
       returnFocus = document.activeElement;
       game = nextGame;
       loading = true;
+      questionControls();
       const token = ++sequence;
       $('guide-title').textContent = game.title;
       $('guide-mode').textContent = 'CONSULTAR REGRAS';

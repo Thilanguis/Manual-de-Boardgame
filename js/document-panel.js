@@ -99,6 +99,31 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
         ),
       );
       row.append(info);
+      if (repository.session.isOwner && documents.length > 1) {
+        const controls = el('div');
+        controls.className = 'document-order-controls';
+        for (const [offset, label, arrow] of [
+          [-1, 'cima', '↑'],
+          [1, 'baixo', '↓'],
+        ]) {
+          const index = documents.indexOf(doc),
+            target = index + offset;
+          const move = button(arrow, async () => {
+            const targetGame = game;
+            const ids = documents.map((item) => item.id);
+            [ids[index], ids[target]] = [ids[target], ids[index]];
+            const next = await repository.reorderDocuments(targetGame, ids);
+            if (game?.id === targetGame.id) game = next;
+            onSaved(next);
+            onNotice('Ordem dos PDFs salva para todos os usuários.');
+          });
+          move.setAttribute('aria-label', `Mover ${name} para ${label}`);
+          move.title = `Mover para ${label} · ordem para todos`;
+          move.disabled ||= target < 0 || target >= documents.length;
+          controls.append(move);
+        }
+        row.append(controls);
+      }
       if (documents.length > 1) {
         const read = button('Ler documento', () => openManual(game, { documentId: doc.id }));
         read.setAttribute('aria-label', `Ler documento: ${name}`);
@@ -212,7 +237,7 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
         replaceButton.onclick = () => replace.click();
         actions.append(replaceButton, replace);
         actions.append(settings);
-        if (doc.id !== primaryDocumentId(game)) actions.append(button('Tornar principal', async () => saved(await repository.setPrimaryDocument(game, doc.id))));
+        if (repository.session.isOwner && doc.id !== primaryDocumentId(game)) actions.append(button('Tornar principal', async () => saved(await repository.setPrimaryDocument(game, doc.id))));
         const pause = button('Pausar', () => queue.pause(game, doc)),
           resume = button(job?.state === 'partial' ? 'Tentar novamente' : 'Retomar', () => queue.resume(game, doc, { retryFailed: job?.state === 'partial' }));
         pause.dataset.preparationAction = 'pause';
@@ -296,18 +321,24 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
       render();
     },
     open(next) {
-      if (game?.id !== next.id) { ++sequence; pendingLinks = []; }
+      if (game?.id !== next.id) {
+        ++sequence;
+        pendingLinks = [];
+      }
       game = next;
       queue.observeGame?.(next);
       render();
       const token = sequence;
       const load = ++pendingLoad;
       if (repository.session.canEdit && repository.pendingDocumentLinks)
-        void repository.pendingDocumentLinks(next).then((entries) => {
-          if (token !== sequence || load !== pendingLoad || game?.id !== next.id) return;
-          pendingLinks = entries;
-          if (!busy) render();
-        }).catch((error) => onNotice(error.message));
+        void repository
+          .pendingDocumentLinks(next)
+          .then((entries) => {
+            if (token !== sequence || load !== pendingLoad || game?.id !== next.id) return;
+            pendingLinks = entries;
+            if (!busy) render();
+          })
+          .catch((error) => onNotice(error.message));
       if (repository.session.canDelete && (repository.mode !== 'firebase' || repository.session.storageStatus?.documentRemovalProtocol >= 2))
         void repository
           .pendingDocumentRemovals?.(next)

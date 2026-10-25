@@ -810,8 +810,25 @@ label,
   border-bottom: 1px solid var(--line);
 }
 .document-reading-info {
+  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.document-order-controls {
+  display: flex;
+  gap: 4px;
+}
+.document-order-controls .button {
+  min-width: 36px;
+  padding: 8px;
+}
+@media (max-width: 600px) {
+  .document-reading-row {
+    flex-wrap: wrap;
+  }
+  .document-reading-info {
+    flex-basis: calc(100% - 100px);
+  }
 }
 .document-reading-info strong {
   display: block;
@@ -1737,6 +1754,21 @@ body:not(.access-approved) > #reader {
 }
 .rule-assistant[hidden] {
   display: none;
+}
+.guide-query-form {
+  margin-bottom: 16px;
+}
+.guide-query-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+.guide-query-form > small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
 }
 .rule-assistant textarea {
   width: 100%;

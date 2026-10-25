@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gameDocuments, withDocument, withoutDocument, documentGame, documentName } from '../js/documents.js';
+test('principal vem primeiro por padrão; ordem compartilhada prevalece e ignora IDs removidos', () => {
+  const main = { id: 'main' }, extra = { id: 'extra' };
+  const record = { documents: { extra, main }, primaryDocumentId: 'main' };
+  assert.deepEqual(gameDocuments(record).map((doc) => doc.id), ['main', 'extra']);
+  assert.deepEqual(gameDocuments({ ...record, documentOrder: ['removed', 'extra', 'main'] }).map((doc) => doc.id), ['extra', 'main']);
+});
 import { searchDocuments, cleanGuide, staleSection } from '../js/guide-model.js';
 import { indexMatches, packIndex, unpackIndex } from '../js/pdf-index.js';
 import { accessFor, OWNER_UID } from '../js/permissions.js';

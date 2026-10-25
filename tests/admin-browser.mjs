@@ -145,13 +145,20 @@ async function signup(p, name, email) {
 try {
   const guest = await page();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 1);
+  await guest.clock.install();
+  async function refreshOnFocus() {
+    // A biblioteca atualiza ao recuperar foco; o botão manual foi removido.
+    await guest.clock.fastForward(61000);
+    await guest.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await guest.clock.runFor(400);
+  }
   driveFailure = true;
-  await guest.locator('#refresh-library').click();
-  await guest.waitForFunction(() => document.getElementById('notice-text').textContent.includes('Falha transitória'));
+  await refreshOnFocus();
+  await guest.waitForFunction(() => document.getElementById('library-error').textContent.includes('Falha transitória'));
   assert.equal(await guest.locator('.game-card').count(), 1);
   driveFailure = false;
   driveAvailable = false;
-  await guest.locator('#refresh-library').click();
+  await refreshOnFocus();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 0);
   assert.equal(await guest.locator('#unavailable-games').isVisible(), false);
   const owner = await page();
@@ -195,7 +202,7 @@ try {
   await owner.waitForFunction(() => !document.getElementById('read-manual').disabled);
   assert.match(await owner.locator('#detail-manual').textContent(), /páginas/);
   await owner.locator('[data-close=detail-dialog]').click();
-  await guest.locator('#refresh-library').click();
+  await refreshOnFocus();
   await guest.waitForFunction(() => document.querySelectorAll('.game-card').length === 1);
   assert.equal(await owner.locator('#unavailable-games').isVisible(), false);
   assert.equal(await owner.locator('.hero').isVisible(), false, 'Não há destaque antes de clicar em um jogo');

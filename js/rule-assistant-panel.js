@@ -165,25 +165,36 @@ export function createRuleAssistantPanel({ repository, container, getGame, pageB
       }
     }
   };
+  function open(result, question = '', trigger) {
+    if (!permitted() || !result.page || !pageButton(result.page, result.sourceHash, result.documentId)) return false;
+    const game = getGame(),
+      doc = findDocument(game, result.documentId || 'main');
+    if (!game || (game.edition && doc?.edition && game.edition !== doc.edition)) return false;
+    origin = trigger || document.activeElement;
+    uid = repository.session.user.uid;
+    identity = assistantIdentity(game);
+    selected = { topic: String(result.title || 'Regras do jogo').slice(0, 160), documentId: result.documentId || 'main', sourceHash: result.sourceHash, page: result.page };
+    heading.textContent = `Perguntar sobre: ${selected.topic}`;
+    contextLabel.textContent = `${game.title}${game.edition ? ' · ' + game.edition : ''} · ${result.documentName || 'Manual'} · página ${result.page}. Até quatro perguntas por conversa; somente trechos selecionados são enviados.`;
+    panel.hidden = false;
+    reset();
+    input.value = question;
+    panel.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    return true;
+  }
   return {
+    ask(question, result) {
+      if (!question.trim() || !open(result, question)) return false;
+      form.requestSubmit();
+      return true;
+    },
     action(result) {
       if (!permitted() || !result.page || !pageButton(result.page, result.sourceHash, result.documentId)) return null;
       const game = getGame(),
         doc = findDocument(game, result.documentId || 'main');
       if (game.edition && doc?.edition && game.edition !== doc.edition) return null;
       const action = button('Perguntar ao Gemini', () => {
-        if (!permitted()) return;
-        const game = getGame();
-        if (!game) return;
-        origin = action;
-        uid = repository.session.user.uid;
-        identity = assistantIdentity(game);
-        selected = { topic: String(result.title || 'Regra selecionada').slice(0, 160), documentId: result.documentId || 'main', sourceHash: result.sourceHash, page: result.page };
-        heading.textContent = `Perguntar sobre: ${selected.topic}`;
-        contextLabel.textContent = `${game.title}${game.edition ? ' · ' + game.edition : ''} · ${result.documentName || 'Manual'} · página ${result.page}. Até quatro perguntas por conversa; somente trechos selecionados são enviados.`;
-        panel.hidden = false;
-        reset();
-        panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        open(result, '', action);
       });
       action.classList.add('rule-ask');
       return action;

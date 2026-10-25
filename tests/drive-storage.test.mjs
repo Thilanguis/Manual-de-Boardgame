@@ -22,12 +22,37 @@ test('assistente exige protocolo próprio, JWT e conserva uso informado em 429, 
       () => 'owner',
     );
   try {
-    await assert.rejects(create().askRules({ id: 'game' }, { question: 'Como atacar?' }), /ainda não oferece/);
+    await assert.rejects(create().askRules({ id: 'game' }, { question: 'Como atacar?' }), (error) => error.code === 'assistant/server-update' && error.status === 426);
     assert.equal(calls, 0);
     protocol = true;
     await assert.rejects(create().askRules({ id: 'game' }, { question: 'Como atacar?' }), (e) => e.status === 429 && e.usage.used === 10);
     assert.equal(calls, 1);
   } finally {
+    globalThis.fetch = previous;
+  }
+});
+
+test('assistente atualiza capacidade antiga em memória após publicação da API', async () => {
+  const previous = globalThis.fetch;
+  let health = 0,
+    questions = 0;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/health')) return Response.json({ ruleAssistantProtocol: ++health > 1 ? 1 : 0 });
+    questions++;
+    return Response.json({ status: 'ready' });
+  };
+  const storage = createDriveStorage(
+    { apiBase: 'https://api.example.test' },
+    async () => 'fixture',
+    () => 'owner',
+  );
+  try {
+    await storage.capabilities();
+    assert.equal((await storage.askRules({ id: 'game' }, { question: 'Como atacar?' })).status, 'ready');
+    assert.equal(health, 2);
+    assert.equal(questions, 1);
+  } finally {
+    storage.close();
     globalThis.fetch = previous;
   }
 });

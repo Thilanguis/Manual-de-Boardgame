@@ -244,7 +244,11 @@ async function media(request, env, identity, gameId, kind, assetId = '', documen
     if (!/^bytes=\d*-\d*$/.test(range) || range === 'bytes=-') throw new ApiError(416, 'Faixa de leitura inválida.');
     headers.Range = range;
   }
-  const upstream = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media`, { headers, redirect: 'manual' }).catch(() => {
+  const upstream = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?alt=media`, {
+    headers,
+    redirect: 'manual',
+    signal: kind === 'cover' ? AbortSignal.any([request.signal, AbortSignal.timeout(20000)]) : request.signal,
+  }).catch(() => {
     throw driveError('drive/unavailable');
   });
   if (!upstream.ok && upstream.status !== 416) throw await driveResponseError(upstream);

@@ -28,7 +28,7 @@ const sdk = {
     export const memoryLocalCache=()=>({}), initializeFirestore=()=>({}),connectFirestoreEmulator=()=>{};
     export const doc=(db,...parts)=>({path:parts.join('/'),type:'doc'}),collection=(db,...parts)=>({path:parts.join('/'),type:'collection'}),where=()=>({}),query=(ref)=>ref;
     const profile={uid:'fixture-owner',name:'Proprietário simulado',status:'approved',role:'superadmin',permissions:{}};
-    const games=[0,1].map(i=>({id:(i?'22345678':'12345678')+'-1234-1234-1234-123456789abc',title:'Jogo preservado '+(i+1),description:'Ficha existente',isPublic:true,manual:{driveFileId:'manual'+i,name:'manual.pdf',pages:1,sha256:'a'.repeat(64)},cover:{driveFileId:'cover'+i}}));
+    const games=Array.from({length:20},(_,i)=>({id:(i+1).toString(16).padStart(8,'0')+'-1234-1234-1234-123456789abc',title:'Jogo preservado '+(i+1),description:'Ficha existente',isPublic:true,manual:{driveFileId:'manual'+i,name:'manual.pdf',pages:1,sha256:'a'.repeat(64)},cover:{driveFileId:'cover'+i}}));
     const snapshot=(data)=>({exists:()=>true,data:()=>({...data}),metadata:{fromCache:false}});
     export const getDocFromServer=async ref=>snapshot(ref.path==='settings/library'?{publicRead:true}:profile);
     export const onSnapshot=(ref,...args)=>{const callback=args.find(a=>typeof a==='function');let active=true;
@@ -63,7 +63,7 @@ try {
   page.on('pageerror', (error) => errors.push(error.stack));
   await page.goto(base);
   await page.waitForFunction(() => !document.getElementById('drive-warning').hidden);
-  assert.equal(await page.locator('.game-card').count(), 2);
+  assert.equal(await page.locator('.game-card').count(), 20);
   assert.match(await page.locator('#drive-diagnostic').innerText(), /proprietário precisa renovar/);
   assert(await page.locator('#cover-warning').isHidden());
   assert(await page.locator('#library-error').isHidden());
@@ -73,8 +73,10 @@ try {
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   connected = true;
   await page.locator('#retry-drive').click();
-  await page.waitForFunction(() => document.getElementById('drive-warning').hidden && [...document.querySelectorAll('.game-card img')].every((i) => i.complete && i.naturalWidth > 0));
-  assert.equal(await page.locator('.game-card').count(), 2);
+  await page.waitForFunction(() => document.getElementById('drive-warning').hidden && [...document.querySelectorAll('.game-card img')].every((i) => i.hasAttribute('src') && !i.hidden));
+  await page.locator('.game-card').first().scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => document.querySelector('.game-card img')?.naturalWidth > 0);
+  assert.equal(await page.locator('.game-card').count(), 20);
   assert(await page.locator('#library-error').isHidden());
   await page.screenshot({ path: output + '/recovered-mobile.png' });
   const beforeBlock = reads;

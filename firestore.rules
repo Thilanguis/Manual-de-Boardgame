@@ -146,18 +146,29 @@ service cloud.firestore {
     }
     function docAt(g,id,keys,n) { return keys.size() <= n || validDocument(g.documents[keys[n]],id,keys[n]); }
     function previousDocuments() { return resource != null && ('documents' in resource.data) ? resource.data.documents : {}; }
+    function validDocumentOrder(g) {
+      let before = resource != null ? resource.data.get('documentOrder', []) : [];
+      let after = g.get('documentOrder', []);
+      // IDs de documentos removidos podem permanecer na ordem antiga; são ignorados
+      // na leitura. Só o proprietário pode gravar uma nova ordem, com IDs existentes.
+      return after == before || (owner() && ('documents' in g) && after is list
+        && after.size() <= 12 && after.toSet().size() == after.size()
+        && after.toSet().hasOnly(g.documents.keys()));
+    }
     function validDocuments(g,id) {
       let old = previousDocuments();
       let changed = ('documents' in g) ? g.documents.diff(old).addedKeys().union(g.documents.diff(old).changedKeys()) : [].toSet();
-      return !('documents' in g) ? old.size() == 0 : (g.documents is map && g.documents.size() > 0 && g.documents.size() <= 12
+      return validDocumentOrder(g)
+        && (owner() || resource == null || g.get('primaryDocumentId', 'main') == resource.data.get('primaryDocumentId', 'main'))
+        && (!('documents' in g) ? old.size() == 0 : (g.documents is map && g.documents.size() > 0 && g.documents.size() <= 12
         && g.primaryDocumentId in g.documents && g.manual == g.documents[g.primaryDocumentId].manual
         && (g.documents.diff(old).removedKeys().size() == 0 || owner())
         && g.documentChanges is list && g.documentChanges.size() <= 2 && changed.hasOnly(g.documentChanges)
-        && (changed.size() == 0 || (docAt(g,id,g.documentChanges,0) && docAt(g,id,g.documentChanges,1))));
+        && (changed.size() == 0 || (docAt(g,id,g.documentChanges,0) && docAt(g,id,g.documentChanges,1)))));
     }
     function validGame(id) {
       let g = request.resource.data;
-      return g.keys().hasOnly(['id','title','description','minPlayers','maxPlayers','durationMinutes','minDurationMinutes','maxDurationMinutes','tags','language','manual','cover','sources','bgg','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting','deleteRequestedBy','recommendedAge','gameType','mechanics','edition','documents','primaryDocumentId','documentChanges'])
+      return g.keys().hasOnly(['id','title','description','minPlayers','maxPlayers','durationMinutes','minDurationMinutes','maxDurationMinutes','tags','language','manual','cover','sources','bgg','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting','deleteRequestedBy','recommendedAge','gameType','mechanics','edition','documents','primaryDocumentId','documentChanges','documentOrder'])
         && g.keys().hasAll(['id','title','description','minPlayers','maxPlayers','durationMinutes','tags','language','manual','cover','sources','createdAt','updatedAt','createdBy','schemaVersion','isPublic','deleting'])
         && g.id == id && g.schemaVersion == 1 && g.isPublic is bool && g.deleting is bool
         && g.title is string && g.title.size() > 0 && g.title.size() <= 160
@@ -181,7 +192,7 @@ service cloud.firestore {
         && g.cover is map && g.sources is map && g.createdAt is timestamp && g.updatedAt == request.time && g.createdBy is string;
     }
     function documentUpdate(id) {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['documents','primaryDocumentId','documentChanges','manual','language','updatedAt'])
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['documents','primaryDocumentId','documentChanges','documentOrder','manual','language','updatedAt'])
         && request.resource.data.updatedAt == request.time && validDocuments(request.resource.data,id)
         && request.resource.data.language == request.resource.data.documents[request.resource.data.primaryDocumentId].language;
     }

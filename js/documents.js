@@ -1,7 +1,11 @@
 export const DOCUMENT_TYPES = { principal: 'Manual de regras', complemento: 'Complemento', referencia: 'Referência', solo: 'Modo solo', faq: 'Perguntas frequentes', errata: 'Errata', expansao: 'Expansão' };
 export function gameDocuments(game) {
   if (!game) return [];
-  if (game.documents && Object.keys(game.documents).length) return Object.values(game.documents);
+  if (game.documents && Object.keys(game.documents).length) {
+    const order = Array.isArray(game.documentOrder) ? game.documentOrder : [];
+    const rank = (doc) => (order.includes(doc.id) ? order.indexOf(doc.id) : order.length + (doc.id === primaryDocumentId(game) ? 0 : 1));
+    return Object.values(game.documents).sort((a, b) => rank(a) - rank(b));
+  }
   return game.manual ? [{ id: 'main', name: String(game.manual.name || 'Manual principal').slice(0, 160), documentType: 'principal', language: game.language || 'pt-BR', edition: game.edition || '', manual: game.manual }] : [];
 }
 export const primaryDocumentId = (game) => game.primaryDocumentId || 'main';

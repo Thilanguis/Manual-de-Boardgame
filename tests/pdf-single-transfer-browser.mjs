@@ -46,11 +46,24 @@ try {
     };
     globalThis.testReader = createReader({ repository, getProgress: () => null, saveProgress: () => {}, onError: (e) => globalThis.testErrors.push(e.message) });
   });
-  const ready = () => page.waitForFunction(() => !document.querySelector('#reader').hidden && document.querySelector('#reader-status').hidden && document.querySelector('#pdf-canvas').width > 0);
+  const ready = () =>
+    page
+      .waitForFunction(() => !document.querySelector('#reader').hidden && document.querySelector('#reader-status').hidden && document.querySelector(`[data-page-number="${document.getElementById('page-number').value}"] [data-rendered]`))
+      .catch(async (error) => {
+        console.log(
+          await page.evaluate(() => ({
+            errors: testErrors,
+            status: document.getElementById('reader-status').textContent,
+            page: document.getElementById('page-number').value,
+            labels: [...document.querySelectorAll('.reader-page-label')].map((node) => node.textContent),
+          })),
+        );
+        throw error;
+      });
   const assertFits = async () => {
     const size = await page.evaluate(() => {
       const stage = document.querySelector('#reader-stage'),
-        page = document.querySelector('#pdf-page'),
+        page = document.querySelector(`[data-page-number="${document.getElementById('page-number').value}"] .pdf-page`),
         padding = getComputedStyle(stage);
       return {
         width: page.offsetWidth,
@@ -59,7 +72,7 @@ try {
         availableHeight: stage.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom),
       };
     });
-    assert(size.width <= size.availableWidth + 1 && size.height <= size.availableHeight + 1, 'página inteira cabe no espaço disponível');
+    assert(size.width <= size.availableWidth + 1, 'página ajustada à largura na leitura contínua');
     assert.equal(await page.locator('#zoom-fit').getAttribute('aria-pressed'), 'true');
   };
   for (const width of [1440, 768, 390]) {
@@ -95,7 +108,7 @@ try {
     assert.equal(await page.locator('#page-total').textContent(), '/ 2');
     assert.equal(requests.length - before, 2, 'complemento usa uma transferência independente');
     await page.locator('#reader-close').click();
-    assert.equal(await page.locator('#pdf-canvas').evaluate((n) => n.width), 0);
+    assert.equal(await page.locator('#reader-pages canvas').count(), 0);
   }
   const slowRequest = page.waitForRequest('**/__pdf_fixture/slow');
   await page.evaluate(() => {
@@ -109,7 +122,7 @@ try {
   });
   await page.waitForTimeout(800);
   assert.equal(await page.locator('#reader').evaluate((n) => n.hidden), true);
-  assert.equal(await page.locator('#pdf-canvas').evaluate((n) => n.width), 0);
+  assert.equal(await page.locator('#reader-pages canvas').count(), 0);
   assert(requests.every((r) => r.range === null));
   assert.deepEqual(await page.evaluate(() => testErrors), []);
   assert.deepEqual(errors, []);

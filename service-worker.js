@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.11.0-rules-filters-drive-33';
+const VERSION = 'acervo-v1.11.0-reader-rule-questions-36';
 const LOCAL_DEVELOPMENT = ['localhost', '127.0.0.1', '[::1]'].includes(self.location.hostname);
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
@@ -12,6 +12,7 @@ const ESSENTIAL = [
   './styles/public-pages.css',
   './styles/app.css',
   './styles/interface.css',
+  './styles/hero-showcase.css',
   './config/app-config.js',
   './manifest.webmanifest',
   './js/app.js',
@@ -26,6 +27,7 @@ const ESSENTIAL = [
   './js/file-errors.js',
   './js/drive-diagnostics.js',
   './js/reader.js',
+  './js/pdf-search.js',
   './js/pwa.js',
   './js/local-repository.js',
   './js/firebase-repository.js',

@@ -79,10 +79,12 @@ export function createDriveStorage(config, getToken, getUid, onDriveStatus = () 
       probe = new Promise((resolve) => {
         release = resolve;
       });
+    const timeoutMs = method === 'GET' && path.endsWith('/cover') ? 45000 : path === '/v1/catalog/status' ? 60000 : 0;
+    const deadline = timeoutMs ? AbortSignal.timeout(timeoutMs) : null;
     try {
       const response = await fetch(`${api()}${path}`, {
         method,
-        signal: signal ? AbortSignal.any([signal, current.signal]) : current.signal,
+        signal: AbortSignal.any([current.signal, ...[signal, deadline].filter(Boolean)]),
         cache: 'no-store',
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(json ? { 'Content-Type': 'application/json' } : {}), ...headers },
         body: json ? JSON.stringify(json) : body,
@@ -105,7 +107,7 @@ export function createDriveStorage(config, getToken, getUid, onDriveStatus = () 
       if (isDrive) reportSuccess();
       return response;
     } catch (error) {
-      if (isDrive && error instanceof TypeError && !current.signal.aborted && !signal?.aborted) {
+      if (isDrive && (error instanceof TypeError || (error.name === 'TimeoutError' && deadline?.aborted)) && !current.signal.aborted && !signal?.aborted) {
         error = Object.assign(new Error(DRIVE_MESSAGES['drive/unavailable']), { status: 503, code: 'drive/unavailable' });
         reportFailure(error);
       }
@@ -138,8 +140,13 @@ export function createDriveStorage(config, getToken, getUid, onDriveStatus = () 
     capabilities,
     validatePdfUpload,
     async askRules(game, input, { signal } = {}) {
-      const info = await capabilities();
-      if (!(info.ruleAssistantProtocol >= 1)) throw new Error('O servidor conectado ainda não oferece o assistente de regras. A consulta dos PDFs continua disponível.');
+      let info = await capabilities();
+      if (!(info.ruleAssistantProtocol >= 1)) info = await capabilities(true);
+      if (!(info.ruleAssistantProtocol >= 1))
+        throw Object.assign(new Error('O assistente de regras ainda não foi publicado nesta API. O administrador precisa atualizar a API para habilitar as perguntas ao Gemini. A pesquisa nos PDFs continua disponível.'), {
+          code: 'assistant/server-update',
+          status: 426,
+        });
       return (await call(`/v1/games/${encodeURIComponent(game.id)}/rule-question`, { method: 'POST', json: input, signal })).json();
     },
     async draftKnowledge(input, { signal } = {}) {
@@ -247,7 +254,14 @@ export function createDriveStorage(config, getToken, getUid, onDriveStatus = () 
       if (kind.startsWith('documents/') && !((await capabilities()).fileProtocol >= 2)) throw Object.assign(new Error('A conexão dos documentos precisa ser atualizada para usar este recurso.'), { status: 426 });
       const response = await call(`/v1/games/${encodeURIComponent(game.id)}/${kind}`, { signal, headers: kind.startsWith('documents/') && game.manual?.sha256 ? { 'X-Document-Hash': game.manual.sha256 } : {} });
       if (Number(response.headers.get('Content-Length')) > maxBytes) throw new Error('Arquivo maior que o permitido.');
-      const blob = await response.blob();
+      const blob = await response.blob().catch((error) => {
+        if (kind === 'cover' && error.name === 'TimeoutError' && !signal?.aborted) {
+          const failure = Object.assign(new Error(DRIVE_MESSAGES['drive/unavailable']), { status: 503, code: 'drive/unavailable' });
+          reportFailure(failure);
+          throw failure;
+        }
+        throw error;
+      });
       if (blob.size > maxBytes) throw new Error('Arquivo maior que o permitido.');
       return blob;
     },

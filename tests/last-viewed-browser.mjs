@@ -1,9 +1,6 @@
 import '../scripts/test-guard.mjs';
-import { enableLocalFixture } from './local-fixture.mjs';
-import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import { browserDependencies as require } from './browser-dependencies.mjs';
 import assert from 'node:assert/strict';
-const require = createRequire(resolve(process.env.ACERVO_TEST_MODULES, 'package.json'));
 const { chromium } = require('playwright'),
   { PDFDocument } = require('pdf-lib');
 const pdf = await PDFDocument.create();
@@ -15,8 +12,10 @@ try {
     page = await context.newPage(),
     errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await enableLocalFixture(page.context());
-  await page.goto(`${process.env.ACERVO_TEST_URL || 'http://localhost:4174'}/?local=1`);
+  const base = process.env.ACERVO_TEST_URL || 'http://localhost:4174';
+  await context.route('**/*', (route) => (new URL(route.request().url()).origin === new URL(base).origin ? route.continue() : route.abort()));
+  await context.route('**/config/app-config.js', (route) => route.fulfill({ contentType: 'text/javascript', body: 'export const APP_CONFIG={allowLocalDevelopment:true,firebase:null,fileStorage:{},maxPdfBytes:52428800};' }));
+  await page.goto(`${base}/?local=1`);
   await page.waitForFunction(() => document.getElementById('account-label').textContent === 'Local');
   assert.equal(await page.locator('.hero').isVisible(), false);
   await page.evaluate(async (bytes) => {
@@ -37,6 +36,22 @@ try {
   await page.locator('.card-main').filter({ hasText: 'Jogo anterior' }).click();
   await page.locator('[data-close=detail-dialog]').click();
   assert.equal(await page.locator('#hero-title').textContent(), 'Jogo anterior');
+  assert.equal(await page.locator('#refresh-library').count(), 0);
+  assert.match(await page.locator('#hero-panel-preview').textContent(), /Jogo anterior/);
+  await page.waitForFunction(() => document.querySelector('#hero-cover-placeholder').textContent === 'Capa indisponível');
+  assert.equal(await page.locator('.hero-thumbnails').count(), 0);
+  assert.equal(await page.locator('#hero-booklet').count(), 0);
+  await page.locator('#hero-next').click();
+  assert.equal(await page.locator('#hero-title').textContent(), 'Jogo mais novo');
+  await page.locator('#hero-prev').click();
+  assert.equal(await page.locator('#hero-title').textContent(), 'Jogo anterior');
+  await page.locator('#hero-details').click();
+  assert.equal(await page.locator('#detail-dialog').isVisible(), true);
+  await page.locator('[data-close=detail-dialog]').click();
+  await page.locator('#hero-cover-button').hover({ position: { x: 20, y: 20 } });
+  assert.notEqual(await page.locator('#hero-box').evaluate((el) => el.style.getPropertyValue('--box-y')), '');
+  await page.mouse.move(0, 0);
+  assert.equal(await page.locator('#hero-box').evaluate((el) => el.style.getPropertyValue('--box-y')), '');
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     const hero = await page.locator('.hero').boundingBox(),
@@ -63,6 +78,16 @@ try {
   }, bytes);
   await page.waitForFunction(() => document.querySelectorAll('.game-card').length === 3);
   assert.equal(await page.locator('#hero-title').textContent(), 'Jogo anterior', 'Novo upload não troca o último jogo clicado');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#hero-cover-button').hover({ position: { x: 20, y: 20 } });
+  assert.equal(await page.locator('#hero-box').evaluate((el) => el.style.getPropertyValue('--box-y')), '');
+  assert.equal(await page.locator('#hero-box').evaluate((el) => getComputedStyle(el).transitionDuration), '0s');
+  await page.locator('#hero-next').focus();
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await page.locator('#hero-stage').evaluate((el) => getComputedStyle(el).animationName), 'none');
+  await page.locator('.card-main').filter({ hasText: 'Jogo anterior' }).click();
+  await page.locator('[data-close=detail-dialog]').click();
+  assert.equal(await page.locator('#hero-title').textContent(), 'Jogo anterior');
   await page.evaluate(async () => {
     const { createLocalRepository } = await import('./js/local-repository.js');
     const repo = await createLocalRepository();

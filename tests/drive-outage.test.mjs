@@ -4,6 +4,40 @@ import { createDriveStorage } from '../js/drive-storage.js';
 import { driveWarning } from '../js/drive-diagnostics.js';
 import { fileErrorMessage } from '../js/file-errors.js';
 
+test('capa pendente tem prazo e libera a sonda sem disparar vinte novas tentativas', async (t) => {
+  const previous = globalThis.fetch,
+    controller = new AbortController();
+  let calls = 0;
+  t.mock.method(AbortSignal, 'timeout', (ms) => {
+    assert.equal(ms, 45000);
+    return controller.signal;
+  });
+  globalThis.fetch = async (url, options) => {
+    calls++;
+    return new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }));
+  };
+  const storage = createDriveStorage(
+    { apiBase: 'https://api.example.test' },
+    async () => 'fixture',
+    () => 'approved',
+  );
+  try {
+    const pending = Array.from({ length: 20 }, () => storage.get({ id: 'one' }, 'cover', 1024));
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort(new DOMException('Prazo excedido', 'TimeoutError'));
+    const results = await Promise.allSettled(pending);
+    assert(results.every((result) => result.status === 'rejected' && result.reason.code === 'drive/unavailable'));
+    assert.equal(calls, 1);
+    t.mock.restoreAll();
+    globalThis.fetch = async () => new Response('capa preservada');
+    storage.retryConnection();
+    assert.equal(await (await storage.get({ id: 'one' }, 'cover', 1024)).text(), 'capa preservada');
+  } finally {
+    storage.close();
+    globalThis.fetch = previous;
+  }
+});
+
 test('503 OAuth pausa lote de capas e índices; catálogo e permissões preservados; leitura retoma por ação explícita', async () => {
   const previous = globalThis.fetch;
   const status = [],

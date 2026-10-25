@@ -172,7 +172,11 @@ function showDialog(id) {
   $(id).showModal();
   document.body.classList.add('modal-open');
 }
-function closeDialog(id) {
+function closeDialog(id, { animateHero = false } = {}) {
+  if (id === 'detail-dialog' && animateHero && heroDockGameId && state.session.canRead && !heroMotion.matches) {
+    void closeHeroGame();
+    return;
+  }
   if (id === 'person-dialog') return adminPanel?.requestClose();
   if (id === 'login-dialog' && !localMode && !state.session.canRead) return;
   if (id === 'guide-dialog') {
@@ -190,9 +194,13 @@ function closeDialog(id) {
   }
   $(id).close();
 }
-document.querySelectorAll('[data-close]').forEach((button) => (button.onclick = () => closeDialog(button.dataset.close)));
+document.querySelectorAll('[data-close]').forEach((button) => (button.onclick = () => closeDialog(button.dataset.close, { animateHero: true })));
 document.querySelectorAll('dialog').forEach((dialog) => {
   dialog.addEventListener('cancel', (event) => {
+    if (dialog.id === 'detail-dialog' && heroDockGameId && state.session.canRead && !heroMotion.matches) {
+      event.preventDefault();
+      void closeHeroGame();
+    }
     if (dialog.id === 'login-dialog' && !localMode && !state.session.canRead) event.preventDefault();
     if (state.busy && ['upload-dialog', 'delete-dialog'].includes(dialog.id)) {
       event.preventDefault();
@@ -215,7 +223,7 @@ document.querySelectorAll('dialog').forEach((dialog) => {
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) {
       const bounds = dialog.getBoundingClientRect();
-      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) closeDialog(dialog.id);
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) closeDialog(dialog.id, { animateHero: true });
     }
   });
 });
@@ -279,6 +287,7 @@ function renderGrid() {
       button = node('button', 'card-main');
     button.type = 'button';
     button.setAttribute('aria-label', `Ver ${displayTitle(game)}`);
+    button.dataset.gameId = game.id;
     const cover = node('div', 'card-cover'),
       image = node('img');
     image.alt = '';
@@ -303,7 +312,9 @@ function renderGrid() {
     }
     if (!meta.children.length) meta.append(node('span', null, `${game.manual?.pages || '—'} páginas`));
     button.append(cover, node('span', 'card-title', displayTitle(game)), meta);
-    button.onclick = () => showGame(game);
+    button.onclick = () => {
+      void visitHeroFromLibrary(game, button);
+    };
     const favorite = node('button', `card-favorite ${readPreferences('favorites').includes(game.id) ? 'is-favorite' : ''}`);
     favorite.type = 'button';
     favorite.append(icon('heart'));
@@ -333,49 +344,399 @@ function renderUnavailable() {
     $('unavailable-list').append(row);
   }
 }
-$('refresh-library').onclick = async () => {
-  $('refresh-library').disabled = true;
-  try {
-    await repository?.refreshAvailability?.();
-    showNotice('Biblioteca atualizada.');
-  } catch (error) {
-    showNotice(errorMessage(error));
-  } finally {
-    $('refresh-library').disabled = false;
-  }
-};
 let heroSequence = 0;
+let heroCoverKey = '';
+
+let heroOpenSequence = 0;
+let heroLidAnimation = null;
+
+let heroDetailAnimation = null;
+let heroDockGameId = null;
+let heroClosing = false;
+let heroJourney = null;
 const lastViewedGames = new Map();
-function rememberGame(game) {
+function rememberGame(game, { keepOpening = false } = {}) {
   if (!readableGame(game)) return;
+  if (!keepOpening) cancelHeroOpening();
   lastViewedGames.set(storageKey('last-viewed'), game.id);
   writePreferences('last-viewed', { gameId: game.id });
-  void renderHero();
+  return renderHero();
 }
-async function renderHero() {
-  const token = ++heroSequence;
-  const lastId = lastViewedGames.get(storageKey('last-viewed')) || readPreferences('last-viewed').gameId;
-  const game = state.games.find((game) => game.id === lastId && readableGame(game));
-  const hero = document.querySelector('.hero');
-  hero.hidden = !game;
-  hero.classList.toggle('has-game', !!game);
-  $('hero-art').hidden = !!game;
-  $('hero-meta').hidden = !game;
-  $('hero-backdrop').style.backgroundImage = '';
-  $('hero-meta').replaceChildren();
-  $('hero-source').replaceChildren();
-  $('hero-main').querySelector('span').textContent = game ? 'Ler manual' : state.session.canAdd ? 'Adicionar meu primeiro jogo' : 'Entrar na biblioteca';
-  $('hero-main')
-    .querySelector('use')
-    .setAttribute('href', `#i-${game ? 'book' : 'plus'}`);
-  if (!game) {
-    $('hero-title').textContent = '';
-    $('hero-description').textContent = '';
-    $('hero-main').onclick = null;
+async function scrollHeroJourney(top, journey) {
+  const maximum = Math.max(0, document.documentElement.scrollHeight - innerHeight);
+  const target = Math.max(0, Math.min(maximum, top));
+  const start = scrollY;
+  const distance = target - start;
+  if (heroMotion.matches || Math.abs(distance) < 2) {
+    scrollTo({ top: target, behavior: 'instant' });
+    return true;
+  }
+  const duration = Math.min(650, 300 + Math.abs(distance) * 0.1);
+  const began = performance.now();
+  return new Promise((resolve) => {
+    function frame(now) {
+      if (heroJourney !== journey || !state.session.canRead) {
+        resolve(false);
+        return;
+      }
+      const progress = Math.min(1, (now - began) / duration);
+      const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
+      scrollTo({ top: start + distance * eased, behavior: 'instant' });
+      if (progress < 1) requestAnimationFrame(frame);
+      else resolve(true);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+async function visitHeroFromLibrary(game, button) {
+  if (heroJourney?.phase === 'returning') {
+    heroJourney.button.removeAttribute('aria-busy');
+    heroJourney = null;
+  }
+  if (heroJourney || heroClosing || $('detail-dialog').open || !state.session.canRead || !readableGame(game)) return;
+  const journey = { gameId: game.id, button, top: button.getBoundingClientRect().top, scroll: scrollY, phase: 'outbound' };
+  heroJourney = journey;
+  button.setAttribute('aria-busy', 'true');
+  let timer;
+  try {
+    const coverReady = (async () => {
+      await rememberGame(game);
+      const image = $('hero-cover-image');
+      if (image.getAttribute('src')) {
+        try {
+          await image.decode();
+        } catch {}
+      }
+    })();
+    const hero = document.querySelector('.hero');
+    const header = document.querySelector('body > header');
+    const top = Math.max(0, hero.getBoundingClientRect().top + scrollY - (header?.offsetHeight || 0));
+    const [scrolled] = await Promise.all([
+      scrollHeroJourney(top, journey),
+      Promise.race([
+        coverReady,
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, 1400);
+        }),
+      ]),
+    ]);
+    if (!scrolled || heroJourney !== journey || !state.session.canRead) return;
+    const latest = heroGames().find((item) => item.id === game.id);
+    if (!latest) {
+      heroJourney = null;
+      return;
+    }
+    journey.phase = 'open';
+    $('hero-cover-button').focus({ preventScroll: true });
+    await openHeroGame(latest);
+    if (!$('detail-dialog').open && heroJourney === journey && journey.phase === 'open') await restoreHeroJourney();
+  } catch (error) {
+    if (heroJourney === journey) heroJourney = null;
+    showNotice(errorMessage(error));
+  } finally {
+    clearTimeout(timer);
+    if (heroJourney !== journey) button.removeAttribute('aria-busy');
+  }
+}
+async function restoreHeroJourney() {
+  const journey = heroJourney;
+  if (!journey || journey.phase === 'returning') return;
+  if (!state.session.canRead) {
+    journey.button.removeAttribute('aria-busy');
+    heroJourney = null;
     return;
   }
+  journey.phase = 'returning';
+  const button = [...$('games-grid').querySelectorAll('.card-main')].find((item) => item.dataset.gameId === journey.gameId);
+  const top = button ? button.getBoundingClientRect().top + scrollY - journey.top : journey.scroll;
+  const restored = await scrollHeroJourney(top, journey);
+  if (heroJourney !== journey) return;
+  journey.button.removeAttribute('aria-busy');
+  heroJourney = null;
+  if (restored) (button || $('search')).focus({ preventScroll: true });
+}
+function interruptHeroJourney() {
+  if (!heroJourney || !['outbound', 'returning'].includes(heroJourney.phase)) return;
+  heroJourney.button.removeAttribute('aria-busy');
+  heroJourney = null;
+  cancelHeroOpening();
+}
+window.addEventListener('wheel', interruptHeroJourney, { passive: true });
+window.addEventListener('touchstart', interruptHeroJourney, { passive: true });
+window.addEventListener('pointerdown', interruptHeroJourney, { passive: true });
+function heroGames() {
+  return state.session.canRead ? state.games.filter(readableGame) : [];
+}
+function moveHero(direction) {
+  const games = heroGames();
+  const lastId = lastViewedGames.get(storageKey('last-viewed')) || readPreferences('last-viewed').gameId;
+  const index = games.findIndex((game) => game.id === lastId);
+  if (games.length) rememberGame(games[(Math.max(0, index) + direction + games.length) % games.length]);
+}
+$('hero-prev').onclick = () => moveHero(-1);
+$('hero-next').onclick = () => moveHero(1);
+const heroMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const heroFinePointer = matchMedia('(hover: hover) and (pointer: fine)');
+function cancelHeroOpening() {
+  ++heroOpenSequence;
+  heroLidAnimation?.cancel();
+  heroLidAnimation = null;
+  if (heroClosing) heroDetailAnimation?.cancel();
+  heroClosing = false;
+  heroDockGameId = null;
+
+  $('hero-box').classList.remove('is-opening');
+  $('hero-cover-button').removeAttribute('aria-busy');
+  $('hero-details').removeAttribute('aria-busy');
+  $('hero-panel-preview').classList.remove('panel-away');
+  if (!$('detail-dialog').open) documentPanel?.close();
+}
+function heroDockTransform(dialog) {
+  const origin = $('hero-panel-preview').getBoundingClientRect();
+  const target = dialog.getBoundingClientRect();
+  const x = origin.left + origin.width / 2 - target.left - target.width / 2;
+  const y = origin.top + origin.height / 2 - target.top - target.height / 2;
+  const scale = Math.min(0.45, Math.max(0.07, Math.min(origin.width / target.width, origin.height / target.height)));
+  return `translate(${x}px, ${y}px) scale(${scale})`;
+}
+function renderHeroDock(game) {
+  const slot = $('hero-panel-preview');
+  slot.dataset.gameId = game.id;
+  const panel = node('span', 'hero-dock-panel');
+  const image = node('img');
+  image.alt = '';
+  const cover = $('hero-cover-image');
+  if (cover.dataset.gameId === game.id && cover.src && !cover.hidden) image.src = cover.src;
+  else image.hidden = true;
+  const content = node('span', 'hero-dock-content');
+  content.append(
+    node('small', null, 'NA SUA BIBLIOTECA'),
+    node('strong', null, displayTitle(game)),
+    node('span', 'hero-dock-description', displayDescription(game)),
+    node('span', 'hero-dock-meta', [playersLabel(game), durationLabel(game)].filter(Boolean).join(' · ')),
+  );
+  const actions = node('span', 'hero-dock-actions');
+  actions.append(node('span', null, 'Ler manual'), node('span', null, 'Consultar regras'));
+  content.append(actions);
+  panel.append(image, content);
+  slot.replaceChildren(panel);
+}
+async function closeHeroGame() {
+  if (heroClosing) return;
+  const dialog = $('detail-dialog');
+  if (!dialog.open) return;
+  if (heroMotion.matches || !state.session.canRead || !heroDockGameId || state.selected?.id !== heroDockGameId) {
+    dialog.close();
+    return;
+  }
+  heroClosing = true;
+  const generation = ++heroOpenSequence;
+  const current = getComputedStyle(dialog).transform;
+  heroDetailAnimation?.cancel();
+  dialog.classList.remove('hero-sheet-reveal');
+  dialog.classList.add('hero-sheet-return');
+  const dock = heroDockTransform(dialog);
+  heroDetailAnimation = dialog.animate([{ transform: current === 'none' ? 'translate(0,0) scale(1)' : current }, { transform: dock }], { duration: 620, easing: 'cubic-bezier(.4,0,.2,1)', fill: 'forwards' });
+  heroDetailAnimation.id = 'hero-sheet-return';
+  try {
+    await heroDetailAnimation.finished;
+  } catch {
+    return;
+  }
+  if (generation !== heroOpenSequence) return;
+  $('hero-panel-preview').classList.remove('panel-away');
+  dialog.close();
+  dialog.classList.remove('hero-sheet-return');
+  const lid = heroLidAnimation;
+  if (lid) {
+    lid.reverse();
+    try {
+      await lid.finished;
+    } catch {
+      return;
+    }
+  }
+  if (generation === heroOpenSequence) {
+    cancelHeroOpening();
+    await restoreHeroJourney();
+  }
+}
+async function openHeroGame(game) {
+  if (heroLidAnimation || !state.session.canRead) return;
+  const box = $('hero-box');
+  if (heroMotion.matches || box.hidden) {
+    showGame(game);
+    return;
+  }
+  const generation = ++heroOpenSequence;
+  const bounds = box.getBoundingClientRect();
+  const lid = $('hero-box-lid');
+  const front = getComputedStyle(lid).transform;
+  const depth = new DOMMatrixReadOnly(front).m43;
+  // A tampa precisa soltar toda a aba antes de girar ou deslizar sobre a base.
+  const rim = depth * 2 * 0.78;
+  const clearance = rim + box.offsetWidth * 0.5 + box.offsetHeight * 0.05 + 12;
+  const room = Math.max(0, innerWidth - bounds.right - 18);
+  const orientation = new DOMMatrixReadOnly(getComputedStyle(box).transform);
+  const projectedShift = Math.min(bounds.width * 0.65, room + bounds.width * 0.2);
+  const straightOut = (-orientation.m31 * clearance) / Math.max(0.4, orientation.m11);
+  const sideways = straightOut + projectedShift / Math.max(0.4, orientation.m11);
+  const lift = Math.min(34, bounds.height * 0.1);
+  const turn = innerWidth <= 600 ? 108 : room > bounds.width * 1.2 ? 70 : 90;
+  box.classList.add('is-opening');
+  $('hero-cover-button').setAttribute('aria-busy', 'true');
+  $('hero-details').setAttribute('aria-busy', 'true');
+  heroLidAnimation = lid.animate(
+    [
+      { transform: front, easing: 'ease-in-out' },
+      { transform: `translate3d(${straightOut}px, 0, ${depth + clearance}px)`, offset: 0.42, easing: 'cubic-bezier(.25,.1,.3,1)' },
+      { transform: `translate3d(${sideways}px, ${lift}px, ${depth + clearance}px) rotateX(-5deg) rotateY(${turn}deg)` },
+    ],
+    { duration: 900, easing: 'linear', fill: 'forwards' },
+  );
+  try {
+    await heroLidAnimation.finished;
+  } catch {
+    return;
+  }
+  if (generation !== heroOpenSequence) return;
+  const origin = $('hero-panel-preview').getBoundingClientRect();
+  const latest = heroGames().find((item) => item.id === game.id);
+  if (!latest) {
+    cancelHeroOpening();
+    return;
+  }
+  // O mesmo diálogo participa de todo o percurso: não há troca de cópias ou planos 3D que se cruzam.
+  showGame(latest, { fromHero: true });
+  const dialog = $('detail-dialog');
+  if (!dialog.open) {
+    cancelHeroOpening();
+    return;
+  }
+  $('hero-cover-button').removeAttribute('aria-busy');
+  $('hero-details').removeAttribute('aria-busy');
+  dialog.classList.add('hero-sheet-reveal');
+  heroDockGameId = latest.id;
+  const dock = heroDockTransform(dialog);
+  $('hero-panel-preview').classList.add('panel-away');
+  heroDetailAnimation?.cancel();
+  heroDetailAnimation = dialog.animate([{ transform: dock }, { transform: 'translate(0,0) scale(1)' }], { duration: 780, easing: 'cubic-bezier(.2,.75,.2,1)' });
+  heroDetailAnimation.id = 'hero-sheet-flight';
+  void heroDetailAnimation.finished.then(
+    () => dialog.classList.remove('hero-sheet-reveal'),
+    () => dialog.classList.remove('hero-sheet-reveal'),
+  );
+}
+$('detail-dialog').addEventListener('close', () => {
+  heroDetailAnimation?.cancel();
+  $('detail-dialog').classList.remove('hero-sheet-reveal');
+  if (!heroClosing) {
+    cancelHeroOpening();
+    void restoreHeroJourney();
+  }
+});
+document.addEventListener('keydown', (event) => {
+  if (['PageDown', 'PageUp', 'Home', 'End', 'ArrowDown', 'ArrowUp'].includes(event.key)) interruptHeroJourney();
+  if (event.key === 'Escape' && !$('detail-dialog').open) {
+    if (heroJourney?.phase === 'open') {
+      cancelHeroOpening();
+      void restoreHeroJourney();
+    } else {
+      interruptHeroJourney();
+      cancelHeroOpening();
+    }
+  }
+});
+function resetHeroBox() {
+  $('hero-box').style.removeProperty('--box-x');
+  $('hero-box').style.removeProperty('--box-y');
+}
+function colorHeroBox(image) {
+  // Somente cores médias das bordas: não repetimos figuras ou letras nas laterais.
+  const box = $('hero-box');
+  for (const edge of ['top', 'middle', 'bottom', 'lid']) box.style.removeProperty(`--box-${edge}`);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 24;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(image, 0, 0, 24, 24);
+    function average(x, y, width, height) {
+      const pixels = context.getImageData(x, y, width, height).data;
+      const sums = [0, 0, 0];
+      for (let i = 0; i < pixels.length; i += 4) for (let c = 0; c < 3; c++) sums[c] += pixels[i + c];
+      const rgb = sums.map((sum) => sum / (pixels.length / 4));
+      const gray = rgb.reduce((a, b) => a + b) / 3;
+      return `rgb(${rgb.map((value) => Math.round((value * 0.65 + gray * 0.35) * 0.62)).join(' ')})`;
+    }
+    box.style.setProperty('--box-top', average(21, 0, 3, 8));
+    box.style.setProperty('--box-middle', average(21, 8, 3, 8));
+    box.style.setProperty('--box-bottom', average(21, 16, 3, 8));
+    box.style.setProperty('--box-lid', average(0, 0, 24, 2));
+  } catch {
+    // Capas sem permissão de leitura de pixels mantêm as laterais neutras.
+  }
+}
+$('hero-cover-button').addEventListener('pointermove', (event) => {
+  if (heroLidAnimation || heroMotion.matches || !heroFinePointer.matches || event.pointerType !== 'mouse') return;
+  const bounds = event.currentTarget.getBoundingClientRect();
+  const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+  const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
+  $('hero-box').style.setProperty('--box-y', `${-24 + (x - 0.5) * 18}deg`);
+  $('hero-box').style.setProperty('--box-x', `${5 - (y - 0.5) * 12}deg`);
+});
+$('hero-cover-button').addEventListener('pointerleave', resetHeroBox);
+$('hero-cover-button').addEventListener('pointercancel', resetHeroBox);
+heroMotion.addEventListener('change', () => {
+  resetHeroBox();
+  cancelHeroOpening();
+  heroDetailAnimation?.cancel();
+});
+document.querySelector('.hero').addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  event.preventDefault();
+  moveHero(event.key === 'ArrowRight' ? 1 : -1);
+});
+async function renderHero(forceCover = false) {
+  const games = heroGames();
+  const lastId = lastViewedGames.get(storageKey('last-viewed')) || readPreferences('last-viewed').gameId;
+  const game = games.find((game) => game.id === lastId);
+  const hero = document.querySelector('.hero');
+  const image = $('hero-cover-image');
+  hero.hidden = !game;
+  hero.classList.toggle('has-game', !!game);
+  $('hero-meta').replaceChildren();
+  $('hero-source').replaceChildren();
+  if (!game) {
+    if (!state.session.canRead) {
+      heroJourney?.button.removeAttribute('aria-busy');
+      heroJourney = null;
+    }
+    cancelHeroOpening();
+    ++heroSequence;
+
+    heroCoverKey = '';
+    $('hero-title').textContent = '';
+    $('hero-panel-preview').replaceChildren();
+    $('hero-description').textContent = '';
+    $('hero-genre').textContent = '';
+    $('hero-announcement').textContent = '';
+    $('hero-backdrop').style.backgroundImage = '';
+    image.onload = image.onerror = null;
+    image.removeAttribute('src');
+    image.hidden = true;
+    $('hero-box').hidden = true;
+    resetHeroBox();
+    for (const id of ['hero-main', 'hero-details', 'hero-cover-button']) $(id).onclick = null;
+    return;
+  }
+  const genre = [...new Set([game.gameType, ...(game.tags || [])].filter(Boolean).map(vocabularyTerm))].slice(0, 3).join(' · ');
+  $('hero-genre').textContent = genre;
+  $('hero-genre').hidden = !genre;
+  const changed = $('hero-title').textContent !== displayTitle(game);
   $('hero-title').textContent = displayTitle(game);
+  renderHeroDock(game);
   $('hero-description').textContent = displayDescription(game);
+  $('hero-description').hidden = !displayDescription(game);
   const wikiDescription = displayDescription(game) && (game.sources?.catalog?.matches || []).find((match) => match.source === 'wikipedia' && match.licenseUrl);
   if (wikiDescription) {
     const source = node('a', null, 'Wikipédia · autores');
@@ -399,11 +760,62 @@ async function renderHero() {
     $('hero-meta').append(span);
   }
   $('hero-main').onclick = () => reader.open(game);
+  $('hero-details').onclick = $('hero-cover-button').onclick = () => {
+    void openHeroGame(game);
+  };
+  $('hero-cover-button').setAttribute('aria-label', `Conhecer ${displayTitle(game)}`);
+  const index = games.indexOf(game);
+  $('hero-counter').textContent = `${String(index + 1).padStart(2, '0')} / ${String(games.length).padStart(2, '0')}`;
+  $('hero-prev').disabled = $('hero-next').disabled = games.length < 2;
+  if (changed) {
+    $('hero-announcement').textContent = `${index + 1} de ${games.length}: ${displayTitle(game)}`;
+    $('hero-stage').classList.remove('entering');
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      void $('hero-stage').offsetWidth;
+      $('hero-stage').classList.add('entering');
+    }
+  }
+  const key = JSON.stringify([storageKey('last-viewed'), game.id, game.cover?.driveFileId || game.cover?.url || game.cover?.sha256 || game.updatedAt, game.cover?.sha256]);
+  if (key === heroCoverKey && !forceCover) return;
+  heroCoverKey = key;
+  const token = ++heroSequence;
+  image.onload = image.onerror = null;
+  image.hidden = true;
+  image.dataset.gameId = game.id;
+  $('hero-box').hidden = true;
+  resetHeroBox();
+  image.removeAttribute('src');
+  $('hero-backdrop').style.backgroundImage = '';
+  $('hero-cover-placeholder').textContent = 'Carregando capa…';
+  $('hero-cover-placeholder').hidden = false;
   try {
     const url = await repository.getCoverURL(game);
-    if (token === heroSequence && url) $('hero-backdrop').style.backgroundImage = `url(${JSON.stringify(url)})`;
+    if (token !== heroSequence || !state.session.canRead) return;
+    if (!url) {
+      $('hero-cover-placeholder').textContent = 'Capa indisponível';
+      return;
+    }
+    image.onload = () => {
+      if (token !== heroSequence || !state.session.canRead) return;
+      image.hidden = false;
+      const dockImage = $('hero-panel-preview').querySelector('img');
+      if (dockImage && $('hero-panel-preview').dataset.gameId === game.id) {
+        dockImage.src = url;
+        dockImage.hidden = false;
+      }
+      $('hero-box').style.setProperty('--cover-ratio', String(image.naturalWidth / image.naturalHeight));
+      colorHeroBox(image);
+      $('hero-box').hidden = false;
+      $('hero-cover-placeholder').hidden = true;
+      $('hero-backdrop').style.backgroundImage = `url(${JSON.stringify(url)})`;
+    };
+    image.onerror = () => {
+      if (token === heroSequence) $('hero-cover-placeholder').textContent = 'Capa indisponível';
+    };
+    image.src = url;
   } catch (error) {
     if (token === heroSequence && state.session.canRead) {
+      $('hero-cover-placeholder').textContent = 'Capa indisponível';
       $('cover-warning').hidden = centralDriveFailure(error);
       $('cover-warning').title = fileErrorMessage(error);
     }
@@ -468,10 +880,10 @@ function renderFavorite() {
   $('detail-favorite').setAttribute('aria-pressed', String(favorite));
   $('detail-favorite').setAttribute('aria-label', favorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos');
 }
-function showGame(game) {
+function showGame(game, { fromHero = false } = {}) {
   if (knowledgePanel?.isBusy() && !confirm('Há alterações não salvas no conhecimento. Descartar e abrir este jogo?')) return;
   knowledgePanel?.close();
-  rememberGame(game);
+  rememberGame(game, { keepOpening: fromHero });
   state.selected = game;
   if ($('game-management-dialog').open) $('game-management-dialog').close();
   documentPanel?.open(game);
@@ -544,6 +956,7 @@ function showGame(game) {
   renderFavorite();
   showDialog('detail-dialog');
   requestAnimationFrame(updateDescriptionToggle);
+  return true;
 }
 function updateDescriptionToggle() {
   const description = $('detail-description');
@@ -1518,7 +1931,6 @@ function updateSession(session) {
   }
   if (!session.canWrite && $('upload-dialog').open) closeDialog('upload-dialog');
   $('account-label').textContent = session.mode === 'local' ? 'Local' : session.user ? 'Minha conta' : 'Entrar';
-  $('refresh-library').hidden = session.mode !== 'firebase';
   $('connection-warning').hidden = navigator.onLine || session.mode === 'local';
   $('connection-warning').textContent = 'Você está sem internet. Os manuais compartilhados precisam de conexão.';
   $('account-button').querySelector('.avatar').textContent = session.mode === 'local' ? 'L' : (session.user?.email?.[0] || 'A').toUpperCase();
@@ -1675,7 +2087,7 @@ $('retry-covers').onclick = () => {
   repository?.retryCovers?.();
   $('cover-warning').hidden = true;
   renderGrid();
-  renderHero();
+  renderHero(true);
   if (state.selected) void populateImage($('detail-cover'), state.selected);
 };
 $('retry-drive').onclick = async () => {
@@ -1684,7 +2096,7 @@ $('retry-drive').onclick = async () => {
   try {
     await repository?.retryDrive?.();
     renderGrid();
-    renderHero();
+    renderHero(true);
     if (state.selected) void populateImage($('detail-cover'), state.selected);
   } catch (error) {
     showNotice(fileErrorMessage(error));

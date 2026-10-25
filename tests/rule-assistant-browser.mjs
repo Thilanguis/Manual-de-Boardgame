@@ -178,6 +178,19 @@ try {
     panel.updateSession(repo.session);
   });
   await page.locator('.rule-ask').first().waitFor();
+  const question =
+    'Quando o killer movimenta o sobrevivente no colo, ele escolhe a quantidade até 4 movimentos e o sobrevivente joga o dado. se o sobrevivente n escapar conforme o killer vai levando ele pelo caminho escolhido até enganchar ele vai revelando tb conforme andando?';
+  await page.evaluate(() => {
+    behavior = 'ready';
+  });
+  const beforeTop = await page.evaluate(() => calls.length);
+  await page.locator('#guide-search').fill(question);
+  await page.waitForFunction((query) => document.querySelector('#guide-content').dataset.query === query, question);
+  assert.equal(await page.evaluate(() => calls.length), beforeTop, 'digitar pergunta não gera IA');
+  await page.locator('#guide-ask').click();
+  await page.waitForFunction((count) => calls.length === count + 1 && document.querySelector('.rule-assistant-answer'), beforeTop);
+  assert.equal(await page.evaluate(() => calls.at(-1).question), question);
+  assert(await page.evaluate(() => calls.at(-1).context.documentId && calls.at(-1).context.sourceHash && calls.at(-1).context.page > 0));
   await page.evaluate(() => {
     repo.session.canAskRules = false;
     panel.updateSession(repo.session);
@@ -186,6 +199,7 @@ try {
   await page.locator('#guide-search').fill('Preparação');
   await page.waitForFunction(() => document.querySelector('#guide-content').dataset.query === 'Preparação' && document.querySelector('.rule-result'));
   assert.equal(await page.locator('.rule-ask').count(), 0);
+  assert.equal(await page.locator('#guide-ask').isVisible(), false);
   assert.deepEqual(errors, []);
   await page.evaluate(() => panel.close());
   await writeFile(

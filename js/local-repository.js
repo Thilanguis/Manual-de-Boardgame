@@ -65,7 +65,7 @@ export async function createLocalRepository() {
   };
   const repository = {
     mode: 'local',
-    session: { mode: 'local', canRead: true, canWrite: true, canAdd: true, canEdit: true, canDelete: true, user: null },
+    session: { mode: 'local', isOwner: true, canRead: true, canWrite: true, canAdd: true, canEdit: true, canDelete: true, user: null },
     subscribeSession(callback) {
       callback(this.session);
       return () => {};
