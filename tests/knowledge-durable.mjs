@@ -48,13 +48,13 @@ try {
   runtime = new Miniflare(settings);
   const cached = await (await operation('/assistant/claim', { ...question, conversationId: crypto.randomUUID() })).json();
   assert.equal(cached.cached, true);
-  assert.equal(cached.usage.used, 1);
+  assert.equal(cached.usage, undefined);
   const privateThread = await (await operation('/assistant/read', { ...question, uid: 'other-admin' })).json();
   assert.equal(privateThread.history.length, 0);
-  assert.equal(privateThread.usage.used, 0);
+  assert.equal(privateThread.usage, undefined);
   const stale = await (await operation('/assistant/read', { ...question, identity: 'replaced-pdf' })).json();
   assert.equal(stale.history.length, 0);
-  console.log('Assistente no SQLite: resposta/cache/orçamento persistem após reiniciar; histórico privado e identidade invalidada.');
+  console.log('Assistente no SQLite: resposta/cache persistem sem cota de perguntas; histórico privado e identidade invalidada.');
   if (process.env.ACERVO_KNOWLEDGE_FIXTURE) {
     const knowledge = JSON.parse(await readFile(process.env.ACERVO_KNOWLEDGE_FIXTURE, 'utf8'));
     const actual = await (await operation('/claim', { force: true, requestId: 'real-manual-local-storage' })).json();

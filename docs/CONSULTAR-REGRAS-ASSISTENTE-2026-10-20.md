@@ -24,10 +24,11 @@ existente. Nenhum commit, push, deploy ou alteração de produção foi executad
 Somente pergunta explícita inicia a operação. Abrir consulta, abrir painel,
 navegar por assuntos e pesquisar tradicionalmente não geram IA.
 
-O Worker confirma o perfil efetivo no Firestore: proprietário aprovado ou
-subadministrador aprovado, independentemente das flags adicionar/editar.
-Leitor, visitante, pendente, rejeitado, bloqueado e proprietário de UID divergente
-não recebem autorização. A checagem é repetida antes da geração e do resultado.
+Atualização de 25/10/2026, a pedido do proprietário: o Worker confirma o perfil
+efetivo no Firestore e aceita qualquer conta aprovada, inclusive leitor comum,
+independentemente das flags adicionar/editar. Visitante, pendente, rejeitado,
+bloqueado e UID divergente não recebem autorização. A checagem é repetida antes
+da geração e do resultado. Isso não concede permissão para editar cadastros.
 
 O contexto inclui jogo, título, edição, assunto, documento e página. O servidor
 carrega índices autorizados, valida vínculos e hashes e seleciona no máximo 12
@@ -53,15 +54,16 @@ provedor: modelo principal `gemini-3.5-flash-lite`; descoberta de nomes existent
 `gemini-2.5-flash-lite`; geração da ficha sem limite interno diário/minuto;
 descoberta com limite de uma execução por análise. Esses mecanismos não mudaram.
 
-As perguntas usam o modelo principal já configurado, com orçamento próprio:
+As perguntas usam o modelo principal já configurado. A atualização de 25/10
+remove as cotas internas de 10/30 chamadas diárias, o teto de quatro perguntas
+por conversa e os tetos de concorrência por conta e global. Contadores antigos
+não são consultados ou incrementados; sua limpeza por expiração continua normal.
+Somente a mesma pergunta simultânea da mesma conta é deduplicada.
+
+Permanecem os limites técnicos de cada requisição:
 
 | Controle                           | Limite local novo              |
 | ---------------------------------- | ------------------------------ |
-| Por administrador                  | 10 novas chamadas/dia UTC      |
-| Acervo inteiro                     | 30 novas chamadas/dia UTC      |
-| Concorrência global do assistente  | 2                              |
-| Concorrência por conta             | 1                              |
-| Conversa                           | 4 perguntas                    |
 | Pergunta                           | 1.000 caracteres               |
 | Contexto serializado               | 24.000 caracteres              |
 | Evidências                         | 12 passagens                   |
@@ -70,10 +72,14 @@ As perguntas usam o modelo principal já configurado, com orçamento próprio:
 | Cache privado de resposta/conversa | 24 horas                       |
 | Cache privado de índices no Worker | 5 minutos, limitado em memória |
 
-Reservas que chegaram ao provedor contam mesmo quando ele falha. Cache não
-consome outra chamada. Sem repetições automáticas. Os contadores são do Acervo;
-o saldo do Google não foi informado. Orçamento separado não cria uma reserva
-garantida de cota no provedor: os modelos ainda usam o mesmo projeto/chave.
+As quatro trocas mais recentes são retidas para o contexto da conversa, sem
+impedir novas perguntas. Cache evita chamadas repetidas. Não há repetição
+automática de falhas; limites retornados pelo Gemini são informados como erros
+do provedor. Remover cotas do Acervo não muda o plano do Google: no Free Tier,
+exceder a cota bloqueia requisições; no nível pago pode haver cobrança pelo uso.
+O nível da chave não foi confirmado nesta atualização. Nenhuma configuração de
+faturamento foi modificada. Referências: [cobrança](https://ai.google.dev/gemini-api/docs/billing)
+e [limites do Gemini](https://ai.google.dev/gemini-api/docs/rate-limits).
 
 Usa o binding `GAME_KNOWLEDGE` e SQLite existentes, com namespace separado de
 fichas, histórico/cache por UID e limpeza de expiração por alarm. Não cria novo

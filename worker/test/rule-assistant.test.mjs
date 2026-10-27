@@ -64,23 +64,27 @@ function fixture() {
   state.store = store;
   return state;
 }
-test('papel administrativo válido, independente de adicionar/editar; leitores, bloqueados e pendentes recusados', async () => {
+test('contas aprovadas podem perguntar sem poderes de edição; bloqueados, rejeitados e pendentes são recusados', async () => {
   for (const role of ['user', 'subadmin', 'superadmin'])
     for (const status of ['approved', 'pending', 'rejected', 'blocked']) {
       const f = fixture();
       f.profile = { ...f.profile, role, status, permissions: { addGames: false, editGames: false } };
-      if (status === 'approved' && role !== 'user') assert.equal((await f.ask()).status, 200);
+      if (status === 'approved') assert.equal((await f.ask()).status, 200);
       else await assert.rejects(f.ask(), (e) => e.status === 403);
-      assert.equal(f.calls.length, status === 'approved' && role !== 'user' ? 1 : 0);
+      assert.equal(f.calls.length, status === 'approved' ? 1 : 0);
     }
+});
+test('perguntas sem autenticação continuam recusadas no backend', async () => {
+  const f = fixture();
+  await assert.rejects(ruleAssistantEndpoint(new Request('https://worker.test/question'), f.env, null, f.game.id, f.input(), { fetcher: f.fetcher }), (error) => error.status === 401);
+  assert.equal(f.calls.length, 0);
 });
 test('evidência PDF contextual limitada, cache privado e acompanhamento, sem geração repetida', async () => {
   const f = fixture(),
     input = f.input();
   const first = await (await f.ask(input)).json();
   assert.equal(first.cached, false);
-  assert.equal(first.usage.used, 1);
-  assert.equal(first.usage.providerRemaining, null);
+  assert.equal(first.usage, undefined, 'não existe contador artificial de perguntas');
   assert.equal(first.answer.blocks[0].citations[0].page, 2);
   assert.equal(first.answer.blocks[0].citations[0].sourceHash, hash);
   assert.equal((await (await f.ask(input)).json()).cached, true);
@@ -93,6 +97,11 @@ test('evidência PDF contextual limitada, cache privado e acompanhamento, sem ge
   assert.equal(prompt.game.edition, '2');
   assert.equal(prompt.evidence[0].documentId, 'main');
   assert.equal(f.calls[0].tools, undefined);
+  assert.deepEqual(
+    f.calls[0].generationConfig.responseSchema.properties.blocks.items.properties.citations.items.properties.id.enum,
+    JSON.parse(f.calls[0].contents[0].parts[0].text).evidence.map((e) => e.id),
+    'o esquema só permite IDs realmente enviados',
+  );
   f.profile = { uid: 'sub', status: 'approved', role: 'subadmin' };
   assert.equal((await (await f.ask(input)).json()).cached, false);
   assert.equal(f.calls.length, 3, 'outra conta não recebe conversa/cache privado');
@@ -133,18 +142,32 @@ test('cliques concorrentes não duplicam geração; falha e cancelamento liberam
   await assert.rejects(f.ask(f.input(), controller.signal));
   assert.equal(f.calls.length, 2);
 });
-test('orçamento próprio bloqueia somente novas perguntas; cache continua disponível e geração antiga intacta', async () => {
+test('contadores antigos esgotados não bloqueiam mais de 30 perguntas nem afetam o cache ou a geração de fichas', async () => {
   const f = fixture();
+  const day = new Date().toISOString().slice(0, 10);
+  const legacy = { used: 999, expiry: Date.now() + 86400000 };
+  f.map.set(`qa:budget:${day}`, structuredClone(legacy));
+  f.map.set(`qa:budget:${day}:admin`, structuredClone(legacy));
   const firstInput = f.input();
   await f.ask(firstInput);
-  for (let n = 1; n < 10; n++) await f.ask({ ...f.input(), question: `Como atacar o inimigo no turno ${n}?` });
-  const result = await f.ask({ ...f.input(), question: 'Como atacar mais uma vez?' });
-  assert.equal(result.status, 429);
-  assert.equal((await result.json()).usage.used, 10);
-  assert.equal(f.calls.length, 10);
-  assert.equal((await (await f.ask(firstInput)).json()).cached, true);
+  for (let n = 1; n < 35; n++) assert.equal((await f.ask({ ...firstInput, question: `Como atacar o inimigo no turno ${n}?` })).status, 200);
+  assert.equal(f.calls.length, 35);
+  assert.deepEqual(f.map.get(`qa:budget:${day}`), legacy, 'contadores históricos não são modificados');
+  assert.deepEqual(f.map.get(`qa:budget:${day}:admin`), legacy);
+  assert.equal(f.map.get(`qa:thread:admin:${firstInput.conversationId}`).turns.length, 4, 'retenção do histórico não impede novas perguntas');
+  assert.equal((await (await f.ask({ ...firstInput, conversationId: crypto.randomUUID() })).json()).cached, true);
   const original = await (await f.store.fetch(new Request('https://internal/claim', { method: 'POST', body: JSON.stringify({ key: 'metadata', requestId: 'unrelated' }) }))).json();
-  assert.equal(original.claimed, true, 'orçamento Q&A não limita geração de ficha existente');
+  assert.equal(original.claimed, true, 'geração de ficha permanece independente');
+});
+test('limite do próprio Gemini é informado sem cotas locais nem repetição automática', async () => {
+  const f = fixture();
+  f.failure = 429;
+  await assert.rejects(f.ask(), (error) => error.status === 429 && error.reason === 'provider-rate-limit' && /provedor Gemini/.test(error.message));
+  assert.equal(f.calls.length, 1);
+  assert.equal(
+    [...f.map.keys()].some((key) => key.startsWith('qa:budget:')),
+    false,
+  );
 });
 test('fontes oficiais autorizadas são consultadas quando PDF é insuficiente; falha é declarada', async () => {
   for (const failure of [false, true]) {
@@ -184,6 +207,39 @@ test('referências inventadas e conflito com uma única fonte são rejeitados', 
   answer.blocks[0].kind = 'conflict';
   assert.throws(() => validateRuleAnswer(answer, evidence), /duas referências/);
 });
+test('citação com quebras de linha ou NBSP é conferida e retorna o texto original do índice', () => {
+  const text = 'O Sobrevivente não vira\nAdereços\u00a0voltados para baixo durante esse movimento.';
+  const evidence = [{ id: 'p15', text, source: 'manual', page: 15, documentId: 'main', sourceHash: hash }];
+  const answer = { language: 'pt-BR', insufficient: false, blocks: [{ kind: 'explanation', text: 'O movimento não revela esses adereços.', citations: [{ id: 'p15', quote: text.replace(/\s+/g, ' ') }] }] };
+  const citation = validateRuleAnswer(answer, evidence).blocks[0].citations[0];
+  assert.equal(citation.quote, text, 'a referência exibida continua sendo literal, não a cópia reformatada pelo modelo');
+  assert.equal(citation.page, 15);
+  assert.equal(citation.documentId, 'main');
+  assert.equal(citation.sourceHash, hash);
+  answer.blocks[0].citations[0].quote = 'O Sobrevivente\n\n não vira Adereços voltados para baixo';
+  assert.equal(validateRuleAnswer(answer, evidence).blocks[0].citations[0].quote, 'O Sobrevivente não vira\nAdereços\u00a0voltados para baixo');
+});
+test('tolerância de diagramação não aceita mudança de regra, número, pontuação ou referência', () => {
+  const evidence = [{ id: 'p15', text: 'O Sobrevivente não vira\nAdereços. Role até 4 dados (não 5).', source: 'manual', page: 15 }];
+  for (const quote of ['O Sobrevivente vira Adereços.', 'Role até 5 dados', 'O Sobrevivente NÃO vira Adereços.', 'O Sobrevivente não vira Adereços!', 'O Sobrevivente não vira [...] Role até 4 dados', '        ', 'Role até 4 dados (não 5) ou 6.']) {
+    const raw = { language: 'pt-BR', insufficient: false, blocks: [{ kind: 'explanation', text: 'Texto.', citations: [{ id: 'p15', quote }] }] };
+    assert.throws(() => validateRuleAnswer(raw, evidence), /citação/);
+  }
+  const raw = { language: 'pt-BR', insufficient: false, blocks: [{ kind: 'explanation', text: 'Texto.', citations: [{ id: 'pagina-15', quote: 'Role até 4 dados' }] }] };
+  assert.throws(() => validateRuleAnswer(raw, evidence), /referência que não recebeu/);
+  raw.blocks[0].citations = [null];
+  assert.throws(() => validateRuleAnswer(raw, evidence), /referência que não recebeu/);
+  raw.blocks[0].citations = [{ id: 'p15', quote: 'Role até 4 dados (não 5).' }];
+  assert.equal(validateRuleAnswer(raw, evidence).blocks[0].citations[0].quote, 'Role até 4 dados (não 5).', 'parênteses são tratados literalmente');
+});
+test('citação inválida não gera repetição automática nem deixa resposta inválida em cache', async () => {
+  const f = fixture();
+  f.raw = { language: 'pt-BR', insufficient: false, blocks: [{ kind: 'explanation', text: 'Regra inventada.', citations: [{ id: 'manual-1-p2-1', quote: 'Cada ataque custa três ações.' }] }] };
+  await assert.rejects(f.ask(), (error) => error.status === 502 && /citação/.test(error.message));
+  assert.equal(f.calls.length, 1);
+  assert.equal([...f.map.keys()].filter((k) => k.startsWith('qa:answer:')).length, 0);
+  assert.equal(f.map.get('qa:locks').items.length, 0);
+});
 test('timeout de 30 segundos cancela o provedor uma vez e libera concorrência', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = fixture();
@@ -195,15 +251,17 @@ test('timeout de 30 segundos cancela o provedor uma vez e libera concorrência',
   assert.equal(f.calls.length, 1);
   assert.equal(f.map.get('qa:locks').items.length, 0);
 });
-test('conversa limita histórico a quatro perguntas e concorrência global a duas', async () => {
+test('conversa continua após quatro perguntas e não existe teto global de duas gerações', async () => {
   const f = fixture(),
     input = f.input();
   for (let n = 0; n < 4; n++) await f.ask({ ...input, question: `Como atacar o inimigo, pergunta ${n}?` });
-  assert.equal((await f.ask({ ...input, question: 'E um quinto ataque?' })).status, 409);
-  const operation = async (uid) => f.store.fetch(new Request('https://internal/assistant/claim', { method: 'POST', body: JSON.stringify({ uid, key: uid, conversationId: crypto.randomUUID(), identity: 'same-doc' }) }));
+  assert.equal((await f.ask({ ...input, question: 'E um quinto ataque?' })).status, 200);
+  const operation = async (uid, key = uid) => f.store.fetch(new Request('https://internal/assistant/claim', { method: 'POST', body: JSON.stringify({ uid, key, conversationId: crypto.randomUUID(), identity: 'same-doc' }) }));
   assert.equal((await operation('one')).status, 200);
   assert.equal((await operation('two')).status, 200);
-  assert.equal((await operation('three')).status, 429);
+  assert.equal((await operation('three')).status, 200);
+  assert.equal((await operation('one', 'different-question')).status, 200, 'mesma conta pode fazer outra pergunta em outra aba');
+  assert.equal((await operation('one')).status, 409, 'geração idêntica simultânea continua sendo deduplicada');
 });
 test('documentos e edições incompatíveis e expansões não contaminam contexto base', () => {
   const f = fixture();

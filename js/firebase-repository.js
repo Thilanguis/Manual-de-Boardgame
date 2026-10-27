@@ -80,7 +80,7 @@ export async function createFirebaseRepository(config) {
     },
     askRules(game, input, options) {
       requireRead();
-      if (!repository.session.canAskRules) throw new Error('Somente administrador e subadministradores aprovados podem perguntar ao Gemini.');
+      if (!repository.session.canAskRules) throw new Error('Entre com uma conta aprovada para perguntar ao Gemini.');
       return files.askRules(game, input, options);
     },
     getKnowledge(game, options) {

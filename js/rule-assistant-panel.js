@@ -23,7 +23,7 @@ const externalMessage = (status) =>
     'not-needed': 'Resposta baseada nos documentos do Acervo.',
   })[status] || '';
 
-// Conversa privada em memória da tela; o servidor controla o cache e o orçamento.
+// Conversa privada em memória da tela; o servidor controla o cache e a autorização.
 export function createRuleAssistantPanel({ repository, container, getGame, pageButton }) {
   const panel = el('section', '', 'rule-assistant');
   panel.hidden = true;
@@ -33,7 +33,6 @@ export function createRuleAssistantPanel({ repository, container, getGame, pageB
     transcript = el('div', '', 'rule-conversation');
   const status = el('p');
   status.setAttribute('role', 'status');
-  const usage = el('small', '', 'rule-assistant-usage');
   const form = el('form'),
     label = el('label', 'Sua pergunta sobre este assunto');
   const input = el('textarea');
@@ -50,10 +49,10 @@ export function createRuleAssistantPanel({ repository, container, getGame, pageB
   panel.append(
     heading,
     contextLabel,
+    el('p', 'O Gemini explica trechos extraídos dos PDFs. Não faz busca livre na internet; fontes oficiais externas, quando consultadas, são identificadas na resposta.', 'muted'),
     button('Fechar assistente', () => close()),
     transcript,
     status,
-    usage,
     form,
     button('Nova conversa', () => reset()),
   );
@@ -78,7 +77,6 @@ export function createRuleAssistantPanel({ repository, container, getGame, pageB
     stop();
     conversationId = crypto.randomUUID();
     transcript.replaceChildren();
-    usage.textContent = '';
     input.value = '';
     input.focus();
   }
@@ -89,10 +87,6 @@ export function createRuleAssistantPanel({ repository, container, getGame, pageB
     input.value = '';
     selected = null;
     origin?.focus({ preventScroll: true });
-  }
-  function displayUsage(value) {
-    if (!value) return;
-    usage.textContent = `Perguntas hoje (UTC): ${value.used}/${value.limit} nesta conta · ${value.applicationUsed}/${value.applicationLimit} no Acervo. Orçamento exclusivo do assistente; saldo do provedor não informado.`;
   }
   function answerCard(answer, cached) {
     const card = el('article', '', 'rule-assistant-answer');
@@ -150,11 +144,9 @@ export function createRuleAssistantPanel({ repository, container, getGame, pageB
         input.value = '';
         status.textContent = result.message || 'Confira a explicação e suas fontes. Você pode fazer uma pergunta de acompanhamento.';
       } else status.textContent = result.message || 'O assistente não pôde responder. A consulta tradicional continua disponível.';
-      displayUsage(result.usage);
     } catch (error) {
       if (token !== revision || control.signal.aborted) return;
       status.textContent = error.message || 'O assistente não respondeu. Nenhuma repetição automática foi feita.';
-      displayUsage(error.usage);
       if ([401, 403].includes(error.status)) close();
     } finally {
       clearTimeout(timeout);
@@ -165,7 +157,7 @@ export function createRuleAssistantPanel({ repository, container, getGame, pageB
       }
     }
   };
-  function open(result, question = '', trigger) {
+  function open(result, question = '', trigger, general = false) {
     if (!permitted() || !result.page || !pageButton(result.page, result.sourceHash, result.documentId)) return false;
     const game = getGame(),
       doc = findDocument(game, result.documentId || 'main');
@@ -173,9 +165,10 @@ export function createRuleAssistantPanel({ repository, container, getGame, pageB
     origin = trigger || document.activeElement;
     uid = repository.session.user.uid;
     identity = assistantIdentity(game);
-    selected = { topic: String(result.title || 'Regras do jogo').slice(0, 160), documentId: result.documentId || 'main', sourceHash: result.sourceHash, page: result.page };
-    heading.textContent = `Perguntar sobre: ${selected.topic}`;
-    contextLabel.textContent = `${game.title}${game.edition ? ' · ' + game.edition : ''} · ${result.documentName || 'Manual'} · página ${result.page}. Até quatro perguntas por conversa; somente trechos selecionados são enviados.`;
+    selected = { topic: general ? 'Regras do jogo' : String(result.title || 'Regras do jogo').slice(0, 160), documentId: result.documentId || 'main', sourceHash: result.sourceHash, page: result.page };
+    heading.textContent = general ? 'Pergunta sobre o jogo' : `Perguntar sobre: ${selected.topic}`;
+    const scope = general ? 'Documentos compatíveis do jogo' : `${result.documentName || 'Manual'} · página ${result.page}`;
+    contextLabel.textContent = `${game.title}${game.edition ? ' · ' + game.edition : ''} · ${scope}. Somente trechos selecionados são enviados.`;
     panel.hidden = false;
     reset();
     input.value = question;
@@ -184,7 +177,7 @@ export function createRuleAssistantPanel({ repository, container, getGame, pageB
   }
   return {
     ask(question, result) {
-      if (!question.trim() || !open(result, question)) return false;
+      if (!question.trim() || !open(result, question, undefined, true)) return false;
       form.requestSubmit();
       return true;
     },

@@ -3,6 +3,20 @@ import assert from 'node:assert/strict';
 import { OWNER_UID, accessFor, emptyPermissions, defaultSubadminPermissions, profileSummary, userChange } from '../js/permissions.js';
 const account = (role = 'user', status = 'approved', permissions = emptyPermissions()) => ({ uid: 'person', role, status, permissions });
 
+test('perguntas de regras seguem aprovação da conta, sem conceder poderes administrativos', () => {
+  for (const role of ['user', 'subadmin']) {
+    for (const status of ['approved', 'pending', 'rejected', 'blocked']) {
+      const rights = accessFor(account(role, status), 'person');
+      assert.equal(rights.canAskRules, status === 'approved');
+      assert.equal(rights.canWrite, false);
+      assert.equal(rights.canManageUsers, false);
+    }
+  }
+  assert.equal(accessFor(null, null).canAskRules, false);
+  assert.equal(accessFor(account(), 'other').canAskRules, false);
+  assert.equal(accessFor({ uid: OWNER_UID, role: 'superadmin', status: 'approved' }, OWNER_UID).canAskRules, true);
+});
+
 test('aprovação e promoção conservam o formato aceito pelas regras publicadas, sem marcador vazio novo', () => {
   const current = account();
   assert.deepEqual(Object.keys(profileSummary(current)).sort(), ['permissions', 'role', 'status']);
@@ -19,7 +33,12 @@ test('aprovação e promoção não concedem flags implicitamente; concessões e
   assert.equal(accessFor(approved, approved.uid).canWrite, false);
   const promoted = { ...approved, ...userChange(approved, 'promote') };
   assert.deepEqual(promoted.permissions, emptyPermissions());
-  for (const [addGames, editGames] of [[true, false], [false, true], [true, true], [false, false]]) {
+  for (const [addGames, editGames] of [
+    [true, false],
+    [false, true],
+    [true, true],
+    [false, false],
+  ]) {
     const changed = { ...promoted, ...userChange(promoted, 'permissions', { addGames, editGames, approveUsers: true, deleteGames: true }) };
     const rights = accessFor(changed, changed.uid);
     assert.equal(rights.canAdd, addGames);

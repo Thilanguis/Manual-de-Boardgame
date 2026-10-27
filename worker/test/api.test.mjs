@@ -22,6 +22,9 @@ test('health anuncia ausência de limites internos sem consultar serviços exter
     assert.equal(data.profileModelCompletionProtocol, 1);
     assert.equal(data.knowledgeReuseProtocol, 1);
     assert.equal(data.informationIdentityProtocol, 1);
+    assert.equal(data.ruleAssistantLimits.perUserDay, undefined);
+    assert.equal(data.ruleAssistantLimits.perAppDay, undefined);
+    assert.equal(data.ruleAssistantLimits.turns, undefined);
     assert.deepEqual(data.driveOAuth, { configured: false, verified: false, check: 'configuration-only' });
   } finally {
     globalThis.fetch = previous;
@@ -280,8 +283,8 @@ test('API inicia sessão Drive de até 50 MiB e recusa excesso antes de tocar no
   });
 });
 
-test('endpoint direto do assistente recusa leitor aprovado e visitante antes de Drive/Gemini', async () => {
-  await isolated({ role: 'user' }, async ({ calls }) => {
+test('endpoint direto do assistente recusa conta bloqueada e visitante antes de Drive/Gemini', async () => {
+  await isolated({ role: 'user', enabled: false }, async ({ calls }) => {
     for (const auth of [true, false]) {
       const response = await handleRequest(request(`/v1/games/${id}/rule-question`, { method: 'POST', auth, json: { question: 'Como atacar?' } }), env);
       assert.equal(response.status, auth ? 403 : 401);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createDriveStorage } from '../js/drive-storage.js';
 import { MAX_PDF_BYTES } from '../js/pdf-limits.js';
 
-test('assistente exige protocolo próprio, JWT e conserva uso informado em 429, sem repetição', async () => {
+test('assistente exige protocolo próprio e JWT e informa limite do provedor sem repetição', async () => {
   const previous = globalThis.fetch;
   let protocol = false,
     calls = 0;
@@ -13,7 +13,7 @@ test('assistente exige protocolo próprio, JWT e conserva uso informado em 429, 
     assert.equal(options.headers.Authorization, 'Bearer fixture');
     assert(url.endsWith('/rule-question'));
     assert.equal(JSON.parse(options.body).question, 'Como atacar?');
-    return Response.json({ error: 'Orçamento atingido.', usage: { used: 10, limit: 10 } }, { status: 429 });
+    return Response.json({ error: 'O provedor Gemini limitou as chamadas.', reason: 'provider-rate-limit' }, { status: 429 });
   };
   const create = () =>
     createDriveStorage(
@@ -25,7 +25,7 @@ test('assistente exige protocolo próprio, JWT e conserva uso informado em 429, 
     await assert.rejects(create().askRules({ id: 'game' }, { question: 'Como atacar?' }), (error) => error.code === 'assistant/server-update' && error.status === 426);
     assert.equal(calls, 0);
     protocol = true;
-    await assert.rejects(create().askRules({ id: 'game' }, { question: 'Como atacar?' }), (e) => e.status === 429 && e.usage.used === 10);
+    await assert.rejects(create().askRules({ id: 'game' }, { question: 'Como atacar?' }), (e) => e.status === 429 && e.reason === 'provider-rate-limit' && /provedor Gemini/.test(e.message));
     assert.equal(calls, 1);
   } finally {
     globalThis.fetch = previous;

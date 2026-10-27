@@ -6,8 +6,9 @@ export const subadminPermissions = (value = {}) => ({ ...emptyPermissions(), app
 export function accessFor(profile, uid, ownerUid = OWNER_UID) {
   const owner = !!uid && uid === ownerUid && profile?.uid === uid && profile?.role === 'superadmin' && profile?.status === 'approved';
   const subadmin = !!uid && profile?.uid === uid && profile?.role === 'subadmin' && profile?.status === 'approved';
+  const reader = !!uid && profile?.uid === uid && profile?.status === 'approved' && (['user', 'subadmin'].includes(profile.role) || owner);
   const rights = {
-    canRead: !!uid && profile?.uid === uid && profile?.status === 'approved' && (['user', 'subadmin'].includes(profile.role) || owner),
+    canRead: reader,
     canApproveUsers: owner || (subadmin && profile.permissions?.approveUsers === true),
     canAdd: owner || (subadmin && profile.permissions?.addGames === true),
     canEdit: owner || (subadmin && profile.permissions?.editGames === true),
@@ -15,7 +16,7 @@ export function accessFor(profile, uid, ownerUid = OWNER_UID) {
     canManageUsers: owner,
     canConfigure: owner,
     canReadAll: owner || subadmin,
-    canAskRules: owner || subadmin,
+    canAskRules: reader,
   };
   return { ...rights, canWrite: rights.canAdd || rights.canEdit || rights.canDelete, isOwner: owner };
 }

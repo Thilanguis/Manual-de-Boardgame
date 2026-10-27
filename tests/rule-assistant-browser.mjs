@@ -45,8 +45,7 @@ try {
               window.release = resolve;
               signal.addEventListener('abort', () => reject(new DOMException('Cancelado', 'AbortError')), { once: true });
             });
-          if (window.behavior === 'quota')
-            throw Object.assign(new Error('O orçamento diário das perguntas foi atingido. A consulta dos PDFs continua disponível.'), { status: 429, usage: { used: 10, limit: 10, applicationUsed: 20, applicationLimit: 30 } });
+          if (window.behavior === 'quota') throw Object.assign(new Error('O provedor Gemini limitou as chamadas. Tente mais tarde; nenhuma repetição automática foi feita.'), { status: 429, reason: 'provider-rate-limit' });
           if (window.behavior === 'failure') throw new Error('Gemini indisponível (HTTP 503). Nenhuma repetição automática foi feita.');
           const key = game.manual.sha256 + input.context.topic + input.question;
           const cached = window.answers.has(key);
@@ -69,7 +68,7 @@ try {
             ],
           };
           window.answers.set(key, answer);
-          return { status: 'ready', answer, cached, usage: { used: window.generations, limit: 10, applicationUsed: window.generations, applicationLimit: 30, providerRemaining: null } };
+          return { status: 'ready', answer, cached };
         },
       };
       window.reader = createReader({
@@ -108,10 +107,13 @@ try {
     if (node.querySelector('script,img')) throw new Error('HTML inseguro');
     node.remove();
   });
-  assert.match(await page.locator('.rule-assistant-usage').textContent(), /1\/10/);
+  assert.equal(await page.locator('.rule-assistant-usage').count(), 0);
+  assert.doesNotMatch(await page.locator('.rule-assistant').textContent(), /quatro perguntas|Perguntas hoje|orçamento diário/i);
   assert.equal(await page.evaluate(() => window.unsafe), undefined);
   assert.equal(await page.locator('.rule-assistant script').count(), 0);
   assert.match((await page.evaluate(() => calls[0])).context.topic, /componentes/i);
+  assert.match(await page.locator('.rule-assistant h3').textContent(), /Perguntar sobre:/, 'botão de trecho mantém assunto específico');
+  assert.match(await page.locator('.rule-assistant').textContent(), /Não faz busca livre na internet/);
   assert.equal(await page.locator('#guide-dialog').evaluate((n) => n.open), true);
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -134,7 +136,7 @@ try {
   await page.evaluate(() => (behavior = 'quota'));
   await page.locator('.rule-assistant textarea').fill('Outra pergunta');
   await page.locator('.rule-assistant button[type=submit]').click();
-  await page.getByText(/O orçamento diário das perguntas foi atingido/).waitFor();
+  await page.getByText(/O provedor Gemini limitou as chamadas/).waitFor();
   assert.equal((await page.locator('.rule-result').count()) > 0, true);
   await page.evaluate(() => (behavior = 'failure'));
   await page.locator('.rule-assistant button[type=submit]').click();
@@ -172,11 +174,15 @@ try {
   });
   await page.waitForFunction(() => document.querySelector('.rule-assistant').hidden);
   assert.equal(await page.locator('.rule-assistant-answer').count(), 0);
-  // Subadministrador sem edição ainda tem acesso; leitor comum só pesquisa PDFs.
-  await page.evaluate(() => {
-    repo.session = { ...repo.session, canEdit: false, canAskRules: true };
+  // Leitor aprovado pode perguntar sem ganhar permissão para editar o jogo.
+  await page.evaluate(async () => {
+    const { accessFor } = await import('/js/permissions.js');
+    repo.session = { ...repo.session, ...accessFor({ uid: 'approved-reader', role: 'user', status: 'approved' }, 'approved-reader'), user: { uid: 'approved-reader' } };
     panel.updateSession(repo.session);
+    await panel.open(game);
   });
+  await page.locator('#guide-search').fill('Componentes');
+  await page.waitForFunction(() => document.querySelector('#guide-content').dataset.query === 'Componentes');
   await page.locator('.rule-ask').first().waitFor();
   const question =
     'Quando o killer movimenta o sobrevivente no colo, ele escolhe a quantidade até 4 movimentos e o sobrevivente joga o dado. se o sobrevivente n escapar conforme o killer vai levando ele pelo caminho escolhido até enganchar ele vai revelando tb conforme andando?';
@@ -190,22 +196,24 @@ try {
   await page.locator('#guide-ask').click();
   await page.waitForFunction((count) => calls.length === count + 1 && document.querySelector('.rule-assistant-answer'), beforeTop);
   assert.equal(await page.evaluate(() => calls.at(-1).question), question);
+  assert.equal(await page.evaluate(() => calls.at(-1).context.topic), 'Regras do jogo');
+  assert.equal(await page.locator('.rule-assistant h3').textContent(), 'Pergunta sobre o jogo');
+  assert.equal(await page.evaluate(() => repo.session.canEdit), false);
+  assert.match(await page.locator('.rule-assistant').textContent(), /Documentos compatíveis do jogo/);
   assert(await page.evaluate(() => calls.at(-1).context.documentId && calls.at(-1).context.sourceHash && calls.at(-1).context.page > 0));
-  await page.evaluate(() => {
-    repo.session.canAskRules = false;
+  await page.evaluate(async () => {
+    const { accessFor } = await import('/js/permissions.js');
+    repo.session = { ...repo.session, ...accessFor({ uid: 'approved-reader', role: 'user', status: 'blocked' }, 'approved-reader') };
     panel.updateSession(repo.session);
   });
-  await page.waitForFunction(() => !document.querySelector('.rule-ask'));
-  await page.locator('#guide-search').fill('Preparação');
-  await page.waitForFunction(() => document.querySelector('#guide-content').dataset.query === 'Preparação' && document.querySelector('.rule-result'));
-  assert.equal(await page.locator('.rule-ask').count(), 0);
+  await page.waitForFunction(() => !document.querySelector('#guide-dialog').open && document.querySelector('.rule-assistant').hidden);
   assert.equal(await page.locator('#guide-ask').isVisible(), false);
   assert.deepEqual(errors, []);
   await page.evaluate(() => panel.close());
   await writeFile(
     'test-output/rule-assistant/browser-report.json',
     JSON.stringify(
-      { simulatedGemini: true, realPdf: pdf, scenarios: ['no automatic calls', 'context', 'follow-up', 'cache', 'quota', '503', 'cancel', 'real citation page', 'stale identity', 'subadmin without edit', 'reader', 'HTML safe'], viewports: report },
+      { simulatedGemini: true, realPdf: pdf, scenarios: ['no automatic calls', 'context', 'follow-up', 'cache', 'provider quota', 'no local counters', '503', 'cancel', 'real citation page', 'stale identity', 'approved reader without edit', 'blocked account', 'HTML safe'], viewports: report },
       null,
       2,
     ),
