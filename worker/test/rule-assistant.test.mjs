@@ -36,18 +36,41 @@ function fixture() {
       pages: [{ page: 2, text: 'COMBATE\nPara atacar um inimigo, gaste uma ação e escolha sua arma. Cada ataque custa uma ação. Exceção: não é possível atacar sem arma.' }],
     },
   ];
-  state.env = { FIREBASE_PROJECT_ID: 'demo-acervo', OWNER_UID: 'admin', ALLOW_MANUAL_AI: 'true', GEMINI_API_KEY: 'simulated', GAME_KNOWLEDGE: { idFromName: (n) => n, get: () => store } };
+  state.env = { FIREBASE_PROJECT_ID: 'demo-acervo', OWNER_UID: 'admin', ALLOW_MANUAL_AI: 'true', RULE_ASSISTANT_WEB_SEARCH: 'false', GEMINI_API_KEY: 'simulated', GAME_KNOWLEDGE: { idFromName: (n) => n, get: () => store } };
   state.fetcher = async (url, options = {}) => {
     if (String(url).includes('firestore.googleapis.com')) return Response.json({ fields: encode(String(url).includes('/users/') ? state.profile : state.game).mapValue.fields });
     if (String(url).includes('generativelanguage.googleapis.com')) {
       const body = JSON.parse(options.body),
         prompt = JSON.parse(body.contents[0].parts[0].text);
+      if (body.tools?.some((tool) => tool.google_search)) {
+        (state.webCalls ||= []).push(body);
+        if (state.webFailure) return Response.json({}, { status: state.webFailure });
+        const text = 'No jogo de tabuleiro, a habilidade permite recolocar um corvo da reserva em um espaço.';
+        return Response.json(
+          state.webPayload || {
+            candidates: [
+              {
+                finishReason: 'STOP',
+                content: { parts: [{ text }] },
+                groundingMetadata: {
+                  webSearchQueries: ['jogo de teste board game habilidade corvo'],
+                  searchEntryPoint: { renderedContent: '<div>Sugestões de pesquisa</div>' },
+                  groundingChunks: [{ web: { title: 'Editora · regras do jogo de tabuleiro', uri: 'https://official.example.test/boardgame-faq' } }],
+                  groundingSupports: [{ segment: { text }, groundingChunkIndices: [0] }],
+                },
+              },
+            ],
+          },
+        );
+      }
       state.calls.push(body);
       if (state.wait) await Promise.race([state.wait, new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Cancelado', 'AbortError')), { once: true }))]);
       if (options.signal.aborted) throw new DOMException('Cancelado', 'AbortError');
       if (state.failure) return Response.json({ error: { status: 'UNAVAILABLE' } }, { status: state.failure });
-      const ref = prompt.evidence.find((e) => e.source === 'official') || prompt.evidence[0];
-      const raw = state.raw || { language: 'pt-BR', insufficient: false, blocks: [{ kind: 'explanation', text: 'Para atacar, gaste uma ação e escolha uma arma.', citations: [{ id: ref.id, quote: ref.text.slice(0, 90) }] }] };
+      const webRef = prompt.evidence.find((e) => e.source === 'web');
+      if (webRef && state.synthesisFailure) return Response.json({}, { status: state.synthesisFailure });
+      const ref = webRef || prompt.evidence.find((e) => e.source === 'official') || prompt.evidence[0];
+      const raw = state.raw || { language: 'pt-BR', insufficient: !!state.needsWeb && !webRef, blocks: [{ kind: 'explanation', text: 'Para atacar, gaste uma ação e escolha uma arma.', citations: [{ id: ref.id }] }] };
       return Response.json({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(raw) }] } }] });
     }
     if (String(url) === 'https://official.example.test/faq') {
@@ -105,6 +128,20 @@ test('evidência PDF contextual limitada, cache privado e acompanhamento, sem ge
   f.profile = { uid: 'sub', status: 'approved', role: 'subadmin' };
   assert.equal((await (await f.ask(input)).json()).cached, false);
   assert.equal(f.calls.length, 3, 'outra conta não recebe conversa/cache privado');
+});
+test('pergunta de acompanhamento com "eles" recupera o assunto anterior sem tratar a resposta antiga como regra', async () => {
+  const f = fixture();
+  f.game.manual.pages = 40;
+  f.sources[0].pages = [
+    ...Array.from({ length: 38 }, (_, i) => ({ page: i + 1, text: 'INTERAGIR: regras gerais para escolher uma ação no turno do jogador. Não descreve uma habilidade específica.' })),
+    { page: 39, text: 'CORVOS. O Assassino remove o Corvo e ganha um Ponto de Sangue. O Sobrevivente ganha um turno bônus.' },
+  ];
+  const input = { ...f.input(), question: 'O que acontece ao interagir com os corvos?', context: { ...f.input().context, page: 1 } };
+  await f.ask(input);
+  await f.ask({ ...input, question: 'Você falou que eles podem interagir. Mas o que acontece com eles?' });
+  const prompt = JSON.parse(f.calls.at(-1).contents[0].parts[0].text);
+  assert(prompt.evidence.some((ref) => ref.page === 39));
+  assert.match(f.calls.at(-1).systemInstruction.parts[0].text, /histórico não é fonte de regra/);
 });
 test('mudança de título, edição ou hash durante a geração descarta resposta; revogação também', async () => {
   for (const field of ['title', 'edition', 'hash', 'role']) {
@@ -187,8 +224,9 @@ test('fontes oficiais autorizadas são consultadas quando PDF é insuficiente; f
   const f = fixture();
   f.sources = [];
   const result = await (await f.ask()).json();
-  assert.equal(result.status, 'insufficient');
-  assert.equal(result.external, 'unavailable');
+  assert.equal(result.status, 'ready');
+  assert.equal(result.answer.insufficient, true);
+  assert.equal(result.answer.external, 'unavailable');
   assert.equal(f.calls.length, 0);
 });
 test('PDF com evidência direta não dispara consulta externa desnecessária', async () => {
@@ -198,6 +236,98 @@ test('PDF com evidência direta não dispara consulta externa desnecessária', a
   assert.equal(response.answer.external, 'not-needed');
   assert.equal(f.externalCalls || 0, 0);
   assert.equal(f.calls.length, 1);
+});
+test('resposta suficiente dos PDFs não inicia pesquisa Google', async () => {
+  const f = fixture();
+  delete f.env.RULE_ASSISTANT_WEB_SEARCH;
+  const result = await (await f.ask()).json();
+  assert.equal(result.answer.insufficient, false);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.webCalls?.length || 0, 0);
+  assert.equal(result.answer.blocks[0].citations[0].quote, f.sources[0].pages[0].text, 'citação vem integralmente do índice, sem cópia pelo modelo');
+});
+test('insuficiência reconhecida pelo modelo planeja pesquisa Google e uma síntese com fontes externas', async () => {
+  const f = fixture();
+  delete f.env.RULE_ASSISTANT_WEB_SEARCH;
+  f.needsWeb = true;
+  const input = f.input(),
+    result = await (await f.ask(input)).json();
+  assert.equal(result.answer.insufficient, false);
+  assert.equal(result.answer.external, 'web-searched');
+  assert.equal(f.calls.length, 2, 'primeira explicação dos PDFs e síntese após a pesquisa');
+  assert.equal(f.webCalls.length, 1, 'pesquisa complementar planejada, sem ciclo de tentativas');
+  const citation = result.answer.blocks[0].citations[0];
+  assert.equal(citation.source, 'web');
+  assert.equal(citation.quoteKind, 'search-summary');
+  assert.equal(citation.url, 'https://official.example.test/boardgame-faq');
+  assert.equal(result.answer.searchSuggestions, '<div>Sugestões de pesquisa</div>');
+  const search = JSON.parse(f.webCalls[0].contents[0].parts[0].text);
+  assert.deepEqual(Object.keys(search).sort(), ['edition', 'game', 'medium', 'question']);
+  assert.equal(search.question, input.question);
+  assert.equal(f.webCalls[0].generationConfig.responseSchema, undefined, '2.5 usa grounding sem formato JSON incompatível');
+  assert.equal((await (await f.ask(input)).json()).cached, true);
+  assert.equal(f.webCalls.length, 1, 'reutilizar a resposta não repete a pesquisa');
+});
+test('falha, falta de autorização e cota do Google na pesquisa preservam a resposta parcial dos PDFs', async () => {
+  for (const [code, status] of [
+    [503, 'web-unavailable'],
+    [403, 'web-not-authorized'],
+    [429, 'web-rate-limit'],
+  ]) {
+    const f = fixture();
+    f.env.RULE_ASSISTANT_WEB_SEARCH = 'true';
+    f.needsWeb = true;
+    f.webFailure = code;
+    const result = await (await f.ask()).json();
+    assert.equal(result.answer.insufficient, true);
+    assert.equal(result.answer.external, status);
+    assert.equal(result.answer.blocks[0].citations[0].source, 'manual');
+    assert.equal(f.webCalls.length, 1);
+    assert.equal(f.calls.length, 1);
+  }
+});
+test('sem índices utilizáveis, pesquisa primeiro e só depois sintetiza; memória sem grounding não vira fonte', async () => {
+  const f = fixture();
+  f.env.RULE_ASSISTANT_WEB_SEARCH = 'true';
+  f.sources = [];
+  const result = await (await f.ask()).json();
+  assert.equal(result.answer.external, 'web-searched');
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.webCalls.length, 1);
+  const other = fixture();
+  other.env.RULE_ASSISTANT_WEB_SEARCH = 'true';
+  other.needsWeb = true;
+  other.webPayload = { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'Uma explicação sem fontes verificadas.' }] } }] };
+  const partial = await (await other.ask()).json();
+  assert.equal(partial.answer.external, 'web-no-match');
+  assert.equal(partial.answer.insufficient, true);
+  assert.equal(other.calls.length, 1);
+});
+test('erro na síntese complementar não descarta a parte verificável do PDF nem repete a pesquisa', async () => {
+  const f = fixture();
+  f.env.RULE_ASSISTANT_WEB_SEARCH = 'true';
+  f.needsWeb = true;
+  f.synthesisFailure = 503;
+  const result = await (await f.ask()).json();
+  assert.equal(result.answer.external, 'web-answer-unavailable');
+  assert.equal(result.answer.blocks[0].citations[0].source, 'manual');
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.webCalls.length, 1);
+});
+test('falha externa não fica presa no cache; uma nova tentativa explícita pode completar a resposta', async () => {
+  const f = fixture();
+  f.env.RULE_ASSISTANT_WEB_SEARCH = 'true';
+  f.needsWeb = true;
+  f.webFailure = 503;
+  const input = f.input();
+  assert.equal((await (await f.ask(input)).json()).answer.insufficient, true);
+  assert.equal(
+    [...f.map.keys()].some((key) => key.startsWith('qa:answer:')),
+    false,
+  );
+  f.webFailure = 0;
+  assert.equal((await (await f.ask(input)).json()).answer.insufficient, false);
+  assert.equal(f.webCalls.length, 2, 'uma consulta por clique explícito, não uma repetição automática');
 });
 test('referências inventadas e conflito com uma única fonte são rejeitados', () => {
   const evidence = [{ id: 'p', text: 'Texto literal verificável da página.', source: 'manual', page: 2, sourceHash: hash }];
@@ -240,13 +370,13 @@ test('citação inválida não gera repetição automática nem deixa resposta i
   assert.equal([...f.map.keys()].filter((k) => k.startsWith('qa:answer:')).length, 0);
   assert.equal(f.map.get('qa:locks').items.length, 0);
 });
-test('timeout de 30 segundos cancela o provedor uma vez e libera concorrência', async (t) => {
+test('timeout de 90 segundos cobre recuperação/pesquisa e cancela sem repetição', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = fixture();
   f.wait = new Promise(() => {});
   const pending = f.ask();
   while (!f.calls.length) await new Promise((resolve) => setImmediate(resolve));
-  t.mock.timers.tick(30000);
+  t.mock.timers.tick(90000);
   await assert.rejects(pending, (e) => e.status === 504 && e.reason === 'provider-timeout');
   assert.equal(f.calls.length, 1);
   assert.equal(f.map.get('qa:locks').items.length, 0);

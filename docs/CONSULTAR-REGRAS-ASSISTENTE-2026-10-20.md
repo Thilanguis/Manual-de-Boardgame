@@ -35,8 +35,11 @@ carrega índices autorizados, valida vínculos e hashes e seleciona no máximo 1
 passagens. FAQ/errata compatíveis participam; expansão não é incorporada ao jogo
 base. Texto enviado pelo cliente nunca serve como evidência.
 
-Uma única chamada ao Gemini explica os trechos recuperados. Cada bloco precisa
-de citação literal localizada em uma evidência enviada. Documento, hash, página,
+O Gemini explica os trechos recuperados e retorna IDs de evidências. O servidor
+anexa o texto original da referência, sem pedir à IA que recopie citações. IDs
+inventados continuam rejeitados; respostas legadas com citações explícitas
+precisam coincidir com o texto, tolerando somente espaços e quebras de linha.
+Documento, hash, página,
 URL e licença vêm do servidor, não de números inventados pelo modelo. Conflito
 exige pelo menos duas referências; o modelo é instruído a não decidir a
 divergência silenciosamente. Essa validação comprova procedência textual,
@@ -46,6 +49,24 @@ O botão de referência abre a página exata no leitor existente. Perguntas de
 acompanhamento permanecem na mesma conversa privada. Fechar, cancelar, mudar
 sessão/título/edição/PDF descarta a resposta pendente na interface. O servidor
 também confere novamente a identidade antes de devolver o resultado.
+
+### Fluxo visual da conversa
+
+Pesquisar nos PDFs continua sendo uma consulta independente, sem chamada Gemini
+ao digitar. O botão superior Perguntar ao Gemini envia a pergunta diretamente e
+troca a área de resultados pela conversa, com um único campo de acompanhamento.
+Se uma pergunta já estiver escrita e o usuário acionar o assistente em um trecho,
+ela é enviada sem precisar ser digitada ou submetida uma segunda vez.
+
+A última resposta fica em destaque; mensagens anteriores e fontes começam
+recolhidas. A interface distingue interpretação da IA, base em PDF/internet e
+consulta externa realmente realizada. Erros pertencem à pergunta atual; uma
+repetição explícita substitui a tentativa falha, sem misturar o erro à resposta
+anterior. Voltar à pesquisa restaura a consulta dos PDFs.
+
+Perguntas de acompanhamento como "eles" ou "isso" reutilizam o contexto das
+perguntas recentes para recuperar evidências. A explicação anterior da IA não
+é tratada como regra nem substitui os textos dos documentos.
 
 ## Configuração e consumo
 
@@ -68,7 +89,7 @@ Permanecem os limites técnicos de cada requisição:
 | Contexto serializado               | 24.000 caracteres              |
 | Evidências                         | 12 passagens                   |
 | Resposta                           | 2.048 tokens                   |
-| Timeout da recuperação/geração     | 30 segundos                    |
+| Timeout do fluxo completo          | 90 segundos                    |
 | Cache privado de resposta/conversa | 24 horas                       |
 | Cache privado de índices no Worker | 5 minutos, limitado em memória |
 
@@ -86,7 +107,41 @@ fichas, histórico/cache por UID e limpeza de expiração por alarm. Não cria n
 banco, binding ou serviço. Requer `ALLOW_MANUAL_AI=true` já existente e a chave
 Gemini configurada. Não foi habilitada nenhuma configuração em produção.
 
-## Fontes externas: capacidade e limite real
+## Fontes externas: pesquisa complementar (27/10/2026)
+
+Primeiro o assistente usa os índices dos documentos compatíveis. A recuperação
+considera a raridade dos termos e aproxima plurais para não preencher o contexto
+com fichas genéricas quando a pergunta trata de uma habilidade específica.
+
+Quando a primeira explicação declara evidência insuficiente, o servidor planeja
+uma pesquisa Google com `gemini-2.5-flash-lite` e `google_search`, usando a chave
+existente. O modelo de explicação continua `gemini-3.5-flash-lite`. O 2.5 permite
+usar grounding disponível no Free Tier; isso não modifica o plano nem garante
+gratuidade caso o projeto já esteja no nível pago. Referências:
+[preços](https://ai.google.dev/gemini-api/docs/pricing) e
+[grounding](https://ai.google.dev/gemini-api/docs/generate-content/google-search).
+
+A pesquisa recebe título, edição e pergunta, com as perguntas recentes como
+contexto quando a mensagem é de acompanhamento. Não recebe PDFs, respostas
+anteriores da IA, UID, hashes ou credenciais da conta do Acervo. Só segmentos associados a
+`groundingSupports` e URLs HTTPS válidas participam da síntese final. O modelo
+deve tratar exclusivamente do jogo físico, distinguindo videogames, edições e
+expansões; fontes conhecidas do videogame Dead by Daylight são rejeitadas.
+
+Os textos do grounding são identificados como **resumos de pesquisa**, não
+transcrições literais da página ou regras oficiais por definição. A interface
+mostra links e as sugestões do Google em iframe sem execução de scripts ou acesso
+à origem da sessão. Não declara pesquisa se os metadados não confirmarem a
+consulta. A procedência não comprova automaticamente toda interpretação semântica.
+
+O fluxo pode fazer uma geração para os PDFs e, quando necessário, uma pesquisa
+e uma síntese complementar. Não repete falhas em ciclo e não cria cotas de uso.
+Falha de pesquisa ou síntese preserva a explicação parcial sustentada pelos PDFs.
+Resposta insuficiente não fica presa no cache: nova tentativa explícita é
+permitida. Cache privado de respostas completas e histórico por UID permanecem.
+`RULE_ASSISTANT_WEB_SEARCH=false` permite desativar a etapa externa no servidor.
+
+### Fontes oficiais já configuradas
 
 Catálogos de metadados não são tratados como autoridade sobre regras específicas.
 Quando a recuperação do PDF não apresenta evidência direta suficiente, existe
@@ -112,11 +167,12 @@ HTTPS sem redirecionamentos, mesma identidade/edição e permissão de reutiliza
 Limita a três páginas, respostas de até 100 KB e seis passagens externas.
 Falhas, indisponibilidade e ausência de correspondência são informadas.
 
-**Nenhuma fonte real foi cadastrada ou consultada nesta tarefa.** A validação
-externa usou HTTP e conteúdo simulados. Não há pesquisa geral na web, Google
-Search Grounding nem fallback que simule pesquisa usando memória do modelo.
-Se o modelo considerar insuficientes trechos que a recuperação classificou como
-diretos, informa insuficiência; não dispara uma segunda geração automática.
+A validação automatizada usa HTTP e Gemini simulados. A conferência dos dois
+documentos reais do cadastro foi somente leitura; a pesquisa da investigação
+encontrou uma página da própria Level 99 sobre a Artista:
+[Malicious Expansion Preview](https://www.level99games.com/blogs/news/malicious-expansion-preview-jonah-the-artist).
+Isso não significa que o novo fluxo já foi publicado ou executado com a chave
+real: essas etapas dependem da autorização de publicação e validação.
 
 ## Rascunho de guia
 
@@ -129,7 +185,7 @@ revisão. Respostas continuam privadas; nenhuma é publicada automaticamente.
 
 Tudo abaixo é local. Testes Node bloqueiam fetch externo; navegador bloqueia
 serviços fora do servidor de testes; Firestore usa `demo-acervo` em emuladores.
-Não houve Gemini real, operações no Drive/Firebase real ou deploy.
+Não houve Gemini real, escritas no Drive/Firebase real ou deploy nesta atualização.
 
 - `tests/rule-reading.test.mjs`: listas, números sem sequência, exceções,
   alfabetos válidos, corrupção, tabela, margens e título largo. Inclui regressão
@@ -171,5 +227,22 @@ Suítes finais aprovadas: **233 testes do frontend, 167 do Worker e 33 de regras
 Firestore**, além dos cenários de navegador e persistência descritos acima.
 Sintaxe/cache PWA, build estático e bundle Worker em `--dry-run` aprovados.
 
-Para ativar no ambiente real será necessário publicar frontend e Worker
-compatíveis; nenhuma publicação foi executada nesta tarefa.
+### Revisão da conversa e pesquisa complementar — 27/10/2026
+
+A revisão local mais recente passou em **268 testes do frontend e 196 do
+Worker**. Os testes de navegador usam respostas simuladas em desktop, tablet e
+celular: envio único pela busca ou pelo trecho, acompanhamento, histórico e
+fontes recolhidos, indicação de consulta externa, erro vinculado à pergunta
+atual, repetição explícita sem duplicar a tentativa e retorno à pesquisa dos PDFs.
+
+Oito cenários com os índices locais de Dead by Daylight conferem sacrifício e
+Artista/corvos nos dois documentos, independentemente de sua ordem. O guia
+atual tem a ficha da Artista na página 29; as interações do manual principal
+aparecem nas páginas 12 e 14. Referências fornecidas pelo servidor preservam o
+texto do índice. Citações explícitas adulteradas continuam recusadas. A
+recuperação de acompanhamento conserva o assunto das perguntas anteriores.
+
+Esta revisão de conversa e pesquisa complementar ainda requer publicação de
+frontend e Worker compatíveis e um teste autorizado com Gemini real. Os testes
+simulados não comprovam a qualidade da resposta nem a disponibilidade real da
+pesquisa Google para a chave em produção.

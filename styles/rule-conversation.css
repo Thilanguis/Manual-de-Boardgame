@@ -1,0 +1,115 @@
+/* Somente o diálogo de regras; a pesquisa nos PDFs mantém seu próprio fluxo. */
+#guide-dialog[data-rule-view='chat'][open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#guide-dialog[data-rule-view='chat'] .dialog-header {
+  flex-shrink: 0;
+}
+#guide-dialog[data-rule-view='chat'] .dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  scroll-padding-top: 60px;
+}
+#guide-dialog[data-rule-view='chat'] #guide-back {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #242429;
+}
+#guide-dialog[data-rule-view='chat'] .guide-query-form,
+#guide-dialog[data-rule-view='chat'] #guide-content,
+.rule-conversation-history[hidden],
+.rule-assistant-status[hidden] {
+  display: none;
+}
+#guide-dialog[data-rule-view='chat'] .rule-assistant {
+  border: 0;
+  padding: 0;
+  margin-top: 1rem;
+  scroll-margin-top: 60px;
+}
+.rule-chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.rule-chat-header h3 {
+  margin: 0;
+}
+.rule-chat-header + .muted {
+  margin-block: 0.5rem 1.25rem;
+  font-size: 0.85rem;
+}
+.rule-conversation-history {
+  margin-block: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.75rem;
+}
+.rule-conversation-history > summary,
+.rule-answer-sources > summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding-block: 0.6rem;
+  font-weight: 600;
+}
+.rule-conversation-history .rule-turn {
+  margin-top: 1rem;
+}
+.rule-latest .rule-question {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.rule-assistant .rule-answer-origin,
+.rule-assistant .rule-answer-internet {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-block: 0.4rem;
+}
+.rule-assistant .rule-answer-basis {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.rule-answer-block {
+  margin-top: 1.2rem;
+}
+.rule-source-ref {
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.rule-answer-sources {
+  margin-block: 1rem;
+  border-top: 1px solid var(--line);
+}
+.rule-answer-sources .rule-citation {
+  padding-inline: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.rule-assistant-status {
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: var(--surface, #202024);
+}
+.rule-assistant[data-state='error'] .rule-assistant-status {
+  color: #ffb7c4;
+  border: 1px solid #79434c;
+}
+.rule-assistant form {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 600px) {
+  #guide-dialog[data-rule-view='chat'] .dialog-body {
+    padding-inline: 1rem;
+  }
+  .rule-chat-header .button {
+    min-height: 44px;
+  }
+}

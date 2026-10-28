@@ -36,6 +36,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     status = $('guide-status'),
     input = $('guide-search'),
     ask = $('guide-ask'),
+    queryForm = $('guide-query-form'),
     back = $('guide-back');
   const worker = new Worker(new URL('./rule-search-worker.js', import.meta.url), { type: 'module' });
   let game,
@@ -49,13 +50,40 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     returnFocus,
     layoutController,
     loading = false,
-    selectedTopic = null;
+    selectedTopic = null,
+    mode = 'pdf';
   let searchResults = [],
     resultsQuery = '';
   let errors = new Map(),
     sessionUid = repository.session.user?.uid;
   const urls = new Map();
-  const assistant = createRuleAssistantPanel({ repository, container: view.parentElement, getGame: () => game, pageButton });
+  function displayMode(next) {
+    mode = next;
+    dialog.dataset.ruleView = next;
+    queryForm.hidden = next === 'chat';
+    view.hidden = next === 'chat';
+    back.textContent = next === 'chat' ? 'Voltar à pesquisa nos PDFs' : '← Voltar aos assuntos';
+    back.hidden = next === 'pdf' && !input.value.trim();
+    $('guide-mode').textContent = next === 'chat' ? 'CONVERSA COM GEMINI' : 'CONSULTAR REGRAS';
+    if (next === 'chat') {
+      clearTimeout(timer);
+      ++searchSequence;
+      status.hidden = true;
+    } else message();
+    view.parentElement.scrollTop = 0;
+  }
+  const assistant = createRuleAssistantPanel({
+    repository,
+    container: view.parentElement,
+    getGame: () => game,
+    pageButton,
+    getQuestion: () => {
+      const query = input.value.trim();
+      return !selectedTopic && (query.includes('?') || query.split(/\s+/).length >= 4) ? query : '';
+    },
+    onOpen: () => displayMode('chat'),
+    onClose: () => displayMode('pdf'),
+  });
   function questionControls() {
     const permitted = repository.session.canRead && repository.session.canAskRules && !!repository.session.user?.uid;
     ask.hidden = !permitted;
@@ -290,7 +318,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     }
   }
   function renderSearch() {
-    if (!game || !dialog.open) return;
+    if (!game || !dialog.open || mode === 'chat') return;
     questionControls();
     ++searchSequence;
     message();
@@ -300,7 +328,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     worker.postMessage({ type: 'query', id: searchSequence, query: input.value, topicId: selectedTopic });
   }
   worker.onmessage = ({ data }) => {
-    if (data.id !== searchSequence || data.query !== input.value.trim() || !dialog.open) return;
+    if (data.id !== searchSequence || data.query !== input.value.trim() || !dialog.open || mode === 'chat') return;
     if (data.error) {
       errors.set('search', data.error);
       message();
@@ -398,6 +426,12 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
   }
   $('guide-close').onclick = close;
   back.onclick = () => {
+    if (mode === 'chat') {
+      assistant.hide();
+      renderSearch();
+      input.focus({ preventScroll: true });
+      return;
+    }
     ++searchSequence;
     clearTimeout(timer);
     assistant.close();
@@ -425,7 +459,7 @@ export function createGuidePanel({ repository, openManual, getPreparation = () =
     clearTimeout(timer);
     timer = setTimeout(renderSearch, 150);
   };
-  $('guide-query-form').onsubmit = (event) => {
+  queryForm.onsubmit = (event) => {
     event.preventDefault();
     clearTimeout(timer);
     renderSearch();

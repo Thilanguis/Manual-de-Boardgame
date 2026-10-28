@@ -2,7 +2,7 @@ import { gameDocuments } from './documents.js';
 export const RULE_ASSISTANT_PROTOCOL = 1;
 // Limites técnicos de cada requisição, sem cota de uso ou teto de perguntas.
 // historyTurns limita somente o histórico guardado, não a duração da conversa.
-export const RULE_ASSISTANT_LIMITS = Object.freeze({ question: 1000, context: 24000, passages: 12, historyTurns: 4, timeoutMs: 30000, outputTokens: 2048 });
+export const RULE_ASSISTANT_LIMITS = Object.freeze({ question: 1000, context: 24000, passages: 12, historyTurns: 4, timeoutMs: 90000, outputTokens: 2048 });
 export function assistantIdentity(game) {
   return JSON.stringify([
     game.id,

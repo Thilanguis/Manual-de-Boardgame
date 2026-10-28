@@ -13,7 +13,10 @@ const browser = await chromium.launch({ channel: 'chrome', headless: true });
 await mkdir('test-output/rule-assistant', { recursive: true });
 const report = [];
 try {
-  const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1440, height: 1000 } });
+  // O markup remove o bootstrap e não registra service worker. O bloqueador do
+  // Playwright injeta script em srcdoc e lança SecurityError em iframe opaco;
+  // não concedemos allow-same-origin ao widget só para acomodar esse script.
+  const context = await browser.newContext({ serviceWorkers: 'allow', viewport: { width: 1440, height: 1000 } });
   await context.route('**/*', (route) => (route.request().url().startsWith(base) ? route.continue() : route.abort()));
   await context.route('**/__assistant', (route) => route.fulfill({ contentType: 'text/html', body: markup }));
   await context.route('**/qa.pdf', (route) => route.fulfill({ contentType: 'application/pdf', body: bytes }));
@@ -67,6 +70,15 @@ try {
               },
             ],
           };
+          if (window.behavior === 'web') {
+            answer.external = 'web-searched';
+            answer.searchSuggestions = '<div>Resultados do Google Search</div><script>parent.googleWidgetUnsafe=true</script>';
+            answer.blocks.push({
+              kind: 'explanation',
+              text: 'Complemento encontrado na internet para o jogo de tabuleiro.',
+              citations: [{ id: 'web-1', source: 'web', name: 'Editora · esclarecimento', url: 'https://official.example.test/boardgame', quoteKind: 'search-summary', quote: 'Resumo de pesquisa com fonte, sem transcrição literal.' }],
+            });
+          }
           window.answers.set(key, answer);
           return { status: 'ready', answer, cached };
         },
@@ -113,7 +125,10 @@ try {
   assert.equal(await page.locator('.rule-assistant script').count(), 0);
   assert.match((await page.evaluate(() => calls[0])).context.topic, /componentes/i);
   assert.match(await page.locator('.rule-assistant h3').textContent(), /Perguntar sobre:/, 'botão de trecho mantém assunto específico');
-  assert.match(await page.locator('.rule-assistant').textContent(), /Não faz busca livre na internet/);
+  assert.match(await page.locator('.rule-assistant').textContent(), /Interpretação da IA/);
+  assert.equal(await page.locator('#guide-content').isVisible(), false, 'trechos dos PDFs não ficam misturados à conversa');
+  assert.equal(await page.locator('#guide-query-form').isVisible(), false, 'existe apenas um campo de pergunta na conversa');
+  assert.equal(await page.locator('.rule-answer-sources').evaluate((n) => n.open), false, 'fontes começam recolhidas');
   assert.equal(await page.locator('#guide-dialog').evaluate((n) => n.open), true);
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -150,8 +165,11 @@ try {
   await page.getByRole('button', { name: 'Cancelar pergunta', exact: true }).click();
   assert.equal(await page.locator('.rule-assistant-answer').count(), 3);
   // Citação abre leitor real na página e hash corretos.
-  await page.locator('.rule-citation').first().locator('summary').click();
-  await page
+  await page.locator('.rule-conversation-history > summary').click();
+  const citedAnswer = page.locator('.rule-assistant-answer').last();
+  await citedAnswer.locator('.rule-answer-sources > summary').click();
+  await citedAnswer.locator('.rule-citation').first().locator('summary').click();
+  await citedAnswer
     .locator('.rule-citation')
     .first()
     .getByRole('button', { name: /Ver no manual/ })
@@ -196,11 +214,51 @@ try {
   await page.locator('#guide-ask').click();
   await page.waitForFunction((count) => calls.length === count + 1 && document.querySelector('.rule-assistant-answer'), beforeTop);
   assert.equal(await page.evaluate(() => calls.at(-1).question), question);
+  assert.equal(await page.locator('#guide-query-form').isVisible(), false);
+  assert.equal(await page.locator('.rule-latest .rule-question').textContent(), question);
   assert.equal(await page.evaluate(() => calls.at(-1).context.topic), 'Regras do jogo');
   assert.equal(await page.locator('.rule-assistant h3').textContent(), 'Pergunta sobre o jogo');
   assert.equal(await page.evaluate(() => repo.session.canEdit), false);
-  assert.match(await page.locator('.rule-assistant').textContent(), /Documentos compatíveis do jogo/);
+  assert.match(await page.locator('.rule-assistant').textContent(), /documentos compatíveis do jogo/);
   assert(await page.evaluate(() => calls.at(-1).context.documentId && calls.at(-1).context.sourceHash && calls.at(-1).context.page > 0));
+  await page.evaluate(() => (behavior = 'web'));
+  await page.locator('.rule-assistant textarea').fill('Existe um esclarecimento da editora na internet?');
+  await page.locator('.rule-assistant button[type=submit]').click();
+  await page.getByText('Internet: consultada nesta pergunta.', { exact: true }).waitFor();
+  assert.equal(await page.locator('.rule-conversation-history').evaluate((n) => n.open), false, 'respostas anteriores ficam recolhidas');
+  assert.match(await page.locator('.rule-latest .rule-answer-basis').textContent(), /PDFs e internet/);
+  await page.locator('.rule-latest .rule-answer-sources > summary').click();
+  const webCitation = page.locator('.rule-citation').filter({ hasText: 'fonte da internet' });
+  assert.equal(await webCitation.count(), 1);
+  await webCitation.locator('summary').click();
+  assert.match(await webCitation.textContent(), /não é transcrição literal/);
+  assert.equal(await webCitation.getByRole('link').getAttribute('href'), 'https://official.example.test/boardgame');
+  const widget = page.getByTitle('Sugestões do Google Search');
+  assert.doesNotMatch(await widget.getAttribute('sandbox'), /allow-scripts|allow-same-origin/);
+  assert.equal(await page.evaluate(() => window.googleWidgetUnsafe), undefined, 'HTML de sugestões não pode executar scripts ou acessar a sessão');
+  await page.evaluate(() => (behavior = 'failure'));
+  const failedQuestion = 'Tá, mas se eles interagirem, o que acontece?';
+  await page.locator('.rule-assistant textarea').fill(failedQuestion);
+  await page.locator('.rule-assistant button[type=submit]').click();
+  await page.locator('.rule-assistant-status').filter({ hasText: 'Não consegui responder a esta pergunta.' }).waitFor();
+  assert.equal(await page.locator('.rule-latest .rule-question').textContent(), failedQuestion);
+  assert.equal(await page.locator('.rule-assistant-answer:visible').count(), 0, 'falha não aparece como continuação de uma resposta antiga');
+  const historySize = await page.locator('.rule-conversation-history .rule-turn').count();
+  await page.evaluate(() => (behavior = 'ready'));
+  await page.locator('.rule-assistant button[type=submit]').click();
+  await page.locator('.rule-latest .rule-assistant-answer').waitFor();
+  assert.equal(await page.locator('.rule-conversation-history .rule-turn').count(), historySize, 'repetir explicitamente a pergunta substitui o erro em vez de duplicar a tentativa');
+  assert.equal(await page.locator('.rule-assistant-status').isVisible(), false);
+  // Pergunta digitada na busca e acionada em um resultado é enviada uma só vez.
+  await page.locator('#guide-back').click();
+  const directQuestion = 'Como pagar o custo de cartas e peças?';
+  await page.locator('#guide-search').fill(directQuestion);
+  await page.waitForFunction((q) => document.querySelector('#guide-content').dataset.query === q && document.querySelector('.rule-ask'), directQuestion);
+  const beforeContextAsk = await page.evaluate(() => calls.length);
+  await page.locator('.rule-ask').first().click();
+  await page.locator('.rule-latest .rule-assistant-answer').waitFor();
+  assert.equal(await page.evaluate(() => calls.length), beforeContextAsk + 1);
+  assert.equal(await page.evaluate(() => calls.at(-1).question), directQuestion);
   await page.evaluate(async () => {
     const { accessFor } = await import('/js/permissions.js');
     repo.session = { ...repo.session, ...accessFor({ uid: 'approved-reader', role: 'user', status: 'blocked' }, 'approved-reader') };
@@ -213,7 +271,12 @@ try {
   await writeFile(
     'test-output/rule-assistant/browser-report.json',
     JSON.stringify(
-      { simulatedGemini: true, realPdf: pdf, scenarios: ['no automatic calls', 'context', 'follow-up', 'cache', 'provider quota', 'no local counters', '503', 'cancel', 'real citation page', 'stale identity', 'approved reader without edit', 'blocked account', 'HTML safe'], viewports: report },
+      {
+        simulatedGemini: true,
+        realPdf: pdf,
+        scenarios: ['no automatic calls', 'context', 'follow-up', 'cache', 'provider quota', 'no local counters', '503', 'cancel', 'real citation page', 'stale identity', 'approved reader without edit', 'blocked account', 'HTML safe'],
+        viewports: report,
+      },
       null,
       2,
     ),

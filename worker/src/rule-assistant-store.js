@@ -16,7 +16,7 @@ export async function assistantStore(storage, path, input) {
       locks.items = locks.items.filter((value) => value !== lock);
       await tx.put('qa:locks', locks);
       if (input.answer) {
-        await tx.put(cacheKey, { answer: input.answer, expiry: now + 86400000 });
+        if (input.answer.insufficient !== true) await tx.put(cacheKey, { answer: input.answer, expiry: now + 86400000 });
         activeThread.turns.push({ question: input.question, answer: input.answer });
         activeThread.turns = activeThread.turns.slice(-limits.historyTurns);
         await tx.put(threadKey, activeThread);
