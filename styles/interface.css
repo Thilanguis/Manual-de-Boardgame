@@ -789,8 +789,7 @@ label,
   margin-top: -10px;
   margin-bottom: 16px;
 }
-.game-disclosure,
-#detail-admin {
+.game-disclosure {
   border-top: 1px solid var(--line);
   padding: 16px 0;
   margin-top: 12px;
@@ -814,20 +813,73 @@ label,
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.document-order-controls {
-  display: flex;
-  gap: 4px;
+.document-drag-handle {
+  flex: 0 0 36px;
+  width: 36px;
+  min-height: 44px;
+  display: inline-grid;
+  place-items: center;
+  align-self: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
-.document-order-controls .button {
-  min-width: 36px;
-  padding: 8px;
+.document-drag-grip {
+  width: 12px;
+  height: 20px;
+  background: radial-gradient(circle, currentColor 1.5px, transparent 1.8px) 0 0 / 6px 6px;
+  pointer-events: none;
+}
+.document-drag-handle:hover,
+.document-drag-handle:focus-visible {
+  color: var(--ai-tone);
+  background: #cbbbdc0d;
+  border-color: #cbbbdc38;
+}
+.document-drag-handle:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.document-drag-handle[aria-pressed='true'] {
+  cursor: grabbing;
+}
+.document-reading-row {
+  position: relative;
+  transition: transform 160ms ease;
+}
+.is-ordering {
+  user-select: none;
+}
+.document-reading-row.is-dragging {
+  z-index: 1;
+  transition: none;
+  border-radius: 10px;
+  outline: 1px solid #cbbbdc60;
+  background: #24212b;
+  box-shadow: 0 12px 28px #0006;
+}
+.is-dragging > .button {
+  pointer-events: none;
 }
 @media (max-width: 600px) {
   .document-reading-row {
     flex-wrap: wrap;
   }
   .document-reading-info {
-    flex-basis: calc(100% - 100px);
+    flex-basis: calc(100% - 52px);
+  }
+  .document-reading-row > .button {
+    margin-left: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .document-reading-row {
+    transition: none;
   }
 }
 .document-reading-info strong {

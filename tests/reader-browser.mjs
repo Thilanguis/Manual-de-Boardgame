@@ -138,14 +138,17 @@ try {
         orderPanel.open(panelGame);
         document.getElementById('detail-dialog').showModal();
       });
-      await page.getByRole('button', { name: 'Mover Regras para baixo', exact: true }).click();
+      await page.getByRole('button', { name: 'Reordenar Regras', exact: true }).focus();
+      await page.keyboard.press('Space');
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter');
       await page.waitForFunction(() => document.querySelector('#detail-documents [data-read-document-id]')?.dataset.readDocumentId === 'extra');
       assert.deepEqual(await page.evaluate(() => panelGame.documentOrder), ['extra', 'main']);
       await page.evaluate(() => {
         panelRepo.session.isOwner = false;
         orderPanel.open(panelGame);
       });
-      assert.equal(await page.locator('.document-order-controls').count(), 0);
+      assert.equal(await page.locator('.document-drag-handle').count(), 0);
       assert.equal(await page.locator('#detail-documents [data-read-document-id]').first().getAttribute('data-read-document-id'), 'extra');
     }
     await context.close();

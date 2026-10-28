@@ -2,6 +2,7 @@ import { MAX_PDF_BYTES } from './pdf-limits.js';
 import { DOCUMENT_TYPES, gameDocuments, primaryDocumentId, documentName } from './documents.js';
 import { inspectPdf } from './pdf.js';
 import { PREPARATION_LABELS } from './preparation-queue.js';
+import { createDocumentOrder } from './document-order.js';
 const el = (tag, text) => {
   const node = document.createElement(tag);
   if (text) node.textContent = text;
@@ -14,7 +15,35 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
     pendingRemovals = [],
     pendingLinks = [],
     pendingLoad = 0,
+    deferredRender = false,
     controller;
+  const ordering = createDocumentOrder({
+    root: readRoot,
+    permitted: () => !!game && repository.session.canRead && repository.session.isOwner && !busy,
+    onEnd: () => {
+      if (deferredRender)
+        queueMicrotask(() => {
+          if (deferredRender && !busy) render();
+        });
+    },
+    commit: async (ids, initial) => {
+      const target = game;
+      if (
+        !target ||
+        initial.join() !==
+          gameDocuments(target)
+            .map((doc) => doc.id)
+            .join()
+      )
+        return;
+      await run(async () => {
+        const next = await repository.reorderDocuments(target, ids);
+        if (game?.id === target.id) game = next;
+        onSaved(next);
+        onNotice('Ordem dos PDFs salva para todos os usuários.');
+      });
+    },
+  });
   const button = (text, action) => {
     const b = el('button', text);
     b.type = 'button';
@@ -75,12 +104,19 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
     if (result.failures.length) onNotice(result.failures.join(' · '));
   }
   function render() {
+    if (ordering.active() && repository.session.canRead && repository.session.isOwner && !busy) {
+      deferredRender = true;
+      return;
+    }
+    deferredRender = false;
+    ordering.reset();
     root.replaceChildren();
     readRoot?.replaceChildren();
     if (!game || !repository.session.canRead) return;
     root.className = 'document-list';
     const documents = gameDocuments(game),
       blocked = queue.blockedReason?.() || '';
+    if (repository.session.isOwner && documents.length > 1) ordering.mount();
     for (const doc of documents) {
       const principal = doc.id === primaryDocumentId(game);
       const name = documentName(doc);
@@ -98,32 +134,10 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
           `${principal ? 'Manual principal' : DOCUMENT_TYPES[doc.documentType] || 'Complemento'} · ${{ 'pt-BR': 'Português', pt: 'Português', en: 'Inglês', fr: 'Francês' }[doc.language] || 'Idioma não identificado'} · ${doc.manual.pages} ${doc.manual.pages === 1 ? 'página' : 'páginas'}`,
         ),
       );
-      row.append(info);
       if (repository.session.isOwner && documents.length > 1) {
-        const controls = el('div');
-        controls.className = 'document-order-controls';
-        for (const [offset, label, arrow] of [
-          [-1, 'cima', '↑'],
-          [1, 'baixo', '↓'],
-        ]) {
-          const index = documents.indexOf(doc),
-            target = index + offset;
-          const move = button(arrow, async () => {
-            const targetGame = game;
-            const ids = documents.map((item) => item.id);
-            [ids[index], ids[target]] = [ids[target], ids[index]];
-            const next = await repository.reorderDocuments(targetGame, ids);
-            if (game?.id === targetGame.id) game = next;
-            onSaved(next);
-            onNotice('Ordem dos PDFs salva para todos os usuários.');
-          });
-          move.setAttribute('aria-label', `Mover ${name} para ${label}`);
-          move.title = `Mover para ${label} · ordem para todos`;
-          move.disabled ||= target < 0 || target >= documents.length;
-          controls.append(move);
-        }
-        row.append(controls);
+        row.append(ordering.handle(row, { id: doc.id, name }, busy));
       }
+      row.append(info);
       if (documents.length > 1) {
         const read = button('Ler documento', () => openManual(game, { documentId: doc.id }));
         read.setAttribute('aria-label', `Ler documento: ${name}`);
@@ -287,7 +301,7 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
   return {
     addFiles,
     refresh() {
-      if (busy) return;
+      if (busy || ordering.active()) return;
       if (root.querySelector('details[open]') || (root.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))) {
         const blocked = queue.blockedReason?.() || '';
         for (const row of root.querySelectorAll('[data-document-id]')) {
@@ -321,6 +335,16 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
       render();
     },
     open(next) {
+      if (ordering.active()) {
+        const signature = (record) => JSON.stringify([primaryDocumentId(record), gameDocuments(record).map((doc) => [doc.id, doc.name, doc.documentType, doc.language, doc.manual.sha256, doc.manual.pages])]);
+        if (game?.id === next.id && signature(game) === signature(next)) {
+          game = next;
+          deferredRender = true;
+          return;
+        }
+        ordering.reset();
+        if (game?.id === next.id) onNotice('A lista de PDFs mudou em outra sessão. Confira a nova lista antes de ordenar.');
+      }
       if (game?.id !== next.id) {
         ++sequence;
         pendingLinks = [];
@@ -351,6 +375,8 @@ export function createDocumentPanel({ root, readRoot, repository, queue, openMan
           .catch((error) => onNotice(error.message));
     },
     close() {
+      deferredRender = false;
+      ordering.reset();
       ++sequence;
       controller?.abort();
       game = null;

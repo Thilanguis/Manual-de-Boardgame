@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.11.0-rule-conversation-41';
+const VERSION = 'acervo-v1.11.0-document-order-42';
 const LOCAL_DEVELOPMENT = ['localhost', '127.0.0.1', '[::1]'].includes(self.location.hostname);
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
@@ -85,6 +85,7 @@ const ESSENTIAL = [
   './js/documents.js',
   './js/document-repository.js',
   './js/document-panel.js',
+  './js/document-order.js',
   './js/preparation-queue.js',
   './js/rule-search-worker.js',
   './js/admin-panel.js',
