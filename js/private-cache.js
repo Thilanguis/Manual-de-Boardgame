@@ -1,5 +1,6 @@
 // A chave é obtida novamente do servidor após validar a conta. Nunca persiste no navegador.
 import { readablePage } from './text-quality.js';
+import { preservePreference } from './preferences.js';
 let required = false,
   key = null,
   uid = '',
@@ -110,5 +111,5 @@ export async function purgePrivateCaches({ legacyOnly = false } = {}) {
       ),
   );
   if (legacyOnly) return;
-  for (const name of Object.keys(localStorage)) if (/^acervo[:\-]/.test(name)) localStorage.removeItem(name);
+  for (const name of Object.keys(localStorage)) if (/^acervo[:\-]/.test(name) && !preservePreference(localStorage, name)) localStorage.removeItem(name);
 }

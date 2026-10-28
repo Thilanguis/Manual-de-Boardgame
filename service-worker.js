@@ -1,5 +1,5 @@
 // Alterar VERSION a cada publicação que modificar arquivos do aplicativo.
-const VERSION = 'acervo-v1.11.0-document-order-42';
+const VERSION = 'acervo-v1.11.0-preferences-health-43';
 const LOCAL_DEVELOPMENT = ['localhost', '127.0.0.1', '[::1]'].includes(self.location.hostname);
 const SHELL = `${VERSION}-shell`;
 const SDK = 'acervo-sdk-13.0.0';
@@ -82,6 +82,8 @@ const ESSENTIAL = [
   './js/pdf-index.js',
   './js/index-cache.js',
   './js/private-cache.js',
+  './js/preferences.js',
+  './js/health-panel.js',
   './js/documents.js',
   './js/document-repository.js',
   './js/document-panel.js',

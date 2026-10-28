@@ -3,6 +3,26 @@ import assert from 'node:assert/strict';
 import { createDriveStorage } from '../js/drive-storage.js';
 import { MAX_PDF_BYTES } from '../js/pdf-limits.js';
 
+test('diagnóstico atualiza protocolo antigo em memória e usa leitura autenticada sem chamada Gemini', async () => {
+  const original = globalThis.fetch;
+  let capabilities = 0, reads = 0;
+  globalThis.fetch = async (url, options) => {
+    if (new URL(url).pathname === '/health') return Response.json({ diagnosticsProtocol: ++capabilities > 1 ? 1 : 0 });
+    assert(url.endsWith('/v1/admin/health'));
+    assert.equal(options.headers.Authorization, 'Bearer fixture');
+    assert.equal(options.method, 'GET');
+    reads++;
+    return Response.json({ drive: { configured: true, verified: false, state: 'oauth' } });
+  };
+  const storage = createDriveStorage({ apiBase: 'https://api.example.test' }, async () => 'fixture', () => 'owner');
+  try {
+    await storage.capabilities();
+    assert.equal((await storage.diagnoseHealth()).drive.verified, false);
+    assert.equal(capabilities, 2);
+    assert.equal(reads, 1);
+  } finally { storage.close(); globalThis.fetch = original; }
+});
+
 test('assistente exige protocolo próprio e JWT e informa limite do provedor sem repetição', async () => {
   const previous = globalThis.fetch;
   let protocol = false,

@@ -136,6 +136,12 @@ export function createDriveStorage(config, getToken, getUid, onDriveStatus = () 
     }
   }
   return {
+    async diagnoseHealth({ signal } = {}) {
+      let info = await capabilities();
+      if (!(info.diagnosticsProtocol >= 1)) info = await capabilities(true);
+      if (!(info.diagnosticsProtocol >= 1)) throw new Error('O servidor precisa ser atualizado para verificar a conexão real. A configuração sozinha não comprova que o Drive funciona.');
+      return (await call('/v1/admin/health', { signal: AbortSignal.any([AbortSignal.timeout(50000), ...[signal].filter(Boolean)]) })).json();
+    },
     provider: 'drive',
     capabilities,
     validatePdfUpload,

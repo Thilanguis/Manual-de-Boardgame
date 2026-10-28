@@ -14,6 +14,7 @@ import { draftKnowledgeEndpoint } from './draft-knowledge.js';
 import { ruleAssistantEndpoint } from './rule-assistant.js';
 import { RULE_ASSISTANT_PROTOCOL, RULE_ASSISTANT_LIMITS } from '../../js/rule-assistant-contract.js';
 import { DRAFT_REQUEST_BYTES, KNOWLEDGE_REQUEST_BYTES } from './knowledge-limits.js';
+import { diagnoseHealth, driveConfigured } from './health-diagnostics.js';
 export { KnowledgeStore } from './game-knowledge.js';
 
 const CHUNK_LIMIT = 8 * 1024 * 1024,
@@ -443,6 +444,8 @@ export async function handleRequest(request, env, ctx) {
         researchQueryVersion: RESEARCH_QUERY_VERSION,
         fileProtocol: 2,
         privateAccess: true,
+        diagnosticsProtocol: 1,
+        driveOperational: null,
         documentRemovalProtocol: 2,
         maxPdfBytes: Math.min(MAX_PDF_BYTES, Number(env.MAX_PDF_BYTES || MAX_PDF_BYTES)),
         knowledgeProtocol: 1,
@@ -464,7 +467,7 @@ export async function handleRequest(request, env, ctx) {
         firebaseProject: env.FIREBASE_PROJECT_ID,
         driveConnected: !!(env.GOOGLE_REFRESH_TOKEN && env.DRIVE_FOLDER_ID && env.TICKET_KEY),
         // Compatibilidade: driveConnected indica apenas presença de bindings.
-        driveOAuth: { configured: !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REFRESH_TOKEN && env.DRIVE_FOLDER_ID && env.DRIVE_OWNER_EMAIL), verified: false, check: 'configuration-only' },
+        driveOAuth: { configured: driveConfigured(env), verified: false, check: 'configuration-only' },
       });
     else {
       const token = bearer(request);
@@ -478,7 +481,8 @@ export async function handleRequest(request, env, ctx) {
       const research = /^\/v1\/research\/(wikidata|wikipedia|ludopedia|bgg)$/.exec(url.pathname);
       const knowledge = /^\/v1\/games\/([a-f0-9-]{36})\/knowledge$/.exec(url.pathname);
       const question = /^\/v1\/games\/([a-f0-9-]{36})\/rule-question$/.exec(url.pathname);
-      if (question && request.method === 'POST') response = await ruleAssistantEndpoint(request, env, identity, question[1], await readJSON(request, 8192, 'A pergunta'));
+      if (url.pathname === '/v1/admin/health' && request.method === 'GET') response = json(await diagnoseHealth(env, identity));
+      else if (question && request.method === 'POST') response = await ruleAssistantEndpoint(request, env, identity, question[1], await readJSON(request, 8192, 'A pergunta'));
       else if (url.pathname === '/v1/research/draft-knowledge' && request.method === 'POST') response = await draftKnowledgeEndpoint(request, env, identity, await readJSON(request, DRAFT_REQUEST_BYTES, 'Os dados dos manuais'), ctx);
       else if (knowledge && ['GET', 'POST'].includes(request.method))
         response = await knowledgeEndpoint(request, env, identity, knowledge[1], request.method === 'POST' ? await readJSON(request, KNOWLEDGE_REQUEST_BYTES, 'Os dados da análise ou correção') : null, ctx);

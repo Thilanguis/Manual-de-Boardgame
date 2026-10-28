@@ -1,4 +1,5 @@
 import { lockPrivateCache } from './private-cache.js';
+import { cleanPreferences } from './preferences.js';
 import { createPreparationQueue } from './preparation-queue.js';
 import { createDocumentPanel } from './document-panel.js';
 import { DOCUMENT_TYPES, gameDocuments, findDocument } from './documents.js';
@@ -134,15 +135,17 @@ function storageKey(type) {
   return `acervo:${repository?.mode || (localMode ? 'local' : 'firebase')}:${APP_CONFIG.firebase?.projectId || 'device'}:${state.session.user?.uid || 'device'}:${type}`;
 }
 function readPreferences(type) {
+  if (!state.session.canRead) return type === 'favorites' ? [] : {};
   try {
-    return JSON.parse(localStorage.getItem(storageKey(type))) || (type === 'favorites' ? [] : {});
+    return cleanPreferences(type, JSON.parse(localStorage.getItem(storageKey(type))));
   } catch {
     return type === 'favorites' ? [] : {};
   }
 }
 function writePreferences(type, value) {
+  if (!state.session.canRead) return;
   try {
-    localStorage.setItem(storageKey(type), JSON.stringify(value));
+    localStorage.setItem(storageKey(type), JSON.stringify(cleanPreferences(type, value)));
   } catch {
     showNotice('Não foi possível guardar suas preferências neste navegador.');
   }
@@ -1861,7 +1864,8 @@ function updateSession(session) {
   const resolving = session.resolving === true;
   $('session-loading').hidden = !resolving;
   document.body.classList.toggle('access-approved', session.canRead === true);
-  if (state.session.user?.uid !== session.user?.uid && !$('reader').hidden) reader?.close();
+  // O fechamento registra a última página ainda no escopo da conta anterior.
+  if ((!session.canRead || previous.user?.uid !== session.user?.uid) && !$('reader').hidden) reader?.close().catch(() => {});
   state.session = session;
   $('drive-warning').hidden = !session.canRead || !session.driveIssue;
   $('drive-diagnostic').textContent = driveWarning(session.driveIssue, ['superadmin', 'subadmin'].includes(session.role));

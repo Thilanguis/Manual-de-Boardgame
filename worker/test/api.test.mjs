@@ -26,6 +26,8 @@ test('health anuncia ausência de limites internos sem consultar serviços exter
     assert.equal(data.ruleAssistantLimits.perAppDay, undefined);
     assert.equal(data.ruleAssistantLimits.turns, undefined);
     assert.deepEqual(data.driveOAuth, { configured: false, verified: false, check: 'configuration-only' });
+    assert.equal(data.driveOperational, null);
+    assert.equal(data.diagnosticsProtocol, 1);
   } finally {
     globalThis.fetch = previous;
   }
@@ -212,6 +214,24 @@ async function isolated(options, run) {
     fixture.restore();
   }
 }
+
+test('diagnóstico administrativo exige proprietário aprovado no backend', async () => {
+  for (const options of [{ role: 'user' }, { role: 'subadmin' }, { enabled: false }]) await isolated(options, async s => {
+    const response = await handleRequest(request('/v1/admin/health'), env);
+    assert.equal(response.status, 403);
+    assert(!s.calls.some(c => c.url.includes('drive/v3') || c.url.includes('oauth2')));
+  });
+  await isolated({}, async s => {
+    assert.equal((await handleRequest(request('/v1/admin/health', { auth: false }), env)).status, 401);
+    const response = await handleRequest(request('/v1/admin/health'), env);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    const data = await response.json();
+    assert.equal(data.drive.verified, true);
+    assert.equal(s.calls.filter(c => c.url.includes('/documents/users/')).length, 1, 'reutiliza a leitura de autorização');
+    assert(!s.calls.some(c => /generativelanguage|documents:commit|upload\/drive/.test(c.url)));
+  });
+});
 
 test('OAuth inválido retorna 503 seguro, preserva catálogo/arquivos e retoma capa/índice sem escrita após reconectar', async () => {
   const oauthState = { failed: true };

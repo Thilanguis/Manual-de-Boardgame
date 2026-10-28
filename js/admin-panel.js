@@ -1,8 +1,12 @@
 import { OWNER_UID, roleLabel, statusLabel, subadminPermissions } from './permissions.js';
+import { createHealthPanel } from './health-panel.js';
 export function createAdminPanel({ repository, config, onNotice, onError }) {
   const ownerUid = config.ownerUid || OWNER_UID;
   const $ = (id) => document.getElementById(id),
     dialog = $('admin-dialog');
+  const health = createHealthPanel({ root: $('admin-health'), repository });
+  const diagnostics = $('admin-health-disclosure');
+  diagnostics.addEventListener('toggle', () => diagnostics.open ? void health.check() : health.close());
   let session = {},
     pending = [],
     people = [],
@@ -38,6 +42,8 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
   function tab(name) {
     if (name === 'settings' && !session.canConfigure) return;
     if (['people', 'history'].includes(name) && !session.canManageUsers) return;
+    if (name !== 'settings') health.close();
+    else if (diagnostics.open) void health.check();
     document.querySelectorAll('[data-admin-section]').forEach((section) => (section.hidden = section.dataset.adminSection !== name));
     document.querySelectorAll('[data-admin-tab]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.adminTab === name)));
     const needsPeople = ['people', 'history'].includes(name);
@@ -245,6 +251,7 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
     tab('requests');
   }
   function closeSubscriptions() {
+    health.close();
     stopPeople?.();
     stopAudit?.();
     stopPeople = stopAudit = null;
@@ -307,6 +314,7 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
     requestClose,
     updateSession(next) {
       session = next;
+      health.updateSession(next);
       const enabled = next.mode === 'firebase' && (next.canApproveUsers || next.canManageUsers);
       $('manage-button').hidden = !enabled;
       $('admin-settings-tab').hidden = !next.canConfigure;
@@ -316,7 +324,7 @@ export function createAdminPanel({ repository, config, onNotice, onError }) {
       $('admin-storage-status').textContent = config.development
         ? 'Ambiente local. Arquivos e IA são simulados; dados fictícios.'
         : config.fileStorage?.apiBase
-          ? `API configurada: ${config.fileStorage.apiBase}. A autorização e o envio real precisam ser validados.`
+          ? 'O endereço da API está configurado. Abra este painel para conferir a leitura autenticada do Drive; configuração não é prova de funcionamento.'
           : 'Conexão Drive pendente. A API ainda não foi configurada.';
       const key = `${next.user?.uid || ''}:${enabled}`;
       if (key !== subscriptionKey) {

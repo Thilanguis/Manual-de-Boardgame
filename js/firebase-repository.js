@@ -96,6 +96,11 @@ export async function createFirebaseRepository(config) {
       return files.knowledge(game, { revision, sections });
     },
     refreshAvailability,
+    async diagnoseHealth(options) {
+      requireRead();
+      if (!repository.session.isOwner) throw new Error('Somente o administrador principal pode conferir a saúde do Acervo.');
+      return files.diagnoseHealth(options);
+    },
     retryCovers() {
       coverErrors.clear();
       files.retryConnection();

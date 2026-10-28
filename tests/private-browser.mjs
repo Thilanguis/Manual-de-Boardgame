@@ -94,7 +94,7 @@ async function page() {
     const request = route.request(),
       path = new URL(request.url()).pathname,
       authorization = request.headers().authorization;
-    if (path === '/health') return route.fulfill({ json: { ok: true, fileProtocol: 2, privateAccess: true, documentRemovalProtocol: 2, maxPdfBytes: 209715200 } });
+    if (path === '/health') return route.fulfill({ json: { ok: true, diagnosticsProtocol: 1, fileProtocol: 2, privateAccess: true, documentRemovalProtocol: 2, maxPdfBytes: 209715200 } });
     let uid;
     try {
       uid = JSON.parse(Buffer.from(authorization.split(' ')[1].split('.')[1], 'base64url')).sub;
@@ -102,6 +102,7 @@ async function page() {
     const profile = uid && (await inspect(`users/${uid}`));
     requests.push({ path, uid, status: profile?.status });
     if (!profile || profile.status !== 'approved') return route.fulfill({ status: uid ? 403 : 401, json: { error: 'Acesso não autorizado.' } });
+    if (path === '/v1/admin/health') return uid !== OWNER_UID ? route.fulfill({ status: 403, json: { error: 'Somente administrador.' } }) : route.fulfill({ json: { checkedAt: Date.now(), firebase: { state: 'operational', verified: true }, drive: { state: 'operational', configured: true, verified: true }, gemini: { state: 'configured', configured: true, verified: false } } });
     if (path === '/v1/catalog/status') return route.fulfill({ json: { games: [{ id, available: true, reason: 'available' }] } });
     if (path === '/v1/uploads') {
       const input = request.postDataJSON(),
@@ -156,6 +157,12 @@ try {
   await login(owner, 'owner@example.test');
   await owner.locator('#manage-button').waitFor({ state: 'visible' });
   await owner.locator('#manage-button').click();
+  await owner.locator('[data-admin-tab=settings]').click();
+  await owner.locator('#admin-health-disclosure > summary').click();
+  await owner.waitForFunction(() => document.querySelectorAll('#admin-health [data-health-state=operational]').length === 2);
+  assert.equal(requests.filter(request => request.path === '/v1/admin/health').length, 1, 'diagnóstico verifica uma vez ao abrir');
+  assert.match(await owner.locator('#admin-health').textContent(), /Configurado · não testado/);
+  await owner.locator('[data-admin-tab=requests]').click();
   await owner.getByRole('button', { name: 'Aprovar', exact: true }).click();
   await guest.locator('.game-card').waitFor();
   assert.equal(await guest.locator('#login-dialog').isVisible(), false);
@@ -195,7 +202,7 @@ try {
   await fresh.locator('#login-dialog').waitFor();
   await fresh.waitForFunction(() => document.getElementById('reader').hidden && document.querySelectorAll('.game-card').length === 0);
   assert.equal(await fresh.locator('main').isVisible(), false);
-  assert.equal(await fresh.locator('#pdf-text').textContent(), '');
+  assert.equal(await fresh.locator('#reader .textLayer').count(), 0, 'texto de todas as páginas removido após bloqueio');
   let remaining = 1;
   for (let n = 0; n < 100 && remaining; n++) {
     remaining = await fresh.evaluate(
@@ -223,10 +230,38 @@ try {
     await mkdir('test-output', { recursive: true });
     await fresh.screenshot({ path: `test-output/private-${name}.png` });
   }
+  await owner.keyboard.press('Escape');
+  await owner.locator('.card-favorite').first().click();
+  await owner.locator('.card-main').first().click();
+  await owner.locator('#read-manual').click();
+  await owner.waitForFunction(() => document.getElementById('page-total').textContent.includes('3'));
+  await owner.locator('#page-number').fill('2');
+  await owner.locator('#page-number').press('Enter');
+  await owner.locator('#reader-close').click();
+  if (await owner.locator('[data-close=detail-dialog]').isVisible()) await owner.locator('[data-close=detail-dialog]').click();
+  await owner.locator('#account-button').click();
   await owner.locator('#logout-button').click();
   await owner.locator('#login-form').waitFor();
   assert.equal(await owner.locator('main').isVisible(), false);
   assert.equal(await owner.locator('.game-card').count(), 0);
+  const favoriteKey = `acervo:firebase:${project}:${OWNER_UID}:favorites`, readingKey = `acervo:firebase:${project}:${OWNER_UID}:reading`;
+  assert.deepEqual(await owner.evaluate(key => JSON.parse(localStorage.getItem(key)), favoriteKey), [id]);
+  assert.equal((await owner.evaluate(key => JSON.parse(localStorage.getItem(key)), readingKey))[id].page, 2);
+  await env.withSecurityRulesDisabled(c => updateDoc(doc(c.firestore(), 'users', readerUid), { status: 'approved', updatedAt: Timestamp.now() }));
+  await login(owner, 'reader@example.test');
+  await owner.locator('.game-card').waitFor();
+  assert.equal(await owner.locator('.card-favorite').first().getAttribute('aria-pressed'), 'false', 'outra conta não herda favoritos');
+  assert.equal(await owner.locator('#recent-list > *').count(), 0, 'outra conta não herda progresso');
+  await owner.locator('#account-button').click();
+  await owner.locator('#logout-button').click();
+  await owner.locator('#login-form').waitFor();
+  await login(owner, 'owner@example.test');
+  await owner.locator('.game-card').waitFor();
+  assert.equal(await owner.locator('.card-favorite').first().getAttribute('aria-pressed'), 'true');
+  await owner.locator('.card-main').first().click();
+  await owner.locator('#read-manual').click();
+  await owner.waitForFunction(() => document.getElementById('page-number').value === '2' && document.getElementById('reader-status').hidden);
+  await owner.locator('#reader-close').click();
   assert.deepEqual(errors, []);
   await writeFile(
     'test-output/private-report.json',
@@ -243,6 +278,9 @@ try {
         offlineLockedAndRecovered: true,
         ownerPreserved: true,
         logout: true,
+        favoritesAndProgressSurviveLogout: true,
+        preferencesIsolatedByAccount: true,
+        administrativeHealthPanel: true,
         viewports: 3,
         errors,
       },
